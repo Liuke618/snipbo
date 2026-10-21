@@ -18,6 +18,13 @@ final class CaptureCoordinator {
         self.history = history
     }
 
+    /// Applies settings changed in the Settings window. Captures and editors
+    /// that are already on screen keep the settings they were opened with;
+    /// the next capture/editor uses the new values.
+    func updateSettings(_ settings: AppSettings) {
+        self.settings = settings
+    }
+
     func startRegionCapture() {
         guard !isCapturing else { return }
         guard ensurePermission() else { return }

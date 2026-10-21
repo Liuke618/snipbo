@@ -4,13 +4,16 @@ import AppKit
 final class StatusItemController {
     private let statusItem: NSStatusItem
     private let onCaptureRegion: () -> Void
+    private let onSettings: () -> Void
     private let onQuit: () -> Void
 
     init(
         onCaptureRegion: @escaping () -> Void,
+        onSettings: @escaping () -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.onCaptureRegion = onCaptureRegion
+        self.onSettings = onSettings
         self.onQuit = onQuit
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(
@@ -24,6 +27,11 @@ final class StatusItemController {
         menu.addItem(regionItem)
         menu.addItem(.separator())
 
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        menu.addItem(.separator())
+
         let quitItem = NSMenuItem(title: "Quit LightShot", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -32,6 +40,10 @@ final class StatusItemController {
 
     @objc private func captureRegion() {
         onCaptureRegion()
+    }
+
+    @objc private func openSettings() {
+        onSettings()
     }
 
     @objc private func quit() {
