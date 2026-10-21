@@ -1,5 +1,14 @@
 import CoreGraphics
+import Foundation
 import LightShotCore
+
+extension Notification.Name {
+    /// Posted on the main actor after a screenshot has been written to the
+    /// history store. The notification's `object` is the recorded
+    /// `HistoryEntry`, so an observer can add it to a cache without another
+    /// asynchronous store read.
+    static let lightShotHistoryDidChange = Notification.Name("lightShotHistoryDidChange")
+}
 
 /// Records history entries for images the user just copied or saved.
 ///
@@ -17,6 +26,11 @@ enum HistoryRecorder {
     ) {
         guard settings.historyEnabled else { return }
         let imageData = ImageData(image)
-        Task { try? await history.record(image: imageData, source: source) }
+        Task {
+            guard let entry = try? await history.record(image: imageData, source: source) else { return }
+            // The write has completed, so the Recent menu can already show the
+            // new entry when the user opens it next.
+            NotificationCenter.default.post(name: .lightShotHistoryDidChange, object: entry)
+        }
     }
 }

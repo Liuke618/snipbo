@@ -3,12 +3,16 @@ import LightShotCore
 
 /// Builds the status item's "Recent" submenu from the screenshot history.
 ///
-/// Entries are read asynchronously from `HistoryStore`; until the first read
-/// completes the menu shows a disabled placeholder. The menu is refreshed when
-/// it opens and can be refreshed explicitly (the app does so at launch), so the
-/// first open is populated without relying on a menu-open callback having
-/// already completed. Entries whose PNG file was deleted are skipped, so a
-/// missing screenshot is not offered from a freshly built menu.
+/// The controller keeps a main-actor cache of the newest entries. The cache is
+/// loaded once at init and kept current by the `.lightShotHistoryDidChange`
+/// notification that `HistoryRecorder` posts after each successful write, so
+/// opening the menu right after a copy/save already includes the new entry.
+///
+/// `menuWillOpen` rebuilds the menu from the cache synchronously. An async
+/// cache refresh that finishes while the menu is open only marks the menu as
+/// needing a rebuild; the rebuild runs in `menuDidClose`, so AppKit never has
+/// its open menu mutated underneath it. Entries whose PNG file was deleted are
+/// skipped, so a missing screenshot is not offered from a freshly built menu.
 @MainActor
 final class RecentMenuController: NSObject, NSMenuDelegate {
     /// The number of recent screenshots the menu offers.
@@ -18,6 +22,11 @@ final class RecentMenuController: NSObject, NSMenuDelegate {
     private let history: HistoryStore
     private let openEntry: (HistoryEntry) -> Void
     private var entries: [HistoryEntry] = []
+    private var isMenuOpen = false
+    private var needsRebuild = false
+    /// Invalidates an older in-flight refresh when a newer write or refresh
+    /// updates the cache first.
+    private var refreshGeneration = 0
     private let formatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
@@ -31,18 +40,61 @@ final class RecentMenuController: NSObject, NSMenuDelegate {
         super.init()
         menu.delegate = self
         rebuild()
-    }
-
-    func menuWillOpen(_ menu: NSMenu) {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(historyDidChange(_:)),
+            name: .lightShotHistoryDidChange,
+            object: nil
+        )
+        // Load entries that were already stored before this controller existed.
         Task { await refresh() }
     }
 
-    /// Reloads the newest entries from the store and rebuilds the menu.
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        isMenuOpen = true
+        // Rebuild from the cache only. The cache is kept current by the
+        // history notification, so no actor read is needed before showing.
+        rebuild()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isMenuOpen = false
+        guard needsRebuild else { return }
+        needsRebuild = false
+        rebuild()
+    }
+
+    /// Handles a completed history write. `HistoryStore.record` has already
+    /// written the PNG when the notification is posted, so the entry can be
+    /// inserted synchronously and the menu is never stale on first open.
+    @objc private func historyDidChange(_ notification: Notification) {
+        // Any refresh that started before this write carries an older list.
+        refreshGeneration += 1
+        if let entry = notification.object as? HistoryEntry {
+            entries.removeAll { $0.id == entry.id }
+            entries.insert(entry, at: 0)
+            if entries.count > Self.maximumItemCount {
+                entries.removeLast(entries.count - Self.maximumItemCount)
+            }
+            applyCache()
+        }
+        // Reconcile with pruning (a write can evict older entries) and with
+        // files deleted outside the app.
+        Task { await refresh() }
+    }
+
+    /// Reloads the newest entries from the store into the cache.
     ///
     /// Missing image files are skipped before the 10-item cap is applied, so a
     /// deleted screenshot does not leave a permanently dead slot at the top of
     /// the menu.
     func refresh() async {
+        refreshGeneration += 1
+        let generation = refreshGeneration
         let stored = await history.entries()
         var available: [HistoryEntry] = []
         available.reserveCapacity(min(stored.count, Self.maximumItemCount))
@@ -52,7 +104,19 @@ final class RecentMenuController: NSObject, NSMenuDelegate {
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             available.append(entry)
         }
+        guard generation == refreshGeneration else { return }
         entries = available
+        applyCache()
+    }
+
+    /// Applies the cached entries to the menu when it is safe to do so. An
+    /// open menu is left untouched; the pending rebuild happens on close.
+    private func applyCache() {
+        guard !isMenuOpen else {
+            needsRebuild = true
+            return
+        }
+        needsRebuild = false
         rebuild()
     }
 

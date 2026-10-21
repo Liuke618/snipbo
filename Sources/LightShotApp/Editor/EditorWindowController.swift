@@ -4,6 +4,9 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class EditorWindowController: NSWindowController, NSWindowDelegate {
+    /// Identifies this editor instance. Callers that retain several editors at
+    /// once use it to remove exactly the editor whose close callback runs.
+    let identifier: UUID
     let controller: EditorController
     private let canvas: EditorCanvasView
     private let scrollView = NSScrollView()
@@ -16,8 +19,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         document: EditDocument,
         settings: AppSettings,
         history: HistoryStore,
+        identifier: UUID = UUID(),
         onClose: @escaping () -> Void = {}
     ) {
+        self.identifier = identifier
         self.controller = EditorController(document: document)
         self.settings = settings
         self.history = history

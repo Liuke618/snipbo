@@ -11,7 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindowController: SettingsWindowController?
     private var registeredHotkey: Hotkey?
     private let captureService = ScreenCaptureService()
-    private var historyEditorWindow: EditorWindowController?
+    /// Every open history editor, retained until its own close callback runs.
+    /// The close callback removes exactly the editor that closed, so one
+    /// editor closing cannot drop another one.
+    private var historyEditors: [EditorWindowController] = []
     private lazy var historyStore = HistoryStore(
         baseDirectory: AppPaths.historyDirectory,
         maxItems: settings.historyMaxItems,
@@ -36,10 +39,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recentMenu: recentController.menu,
             onQuit: { NSApp.terminate(nil) }
         )
-        // Populate the Recent submenu before the user opens it; refreshing only
-        // from `menuWillOpen` would leave the first open showing the empty
-        // placeholder while the history read is still in flight.
-        Task { await recentController.refresh() }
         let service = HotkeyService { coordinator.startRegionCapture() }
         hotkeyService = service
         service.register(settings.hotkey)
@@ -88,13 +87,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSLog("LightShot: could not open the recent screenshot at %@", url.path)
                 return
             }
+            let identifier = UUID()
             let editor = EditorWindowController(
                 document: EditDocument(image: image),
                 settings: self.settings,
                 history: self.historyStore,
-                onClose: { [weak self] in self?.historyEditorWindow = nil }
+                identifier: identifier,
+                onClose: { [weak self] in
+                    self?.historyEditors.removeAll { $0.identifier == identifier }
+                }
             )
-            self.historyEditorWindow = editor
+            self.historyEditors.append(editor)
             editor.show()
         }
     }

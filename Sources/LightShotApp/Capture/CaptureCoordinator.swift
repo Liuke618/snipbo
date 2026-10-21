@@ -81,11 +81,18 @@ final class CaptureCoordinator {
         dismiss()
 
         if settings.openEditorAfterCapture {
+            let identifier = UUID()
             let editor = EditorWindowController(
                 document: EditDocument(image: cropped),
                 settings: settings,
                 history: history,
-                onClose: { [weak self] in self?.editorWindow = nil }
+                identifier: identifier,
+                onClose: { [weak self] in
+                    // Only clear the slot when this editor still owns it; a
+                    // late close callback must not drop a newer editor.
+                    guard let self, self.editorWindow?.identifier == identifier else { return }
+                    self.editorWindow = nil
+                }
             )
             editorWindow = editor
             editor.show()
