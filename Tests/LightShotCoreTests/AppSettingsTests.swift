@@ -8,6 +8,7 @@ struct AppSettingsTests {
         let settings = AppSettings.default
         #expect(settings.hotkey == Hotkey(keyCode: 26, modifiers: [.command, .shift]))
         #expect(settings.format == .png)
+        #expect(settings.jpegQuality == 0.9)
         #expect(settings.openEditorAfterCapture)
         #expect(settings.historyEnabled)
         #expect(settings.historyMaxItems == 200)
