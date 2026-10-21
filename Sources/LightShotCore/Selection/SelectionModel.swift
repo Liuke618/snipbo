@@ -109,6 +109,8 @@ public struct SelectionModel: Equatable, Sendable {
                 height: rect.height
             )
         }
+
+        clampToBounds(bounds)
     }
 
     public mutating func nudge(dx: CGFloat, dy: CGFloat, resize: Bool, constrainedTo bounds: CGRect) {
@@ -119,5 +121,16 @@ public struct SelectionModel: Equatable, Sendable {
             rect.origin.x = min(max(rect.origin.x + dx, bounds.minX), bounds.maxX - rect.width)
             rect.origin.y = min(max(rect.origin.y + dy, bounds.minY), bounds.maxY - rect.height)
         }
+
+        clampToBounds(bounds)
+    }
+
+    private mutating func clampToBounds(_ bounds: CGRect) {
+        var clamped = rect
+        clamped.size.width = min(max(clamped.width, minimumSize), bounds.width)
+        clamped.size.height = min(max(clamped.height, minimumSize), bounds.height)
+        clamped.origin.x = min(max(clamped.origin.x, bounds.minX), bounds.maxX - clamped.width)
+        clamped.origin.y = min(max(clamped.origin.y, bounds.minY), bounds.maxY - clamped.height)
+        rect = clamped
     }
 }

@@ -33,4 +33,22 @@ struct SelectionModelTests {
         model.nudge(dx: 10, dy: 0, resize: true, constrainedTo: bounds)
         #expect(model.rect == CGRect(x: 55, y: 45, width: 110, height: 80))
     }
+
+    @Test func testDraggingTopPastBoundsKeepsMinimumSizeInsideBounds() {
+        var model = SelectionModel(rect: CGRect(x: 50, y: 50, width: 100, height: 80))
+        model.drag(handle: .top, to: CGPoint(x: 100, y: 200), constrainedTo: bounds)
+        #expect(model.rect == CGRect(x: 50, y: 199, width: 100, height: 1))
+    }
+
+    @Test func testDraggingLeftPastBoundsKeepsMinimumSizeInsideBounds() {
+        var model = SelectionModel(rect: CGRect(x: 50, y: 50, width: 100, height: 80))
+        model.drag(handle: .left, to: CGPoint(x: 200, y: 50), constrainedTo: bounds)
+        #expect(model.rect == CGRect(x: 199, y: 50, width: 1, height: 80))
+    }
+
+    @Test func testZeroDeltaResizeNudgeLeavesRectUnchanged() {
+        var model = SelectionModel(rect: CGRect(x: 50, y: 50, width: 100, height: 80))
+        model.nudge(dx: 0, dy: 0, resize: true, constrainedTo: bounds)
+        #expect(model.rect == CGRect(x: 50, y: 50, width: 100, height: 80))
+    }
 }
