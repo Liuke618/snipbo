@@ -20,10 +20,12 @@ struct HotkeyRecorderView: NSViewRepresentable {
     }
 }
 
-/// Click-to-record control. It draws the current shortcut, captures the next
-/// key combination that includes at least one of Command/Shift/Option/Control,
-/// and reports it through `onChange`. Escape leaves recording mode without
-/// changing the shortcut.
+/// Click-to-record control. It draws the current shortcut, and only while
+/// armed by a click it captures the next key combination that includes at
+/// least one of Command/Shift/Option/Control and reports it through `onChange`.
+/// Escape or losing first responder leaves recording mode without changing the
+/// shortcut; keys pressed while not recording pass through to the responder
+/// chain.
 final class HotkeyRecorderNSView: NSView {
     var hotkey: Hotkey? {
         didSet { needsDisplay = true }
@@ -61,7 +63,23 @@ final class HotkeyRecorderNSView: NSView {
         needsDisplay = true
     }
 
+    override func resignFirstResponder() -> Bool {
+        recording = false
+        needsDisplay = true
+        return super.resignFirstResponder()
+    }
+
     override func keyDown(with event: NSEvent) {
+        // Only keys pressed while armed are recorded; anything else must keep
+        // its normal meaning (Command+W/Q/S and the rest of the menu chords).
+        guard recording else {
+            super.keyDown(with: event)
+            return
+        }
+        // Auto-repeat must not re-trigger the save/notify chain.
+        if event.isARepeat {
+            return
+        }
         if event.keyCode == 53 {
             recording = false
             needsDisplay = true
