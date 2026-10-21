@@ -7,6 +7,9 @@ final class EditorController {
     let history = DocumentHistory()
     weak var canvas: EditorCanvasView?
     var onChange: (() -> Void)?
+    /// Called when a commit or undo/redo changes `document.cropRect`, so the
+    /// window can refit the canvas to the new crop.
+    var onCropChanged: (() -> Void)?
 
     var tool: EditorTool = .select {
         didSet { changed() }
@@ -34,10 +37,13 @@ final class EditorController {
         changed()
     }
 
-    func begin(at point: CGPoint) {
+    /// Begins a gesture at `point`, expressed in original image coordinates.
+    /// `tolerance` is the select-tool hit radius in image points; callers that
+    /// display a zoomed canvas pass `8 / zoom` to keep it constant on screen.
+    func begin(at point: CGPoint, tolerance: CGFloat = 8) {
         switch tool {
         case .select:
-            if let hit = AnnotationHitTester.topmost(in: document.annotations, at: point, tolerance: 8) {
+            if let hit = AnnotationHitTester.topmost(in: document.annotations, at: point, tolerance: tolerance) {
                 selectedID = hit.id
                 moveState = document.state
                 moveOrigin = point
@@ -104,10 +110,18 @@ final class EditorController {
         case .select:
             return
         case .crop:
-            guard let cropDraft, cropDraft.width >= 2, cropDraft.height >= 2 else { return }
+            guard let cropDraft, !cropDraft.isNull,
+                  cropDraft.width >= 2, cropDraft.height >= 2 else { return }
+            // A crop is always relative to the currently visible crop, so the
+            // new rect cannot reveal pixels outside it. Both rects are
+            // integral, so the second intersection keeps integral coordinates.
+            let clipped = cropDraft.intersection(document.cropRect)
+            guard !clipped.isNull else { return }
+            let next = clipped.integral.intersection(document.cropRect)
+            guard next.width >= 2, next.height >= 2, next != document.cropRect else { return }
             history.record(document.state)
-            let bounds = CGRect(x: 0, y: 0, width: document.image.width, height: document.image.height)
-            document.cropRect = cropDraft.intersection(bounds).integral
+            document.cropRect = next
+            onCropChanged?()
         case .text:
             return
         default:
@@ -140,15 +154,21 @@ final class EditorController {
 
     func undo() {
         guard let state = history.undo(current: document.state) else { return }
-        document.apply(state)
-        selectedID = nil
-        changed()
+        applyRestored(state)
     }
 
     func redo() {
         guard let state = history.redo(current: document.state) else { return }
+        applyRestored(state)
+    }
+
+    private func applyRestored(_ state: DocumentState) {
+        let previousCrop = document.cropRect
         document.apply(state)
         selectedID = nil
+        if document.cropRect != previousCrop {
+            onCropChanged?()
+        }
         changed()
     }
 
@@ -219,7 +239,7 @@ final class EditorController {
     }
 
     func changed() {
-        canvas?.needsDisplay = true
+        canvas?.updateForDocument()
         onChange?()
     }
 }

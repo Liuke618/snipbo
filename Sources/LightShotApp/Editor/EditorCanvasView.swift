@@ -1,6 +1,9 @@
 import AppKit
 import LightShotCore
 
+/// Displays the document's current crop. All annotation storage is in original
+/// image pixels; this view shows `document.cropRect` at `zoom`, so it converts
+/// between view points and image points with the crop origin and zoom.
 @MainActor
 final class EditorCanvasView: NSView {
     unowned let controller: EditorController
@@ -13,7 +16,7 @@ final class EditorCanvasView: NSView {
 
     init(controller: EditorController) {
         self.controller = controller
-        super.init(frame: CGRect(origin: .zero, size: controller.document.imagePixelSize))
+        super.init(frame: CGRect(origin: .zero, size: controller.document.cropRect.size))
         wantsLayer = true
     }
 
@@ -22,10 +25,18 @@ final class EditorCanvasView: NSView {
 
     func setZoom(_ zoom: CGFloat) {
         self.zoom = min(8, max(0.1, zoom))
-        setFrameSize(CGSize(
-            width: CGFloat(controller.document.image.width) * self.zoom,
-            height: CGFloat(controller.document.image.height) * self.zoom
-        ))
+        updateForDocument()
+    }
+
+    /// Resizes the canvas to the document's current crop at the current zoom
+    /// and requests a redraw. Called on every controller change so the canvas
+    /// follows crops committed or restored by undo/redo.
+    func updateForDocument() {
+        let crop = controller.document.cropRect
+        let size = CGSize(width: crop.width * zoom, height: crop.height * zoom)
+        if frame.size != size {
+            setFrameSize(size)
+        }
         needsDisplay = true
     }
 
@@ -40,14 +51,14 @@ final class EditorCanvasView: NSView {
             hints: nil
         )
 
+        if let selected = selectedAnnotation, let box = imageBounds(of: selected) {
+            drawSelectionBox(viewRect(fromImageRect: box).insetBy(dx: -3, dy: -3))
+        }
+
         if let crop = controller.cropDraft {
-            // The crop draft is in image coordinates; the canvas is zoomed.
-            let cropInView = CGRect(
-                x: crop.minX * zoom,
-                y: crop.minY * zoom,
-                width: crop.width * zoom,
-                height: crop.height * zoom
-            )
+            // The crop draft is in image coordinates; the canvas is zoomed and
+            // shows only the current crop.
+            let cropInView = viewRect(fromImageRect: crop)
             NSColor.black.withAlphaComponent(0.4).setFill()
             let path = NSBezierPath(rect: bounds)
             path.append(NSBezierPath(rect: cropInView))
@@ -60,14 +71,82 @@ final class EditorCanvasView: NSView {
         }
     }
 
+    private var selectedAnnotation: Annotation? {
+        guard let selectedID = controller.selectedID else { return nil }
+        return controller.document.annotations.first(where: { $0.id == selectedID })
+    }
+
+    /// Image-pixel bounds of the annotation's geometry.
+    private func imageBounds(of annotation: Annotation) -> CGRect? {
+        let geometryBounds: CGRect
+        switch annotation.geometry {
+        case .rect(let rect):
+            geometryBounds = rect
+        case .line(let start, let end):
+            geometryBounds = CGRect(
+                x: min(start.x, end.x),
+                y: min(start.y, end.y),
+                width: abs(end.x - start.x),
+                height: abs(end.y - start.y)
+            )
+        case .path(let points):
+            guard let first = points.first else { return nil }
+            var minX = first.x
+            var minY = first.y
+            var maxX = first.x
+            var maxY = first.y
+            for point in points.dropFirst() {
+                minX = min(minX, point.x)
+                minY = min(minY, point.y)
+                maxX = max(maxX, point.x)
+                maxY = max(maxY, point.y)
+            }
+            geometryBounds = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        case .text(let origin, let width, _):
+            geometryBounds = CGRect(
+                x: origin.x,
+                y: origin.y,
+                width: width,
+                height: annotation.style.fontSize * 1.4
+            )
+        }
+        return geometryBounds
+    }
+
+    /// Converts an original-image-pixel rect to crop-relative view coordinates.
+    private func viewRect(fromImageRect rect: CGRect) -> CGRect {
+        let cropOrigin = controller.document.cropRect.origin
+        return CGRect(
+            x: (rect.minX - cropOrigin.x) * zoom,
+            y: (rect.minY - cropOrigin.y) * zoom,
+            width: rect.width * zoom,
+            height: rect.height * zoom
+        )
+    }
+
+    private func drawSelectionBox(_ rect: CGRect) {
+        let path = NSBezierPath(rect: rect)
+        path.lineWidth = 1
+        NSColor.white.setStroke()
+        path.stroke()
+        path.setLineDash([4, 4], count: 2, phase: 0)
+        NSColor.black.setStroke()
+        path.stroke()
+    }
+
     private func imagePoint(from event: NSEvent) -> CGPoint {
         let point = convert(event.locationInWindow, from: nil)
-        return CGPoint(x: point.x / zoom, y: point.y / zoom)
+        let cropOrigin = controller.document.cropRect.origin
+        return CGPoint(
+            x: point.x / zoom + cropOrigin.x,
+            y: point.y / zoom + cropOrigin.y
+        )
     }
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        controller.begin(at: imagePoint(from: event))
+        // Keep the select hit radius at ~8 view points at any zoom.
+        controller.begin(at: imagePoint(from: event), tolerance: 8 / zoom)
     }
 
     override func mouseDragged(with event: NSEvent) {

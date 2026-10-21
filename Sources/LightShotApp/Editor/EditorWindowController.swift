@@ -29,6 +29,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         window.center()
         window.delegate = self
         controller.canvas = canvas
+        controller.onCropChanged = { [weak self] in self?.fitToWindow() }
         canvas.onFit = { [weak self] in self?.fitToWindow() }
         canvas.onActualSize = { [weak self] in self?.canvas.setZoom(1) }
 
@@ -64,10 +65,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     func fitToWindow() {
         let content = scrollView.contentSize
-        guard content.width > 1, content.height > 1 else { return }
+        let crop = controller.document.cropRect
+        guard content.width > 1, content.height > 1, crop.width > 0, crop.height > 0 else { return }
         let scale = min(
-            content.width / CGFloat(controller.document.image.width),
-            content.height / CGFloat(controller.document.image.height),
+            content.width / crop.width,
+            content.height / crop.height,
             1
         )
         canvas.setZoom(scale)
