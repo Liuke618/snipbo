@@ -9,6 +9,7 @@ final class CaptureCoordinator {
     private var keyMonitor: Any?
     private var activeView: SelectionOverlayView?
     private var isCapturing = false
+    private var editorWindow: EditorWindowController?
 
     init(captureService: ScreenCaptureService, settings: AppSettings) {
         self.captureService = captureService
@@ -63,9 +64,24 @@ final class CaptureCoordinator {
     }
 
     private func finish(capture: CapturedImage, rect: CGRect) {
-        defer { dismiss() }
-        guard let cropped = capture.cropped(toLocalPoints: rect),
-              let data = ImageExporter.pngData(from: cropped) else {
+        guard let cropped = capture.cropped(toLocalPoints: rect) else {
+            dismiss()
+            NSSound.beep()
+            return
+        }
+        dismiss()
+
+        if settings.openEditorAfterCapture {
+            let editor = EditorWindowController(
+                document: EditDocument(image: cropped),
+                onClose: { [weak self] in self?.editorWindow = nil }
+            )
+            editorWindow = editor
+            editor.show()
+            return
+        }
+
+        guard let data = ImageExporter.pngData(from: cropped) else {
             NSSound.beep()
             return
         }
