@@ -6,10 +6,17 @@ import LightShotCore
 /// between view points and image points with the crop origin and zoom.
 @MainActor
 final class EditorCanvasView: NSView {
-    unowned let controller: EditorController
+    /// Strong: the controller owns the canvas weakly and never retains it, so a
+    /// strong canvas-to-controller edge cannot form a cycle. It also keeps the
+    /// controller alive while a closed window's view hierarchy is torn down.
+    let controller: EditorController
     private(set) var zoom: CGFloat = 1
     var onFit: (() -> Void)?
     var onActualSize: (() -> Void)?
+    var onCopy: (() -> Void)?
+    var onSave: (() -> Void)?
+    var onSaveAs: (() -> Void)?
+    var onEscape: (() -> Void)?
     private var textOverlay: TextEditingOverlay?
 
     override var isFlipped: Bool { true }
@@ -228,13 +235,21 @@ final class EditorCanvasView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "z" {
-            if event.modifierFlags.contains(.shift) {
-                controller.redo()
-            } else {
-                controller.undo()
+        if event.modifierFlags.contains(.command),
+           let key = event.charactersIgnoringModifiers?.lowercased() {
+            switch key {
+            case "z":
+                if event.modifierFlags.contains(.shift) { controller.redo() } else { controller.undo() }
+                return
+            case "s":
+                if event.modifierFlags.contains(.shift) { onSaveAs?() } else { onSave?() }
+                return
+            case "c":
+                onCopy?()
+                return
+            default:
+                break
             }
-            return
         }
         if event.charactersIgnoringModifiers == "0" {
             onFit?()
@@ -242,6 +257,14 @@ final class EditorCanvasView: NSView {
         }
         if event.charactersIgnoringModifiers == "1" {
             onActualSize?()
+            return
+        }
+        if event.keyCode == 36 {
+            onCopy?()
+            return
+        }
+        if event.keyCode == 53 {
+            onEscape?()
             return
         }
         if event.keyCode == 51 || event.keyCode == 117 {

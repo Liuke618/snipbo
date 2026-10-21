@@ -1,0 +1,12 @@
+import Foundation
+
+enum AppPaths {
+    static var applicationSupport: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("LightShot", isDirectory: true)
+    }
+
+    static var historyDirectory: URL {
+        applicationSupport.appendingPathComponent("History", isDirectory: true)
+    }
+}

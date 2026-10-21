@@ -5,15 +5,17 @@ import LightShotCore
 final class CaptureCoordinator {
     private let captureService: ScreenCaptureService
     private var settings: AppSettings
+    private let history: HistoryStore
     private var overlays: [SelectionOverlayWindow] = []
     private var keyMonitor: Any?
     private var activeView: SelectionOverlayView?
     private var isCapturing = false
     private var editorWindow: EditorWindowController?
 
-    init(captureService: ScreenCaptureService, settings: AppSettings) {
+    init(captureService: ScreenCaptureService, settings: AppSettings, history: HistoryStore) {
         self.captureService = captureService
         self.settings = settings
+        self.history = history
     }
 
     func startRegionCapture() {
@@ -74,6 +76,8 @@ final class CaptureCoordinator {
         if settings.openEditorAfterCapture {
             let editor = EditorWindowController(
                 document: EditDocument(image: cropped),
+                settings: settings,
+                history: history,
                 onClose: { [weak self] in self?.editorWindow = nil }
             )
             editorWindow = editor
@@ -88,6 +92,7 @@ final class CaptureCoordinator {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setData(data, forType: .png)
+        Task { try? await history.record(image: ImageData(cropped), source: .region) }
     }
 
     private func dismiss() {

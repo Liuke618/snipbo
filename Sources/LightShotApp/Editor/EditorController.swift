@@ -1,5 +1,6 @@
 import AppKit
 import LightShotCore
+import UniformTypeIdentifiers
 
 @MainActor
 final class EditorController {
@@ -241,5 +242,42 @@ final class EditorController {
     func changed() {
         canvas?.updateForDocument()
         onChange?()
+    }
+}
+
+enum EditorError: Error {
+    case renderFailed
+    case encodeFailed
+}
+
+extension EditorController {
+    /// Renders the document for copy/save. Excludes any in-progress drag draft;
+    /// callers commit pending text before calling this.
+    func renderForExport() -> CGImage? {
+        render()
+    }
+
+    func write(_ image: CGImage, to url: URL, format: ImageFormat, quality: Double) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let data: Data?
+        switch format {
+        case .png:
+            data = ImageExporter.pngData(from: image)
+        case .jpeg:
+            data = ImageExporter.jpegData(from: image, quality: quality)
+        }
+        guard let data else { throw EditorError.encodeFailed }
+        try data.write(to: url, options: .atomic)
+    }
+
+    func defaultFileName(format: ImageFormat) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        let ext = format == .png ? "png" : "jpg"
+        return "LightShot-\(formatter.string(from: Date())).\(ext)"
     }
 }
