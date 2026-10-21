@@ -36,9 +36,21 @@ struct DocumentHistoryTests {
 
     @Test func testHistoryLimitDropsOldest() {
         let history = DocumentHistory(limit: 2)
-        history.record(DocumentState(cropRect: .zero, annotations: []))
-        history.record(DocumentState(cropRect: CGRect(x: 1, y: 1, width: 1, height: 1), annotations: []))
-        history.record(DocumentState(cropRect: CGRect(x: 2, y: 2, width: 1, height: 1), annotations: []))
+        let s0 = DocumentState(cropRect: .zero, annotations: [])
+        let s1 = DocumentState(cropRect: CGRect(x: 1, y: 1, width: 1, height: 1), annotations: [])
+        let s2 = DocumentState(cropRect: CGRect(x: 2, y: 2, width: 1, height: 1), annotations: [])
+        let current = DocumentState(cropRect: CGRect(x: 3, y: 3, width: 1, height: 1), annotations: [])
+        history.record(s0)
+        history.record(s1)
+        history.record(s2)
         #expect(history.undoDepth == 2)
+        let first = history.undo(current: current)
+        #expect(first?.cropRect.origin.x == 2)
+        let second = history.undo(current: first ?? current)
+        #expect(second?.cropRect.origin.x == 1)
+        let third = history.undo(current: second ?? current)
+        #expect(third == nil)
+        #expect(history.canUndo == false)
+        #expect(history.canRedo == true)
     }
 }
