@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreText
 import Foundation
 
 public enum DocumentRenderer {
@@ -32,7 +33,9 @@ public enum DocumentRenderer {
 
         let canvasHeight = CGFloat(height)
         for annotation in document.annotations.sorted(by: { $0.zIndex < $1.zIndex }) {
-            draw(annotation, in: context, canvasHeight: canvasHeight, crop: crop)
+            context.saveGState()
+            draw(annotation, in: context, canvasHeight: canvasHeight, crop: crop, source: document.image)
+            context.restoreGState()
         }
         return context.makeImage()
     }
@@ -41,9 +44,14 @@ public enum DocumentRenderer {
         _ annotation: Annotation,
         in context: CGContext,
         canvasHeight: CGFloat,
-        crop: CGRect
+        crop: CGRect,
+        source: CGImage
     ) {
-        guard annotation.kind != .pixelate else { return }
+        if annotation.kind == .pixelate {
+            drawPixelate(annotation, in: context, canvasHeight: canvasHeight, crop: crop, source: source)
+            return
+        }
+
         switch annotation.geometry {
         case .rect(let rect):
             let cgRect = convert(rect, canvasHeight: canvasHeight, crop: crop)
@@ -83,8 +91,70 @@ public enum DocumentRenderer {
             }
             context.strokePath()
         case .text:
-            return
+            drawText(annotation, in: context, canvasHeight: canvasHeight, crop: crop)
         }
+    }
+
+    private static func drawText(
+        _ annotation: Annotation,
+        in context: CGContext,
+        canvasHeight: CGFloat,
+        crop: CGRect
+    ) {
+        guard case .text(let origin, _, let value) = annotation.geometry, !value.isEmpty else { return }
+        let font = CTFontCreateUIFontForLanguage(.system, annotation.style.fontSize, nil)
+            ?? CTFontCreateWithName("Helvetica" as CFString, annotation.style.fontSize, nil)
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): color(annotation.style.color),
+        ]
+        let attributed = NSAttributedString(string: value, attributes: attributes)
+        let line = CTLineCreateWithAttributedString(attributed)
+        var ascent: CGFloat = 0
+        _ = CTLineGetTypographicBounds(line, &ascent, nil, nil)
+        let topLeft = convert(origin, canvasHeight: canvasHeight, crop: crop)
+        context.saveGState()
+        context.setAlpha(annotation.style.opacity)
+        context.textPosition = CGPoint(x: topLeft.x, y: topLeft.y - ascent)
+        CTLineDraw(line, context)
+        context.restoreGState()
+    }
+
+    private static func drawPixelate(
+        _ annotation: Annotation,
+        in context: CGContext,
+        canvasHeight: CGFloat,
+        crop: CGRect,
+        source: CGImage
+    ) {
+        guard case .rect(let rect) = annotation.geometry else { return }
+        let imageBounds = CGRect(x: 0, y: 0, width: source.width, height: source.height)
+        let pixelRect = rect.intersection(imageBounds).integral
+        guard pixelRect.width >= 1, pixelRect.height >= 1,
+              let sourceCrop = source.cropping(to: pixelRect) else { return }
+
+        let blockSize = max(1, annotation.style.pixelBlockSize)
+        let smallWidth = max(1, Int(pixelRect.width / blockSize))
+        let smallHeight = max(1, Int(pixelRect.height / blockSize))
+        guard let smallContext = CGContext(
+            data: nil,
+            width: smallWidth,
+            height: smallHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return }
+
+        smallContext.interpolationQuality = .none
+        smallContext.draw(sourceCrop, in: CGRect(x: 0, y: 0, width: smallWidth, height: smallHeight))
+        guard let smallImage = smallContext.makeImage() else { return }
+
+        let cgRect = convert(rect, canvasHeight: canvasHeight, crop: crop)
+        context.saveGState()
+        context.interpolationQuality = .none
+        context.draw(smallImage, in: cgRect)
+        context.restoreGState()
     }
 
     private static func drawArrowHead(

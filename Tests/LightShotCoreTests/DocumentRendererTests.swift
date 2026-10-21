@@ -99,18 +99,55 @@ struct DocumentRendererTests {
         #expect(nonWhitePixelCount(rendered) > 0)
     }
 
-    @Test func testPixelateIsSkipped() throws {
-        var document = EditDocument(image: try makeWhiteImage(width: 60, height: 60))
+    @Test func testTextRenderingProducesPixels() throws {
+        var document = EditDocument(image: try makeWhiteImage(width: 120, height: 60))
         document.annotations = [
             Annotation(
-                kind: .pixelate,
-                geometry: .rect(CGRect(x: 10, y: 10, width: 40, height: 40)),
-                style: AnnotationStyle(color: .red, lineWidth: 8),
+                kind: .text,
+                geometry: .text(origin: CGPoint(x: 10, y: 10), width: 100, value: "Hello"),
+                style: AnnotationStyle(color: .black, fontSize: 28),
                 zIndex: 1
             ),
         ]
         let rendered = try #require(DocumentRenderer.render(document))
-        #expect(nonWhitePixelCount(rendered) == 0)
+        #expect(rendered.width == 120)
+        #expect(rendered.height == 60)
+        #expect(nonWhitePixelCount(rendered) > 0)
+    }
+
+    @Test func testPixelateRenderingProducesImage() throws {
+        var document = EditDocument(image: try makeWhiteImage(width: 80, height: 80))
+        document.annotations = [
+            Annotation(
+                kind: .pixelate,
+                geometry: .rect(CGRect(x: 10, y: 10, width: 40, height: 40)),
+                style: AnnotationStyle(pixelBlockSize: 8),
+                zIndex: 1
+            ),
+        ]
+        let rendered = try #require(DocumentRenderer.render(document))
+        #expect(rendered.width == 80)
+        #expect(rendered.height == 80)
+    }
+
+    @Test func testPixelateRenderingBlocksNonUniformImage() throws {
+        var document = EditDocument(image: try makeCheckerboardImage(width: 80, height: 80, cellSize: 4))
+        document.annotations = [
+            Annotation(
+                kind: .pixelate,
+                geometry: .rect(CGRect(x: 10, y: 10, width: 40, height: 40)),
+                style: AnnotationStyle(pixelBlockSize: 8),
+                zIndex: 1
+            ),
+        ]
+        let rendered = try #require(DocumentRenderer.render(document))
+        #expect(rendered.width == 80)
+        #expect(rendered.height == 80)
+        #expect(nonWhitePixelCount(rendered) > 0)
+        // The 40x40 pixelate rect with block size 8 downsamples to 5x5, so the
+        // first 8x8 output block (at the rect's top-left) is a single flattened
+        // color. Without pixelation the checkerboard stays non-uniform there.
+        #expect(try regionIsUniform(rendered, CGRect(x: 10, y: 10, width: 8, height: 8)))
     }
 }
 
@@ -127,6 +164,30 @@ private func makeWhiteImage(width: Int, height: Int) throws -> CGImage {
     ))
     context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    return try #require(context.makeImage())
+}
+
+private func makeCheckerboardImage(width: Int, height: Int, cellSize: Int) throws -> CGImage {
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let context = try #require(CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+    for row in stride(from: 0, to: height, by: cellSize) {
+        for column in stride(from: 0, to: width, by: cellSize) {
+            if (row / cellSize + column / cellSize) % 2 == 0 {
+                context.fill(CGRect(x: column, y: row, width: cellSize, height: cellSize))
+            }
+        }
+    }
     return try #require(context.makeImage())
 }
 
@@ -153,4 +214,41 @@ private func nonWhitePixelCount(_ image: CGImage) -> Int {
         }
     }
     return count
+}
+
+/// Returns `true` when every pixel inside `rect` has the same RGB(A) value.
+/// `rect` is expressed with a top-left origin, matching document coordinates.
+private func regionIsUniform(_ image: CGImage, _ rect: CGRect) throws -> Bool {
+    let width = image.width
+    let height = image.height
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let context = try #require(CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    let data = try #require(context.data)
+    let bytes = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
+
+    let minX = max(0, Int(rect.minX))
+    let minY = max(0, Int(rect.minY))
+    let maxX = min(width, Int(rect.maxX))
+    let maxY = min(height, Int(rect.maxY))
+    guard minX < maxX, minY < maxY else { return true }
+
+    let reference = (minY * width + minX) * 4
+    for y in minY..<maxY {
+        for x in minX..<maxX {
+            let index = (y * width + x) * 4
+            for channel in 0..<4 where bytes[index + channel] != bytes[reference + channel] {
+                return false
+            }
+        }
+    }
+    return true
 }
