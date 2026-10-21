@@ -1,26 +1,38 @@
 import AppKit
 import LightShotCore
+import os
 
 @MainActor
 final class CaptureCoordinator {
     private let captureService: ScreenCaptureService
     private var settings: AppSettings
     private let history: HistoryStore
+    private let pasteboardProvider: () -> any PasteboardWriting
     private var overlays: [SelectionOverlayWindow] = []
     private var keyMonitor: Any?
     private var activeView: SelectionOverlayView?
     private var isCapturing = false
-    private var editorWindow: EditorWindowController?
+    /// Every open capture editor, retained until its own close callback runs.
+    /// The callback removes exactly the editor that closed, so a second
+    /// capture can never deallocate (and disable) the first editor.
+    private(set) var editors: [EditorWindowController] = []
+    private let logger = Logger(subsystem: "local.lightshot.app", category: "Capture")
 
-    init(captureService: ScreenCaptureService, settings: AppSettings, history: HistoryStore) {
+    init(
+        captureService: ScreenCaptureService,
+        settings: AppSettings,
+        history: HistoryStore,
+        pasteboardProvider: @escaping () -> any PasteboardWriting = { NSPasteboard.general }
+    ) {
         self.captureService = captureService
         self.settings = settings
         self.history = history
+        self.pasteboardProvider = pasteboardProvider
     }
 
-    /// Applies settings changed in the Settings window. Captures and editors
-    /// that are already on screen keep the settings they were opened with;
-    /// the next capture/editor uses the new values.
+    /// Applies settings changed in the Settings window. Captures use the new
+    /// values immediately; open editors read them through their settings
+    /// provider at copy/save time.
     func updateSettings(_ settings: AppSettings) {
         self.settings = settings
     }
@@ -46,7 +58,7 @@ final class CaptureCoordinator {
             let window = SelectionOverlayWindow(screenFrame: capture.geometry.frame)
             let view = SelectionOverlayView(captured: capture)
             view.onConfirm = { [weak self] rect in
-                self?.finish(capture: capture, rect: rect)
+                self?.complete(capture: capture, rect: rect)
             }
             view.onCancel = { [weak self] in
                 self?.dismiss()
@@ -72,7 +84,9 @@ final class CaptureCoordinator {
         }
     }
 
-    private func finish(capture: CapturedImage, rect: CGRect) {
+    /// Completes a confirmed selection. Internal so the committed harness can
+    /// drive the editor and direct-copy paths without a real screen capture.
+    func complete(capture: CapturedImage, rect: CGRect) {
         guard let cropped = capture.cropped(toLocalPoints: rect) else {
             dismiss()
             NSSound.beep()
@@ -84,17 +98,18 @@ final class CaptureCoordinator {
             let identifier = UUID()
             let editor = EditorWindowController(
                 document: EditDocument(image: cropped),
-                settings: settings,
+                settingsProvider: { [weak self] in self?.settings ?? .default },
                 history: history,
                 identifier: identifier,
+                pasteboard: pasteboardProvider(),
                 onClose: { [weak self] in
-                    // Only clear the slot when this editor still owns it; a
-                    // late close callback must not drop a newer editor.
-                    guard let self, self.editorWindow?.identifier == identifier else { return }
-                    self.editorWindow = nil
+                    // Remove only the editor whose close callback runs; a
+                    // late close must not drop a newer editor.
+                    guard let self else { return }
+                    self.editors.removeAll { $0.identifier == identifier }
                 }
             )
-            editorWindow = editor
+            editors.append(editor)
             editor.show()
             return
         }
@@ -103,9 +118,14 @@ final class CaptureCoordinator {
             NSSound.beep()
             return
         }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setData(data, forType: .png)
+        // Encode before touching the pasteboard, then write with rollback so a
+        // rejected write leaves the previous clipboard contents in place and
+        // never records a screenshot that was not copied.
+        guard PasteboardWriter.writePNG(data, to: pasteboardProvider()) else {
+            logger.error("Failed to copy the captured screenshot to the pasteboard")
+            NSSound.beep()
+            return
+        }
         HistoryRecorder.record(cropped, source: .region, settings: settings, history: history)
     }
 

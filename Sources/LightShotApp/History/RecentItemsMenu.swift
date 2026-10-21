@@ -56,9 +56,22 @@ final class RecentMenuController: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         isMenuOpen = true
-        // Rebuild from the cache only. The cache is kept current by the
-        // history notification, so no actor read is needed before showing.
+        // Rebuild from the cache only. Drop entries whose file disappeared
+        // since the cache was filled (deleted outside the app, or pruned by a
+        // history-limit change) so the menu never offers a dead screenshot.
+        pruneMissingEntries()
         rebuild()
+    }
+
+    /// Removes cached entries whose image file no longer exists.
+    private func pruneMissingEntries() {
+        let existing = entries.filter { entry in
+            FileManager.default.fileExists(
+                atPath: history.directory.appendingPathComponent(entry.imageFileName).path
+            )
+        }
+        guard existing.count != entries.count else { return }
+        entries = existing
     }
 
     func menuDidClose(_ menu: NSMenu) {

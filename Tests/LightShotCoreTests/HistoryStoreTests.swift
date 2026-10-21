@@ -176,6 +176,104 @@ struct HistoryStoreTests {
         #expect(!FileManager.default.fileExists(atPath: firstImageURL.path))
     }
 
+    @Test func testByteCapEvictsMultipleEntriesAndTheirFiles() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let first = try await store.record(image: ImageData(try makeImage()), source: .region)
+        let second = try await store.record(image: ImageData(try makeImage(variant: 1)), source: .region)
+        let third = try await store.record(image: ImageData(try makeImage(variant: 2)), source: .region)
+        let fourth = try await store.record(image: ImageData(try makeImage(variant: 3)), source: .region)
+
+        // A cap that fits exactly the two newest entries must evict both older
+        // entries, including their image and thumbnail files.
+        let cap = fileBytes(for: fourth, in: directory) + fileBytes(for: third, in: directory)
+        let firstImageURL = await store.imageURL(for: first)
+        let secondImageURL = await store.imageURL(for: second)
+        let firstThumbnailURL = await store.thumbnailURL(for: first)
+        let secondThumbnailURL = await store.thumbnailURL(for: second)
+
+        let reloaded = HistoryStore(
+            baseDirectory: directory,
+            maxItems: 10,
+            maxBytes: cap,
+            minimumBytes: 1
+        )
+        let entries = await reloaded.entries()
+        #expect(entries.map(\.id) == [fourth.id, third.id])
+        let thirdImageURL = await reloaded.imageURL(for: third)
+        let fourthImageURL = await reloaded.imageURL(for: fourth)
+        #expect(FileManager.default.fileExists(atPath: thirdImageURL.path))
+        #expect(FileManager.default.fileExists(atPath: fourthImageURL.path))
+        #expect(!FileManager.default.fileExists(atPath: firstImageURL.path))
+        #expect(!FileManager.default.fileExists(atPath: secondImageURL.path))
+        #expect(!FileManager.default.fileExists(atPath: firstThumbnailURL.path))
+        #expect(!FileManager.default.fileExists(atPath: secondThumbnailURL.path))
+    }
+
+    @Test func testCorruptIndexPreservesFilesAndQuarantinesIndex() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entry = try await store.record(image: ImageData(try makeImage()), source: .region)
+        let imageURL = await store.imageURL(for: entry)
+        let thumbnailURL = await store.thumbnailURL(for: entry)
+        let indexPath = directory.appendingPathComponent("index.json")
+        try Data("{ definitely not a history index".utf8).write(to: indexPath)
+
+        let reloaded = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entries = await reloaded.entries()
+
+        #expect(entries.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: imageURL.path))
+        #expect(FileManager.default.fileExists(atPath: thumbnailURL.path))
+        // No replacement index may be written: an empty index would let the
+        // next launch sweep the preserved files as orphans.
+        #expect(!FileManager.default.fileExists(atPath: indexPath.path))
+        let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        #expect(files.contains { $0.hasPrefix("index.corrupt-") && $0.hasSuffix(".json") })
+
+        // A later limit update must not sneak in the empty index that the
+        // corrupt load deliberately avoided writing.
+        try await reloaded.updateLimits(maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        #expect(!FileManager.default.fileExists(atPath: indexPath.path))
+        #expect(FileManager.default.fileExists(atPath: imageURL.path))
+        #expect(FileManager.default.fileExists(atPath: thumbnailURL.path))
+    }
+
+    @Test func testMissingIndexPreservesFilesWithoutSweeping() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entry = try await store.record(image: ImageData(try makeImage()), source: .region)
+        let imageURL = await store.imageURL(for: entry)
+        let thumbnailURL = await store.thumbnailURL(for: entry)
+        let indexPath = directory.appendingPathComponent("index.json")
+        try FileManager.default.removeItem(at: indexPath)
+
+        let reloaded = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entries = await reloaded.entries()
+
+        #expect(entries.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: imageURL.path))
+        #expect(FileManager.default.fileExists(atPath: thumbnailURL.path))
+        #expect(!FileManager.default.fileExists(atPath: indexPath.path))
+    }
+
+    private func fileBytes(for entry: HistoryEntry, in directory: URL) -> Int64 {
+        let imageBytes = fileSize(directory.appendingPathComponent(entry.imageFileName))
+        let thumbnailBytes = fileSize(directory.appendingPathComponent(entry.thumbnailFileName))
+        return imageBytes + thumbnailBytes
+    }
+
+    private func fileSize(_ url: URL) -> Int64 {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
     private func makeDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("LightShotTests-\(UUID().uuidString)", isDirectory: true)

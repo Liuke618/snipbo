@@ -4,6 +4,11 @@ public enum SelectionHandle: CaseIterable, Sendable {
     case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left, inside
 }
 
+/// A single boundary of a selection, used by directional keyboard resizing.
+public enum SelectionEdge: Sendable {
+    case left, right, top, bottom
+}
+
 public struct SelectionModel: Equatable, Sendable {
     public private(set) var rect: CGRect
     public let minimumSize: CGFloat
@@ -110,6 +115,50 @@ public struct SelectionModel: Equatable, Sendable {
             )
         }
 
+        clampToBounds(bounds)
+    }
+
+    /// Moves one boundary outward by `delta`, keeping the selection inside
+    /// `bounds` and at least `minimumSize` on the resized axis.
+    ///
+    /// Deltas are expressed in the edge's outward direction: a positive
+    /// `delta` on `.left` moves the left edge farther left, a positive `delta`
+    /// on `.top` moves the top edge farther up, and so on.
+    public mutating func resize(edge: SelectionEdge, by delta: CGFloat, constrainedTo bounds: CGRect) {
+        switch edge {
+        case .left:
+            let newMinX = max(bounds.minX, min(rect.minX - delta, rect.maxX - minimumSize))
+            rect = CGRect(
+                x: newMinX,
+                y: rect.minY,
+                width: rect.maxX - newMinX,
+                height: rect.height
+            )
+        case .right:
+            let newMaxX = min(bounds.maxX, max(rect.maxX + delta, rect.minX + minimumSize))
+            rect = CGRect(
+                x: rect.minX,
+                y: rect.minY,
+                width: newMaxX - rect.minX,
+                height: rect.height
+            )
+        case .top:
+            let newMinY = max(bounds.minY, min(rect.minY - delta, rect.maxY - minimumSize))
+            rect = CGRect(
+                x: rect.minX,
+                y: newMinY,
+                width: rect.width,
+                height: rect.maxY - newMinY
+            )
+        case .bottom:
+            let newMaxY = min(bounds.maxY, max(rect.maxY + delta, rect.minY + minimumSize))
+            rect = CGRect(
+                x: rect.minX,
+                y: rect.minY,
+                width: rect.width,
+                height: newMaxY - rect.minY
+            )
+        }
         clampToBounds(bounds)
     }
 

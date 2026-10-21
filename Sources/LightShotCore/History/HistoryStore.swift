@@ -1,16 +1,29 @@
 import CoreGraphics
 import Foundation
+import os
 
-public enum HistoryError: Error {
+public enum HistoryError: Error, LocalizedError {
     case encodeFailed
+
+    public var errorDescription: String? {
+        switch self {
+        case .encodeFailed:
+            return "The screenshot could not be encoded for the history."
+        }
+    }
 }
 
 public actor HistoryStore {
+    private static let logger = Logger(subsystem: "local.lightshot.app", category: "History")
     private let baseDirectory: URL
     private let minimumBytes: Int64
     private var maxItems: Int
     private var maxBytes: Int64
     private var entriesValue: [HistoryEntry]
+    /// False until a valid index has been loaded or written in this process.
+    /// While false, an empty list must not be persisted: an empty index would
+    /// tell the next launch that every preserved image is an orphan.
+    private var hasTrustworthyIndex = false
     private let fileManager = FileManager.default
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -56,14 +69,31 @@ public actor HistoryStore {
             fileManager: fileManager
         )
         self.entriesValue = loaded.entries
-        if loaded.indexNeedsRewrite,
-           let data = try? encoder.encode(loaded.entries) {
-            try? data.write(to: baseDirectory.appendingPathComponent(Self.indexFileName), options: .atomic)
+        self.hasTrustworthyIndex = loaded.indexIsTrustworthy
+        if loaded.indexNeedsRewrite {
+            do {
+                let data = try encoder.encode(loaded.entries)
+                try data.write(
+                    to: baseDirectory.appendingPathComponent(Self.indexFileName),
+                    options: .atomic
+                )
+                self.hasTrustworthyIndex = true
+            } catch {
+                Self.logger.error(
+                    "Failed to rewrite the history index: \(String(describing: error), privacy: .public)"
+                )
+            }
         }
     }
 
     public func entries() -> [HistoryEntry] {
         entriesValue
+    }
+
+    /// The store's private directory. Immutable, so UI code can resolve cached
+    /// entries for a file-existence check without an actor hop.
+    public nonisolated var directory: URL {
+        baseDirectory
     }
 
     public func imageURL(for entry: HistoryEntry) -> URL {
@@ -137,8 +167,16 @@ public actor HistoryStore {
     }
 
     private func saveIndex(_ entries: [HistoryEntry]) throws {
+        guard !entries.isEmpty || hasTrustworthyIndex else {
+            // No valid index was loaded and there is nothing to reference the
+            // preserved files. Writing `[]` would make the next launch sweep
+            // them as orphans, so leave the directory alone until a record
+            // writes a real index.
+            return
+        }
         let data = try encoder.encode(entries)
         try data.write(to: indexURL, options: .atomic)
+        hasTrustworthyIndex = true
     }
 
     private func prune() throws {
@@ -171,12 +209,21 @@ public actor HistoryStore {
     private struct LoadedState {
         var entries: [HistoryEntry]
         var indexNeedsRewrite: Bool
+        var indexIsTrustworthy: Bool
     }
 
     /// Loads `index.json`, drops entries whose image file is gone, prunes the
     /// survivors to the limits, and removes store files that no surviving
     /// entry references. Only files directly inside `baseDirectory` are
-    /// touched; `index.json` itself is preserved.
+    /// touched; `index.json` is never deleted by the orphan sweep (an
+    /// unreadable index is moved aside by `quarantineIndex`).
+    ///
+    /// A missing index or an index that cannot be decoded must never trigger
+    /// the orphan sweep: without a trustworthy index every image looks
+    /// unreferenced, and sweeping would delete the user's whole history. A
+    /// corrupt index is moved aside and no replacement is written until the
+    /// next successful record, so a later launch cannot sweep the preserved
+    /// files either.
     private static func loadState(
         baseDirectory: URL,
         maxItems: Int,
@@ -184,17 +231,29 @@ public actor HistoryStore {
         decoder: JSONDecoder,
         fileManager: FileManager
     ) -> LoadedState {
-        var entries: [HistoryEntry] = []
-        var indexNeedsRewrite = false
         let indexPath = baseDirectory.appendingPathComponent(indexFileName)
-        if let data = try? Data(contentsOf: indexPath) {
-            if let decoded = try? decoder.decode([HistoryEntry].self, from: data) {
-                entries = decoded
-            } else {
-                indexNeedsRewrite = true
-            }
+        guard fileManager.fileExists(atPath: indexPath.path) else {
+            // No index: there is no way to tell which files belong to the
+            // store, so keep them all and do not create an empty index.
+            return LoadedState(entries: [], indexNeedsRewrite: false, indexIsTrustworthy: false)
         }
 
+        let decoded: [HistoryEntry]
+        do {
+            let data = try Data(contentsOf: indexPath)
+            decoded = try decoder.decode([HistoryEntry].self, from: data)
+        } catch {
+            quarantineIndex(
+                at: indexPath,
+                in: baseDirectory,
+                fileManager: fileManager,
+                error: error
+            )
+            return LoadedState(entries: [], indexNeedsRewrite: false, indexIsTrustworthy: false)
+        }
+
+        var entries = decoded
+        var indexNeedsRewrite = false
         let existing = entries.filter { entry in
             fileManager.fileExists(
                 atPath: baseDirectory.appendingPathComponent(entry.imageFileName).path
@@ -221,7 +280,39 @@ public actor HistoryStore {
             indexNeedsRewrite = true
         }
 
-        return LoadedState(entries: entries, indexNeedsRewrite: indexNeedsRewrite)
+        return LoadedState(
+            entries: entries,
+            indexNeedsRewrite: indexNeedsRewrite,
+            indexIsTrustworthy: true
+        )
+    }
+
+    /// Moves an unreadable `index.json` out of the way so the next load sees
+    /// "no index" instead of decoding the same failure again. A read-only
+    /// directory can make the rename fail; log that and leave the file alone.
+    private static func quarantineIndex(
+        at indexPath: URL,
+        in baseDirectory: URL,
+        fileManager: FileManager,
+        error: Error
+    ) {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
+        let stamp = formatter.string(from: Date())
+        let quarantineURL = baseDirectory
+            .appendingPathComponent("index.corrupt-\(stamp).json")
+        do {
+            try fileManager.moveItem(at: indexPath, to: quarantineURL)
+            logger.error(
+                "History index was unreadable and was moved to \(quarantineURL.lastPathComponent, privacy: .public): \(String(describing: error), privacy: .public)"
+            )
+        } catch {
+            logger.error(
+                "History index is unreadable and could not be quarantined: \(String(describing: error), privacy: .public)"
+            )
+        }
     }
 
     @discardableResult

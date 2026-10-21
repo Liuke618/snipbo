@@ -243,11 +243,22 @@ final class SelectionOverlayView: NSView {
         case 123, 124, 125, 126:
             let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
             let resize = event.modifierFlags.contains(.option)
-            switch event.keyCode {
-            case 123: selection.nudge(dx: -step, dy: 0, resize: resize, constrainedTo: bounds)
-            case 124: selection.nudge(dx: step, dy: 0, resize: resize, constrainedTo: bounds)
-            case 125: selection.nudge(dx: 0, dy: step, resize: resize, constrainedTo: bounds)
-            default: selection.nudge(dx: 0, dy: -step, resize: resize, constrainedTo: bounds)
+            if resize {
+                // Option+arrow moves that boundary outward in the arrow's
+                // direction: Left widens from the left edge, Up from the top.
+                switch event.keyCode {
+                case 123: selection.resize(edge: .left, by: step, constrainedTo: bounds)
+                case 124: selection.resize(edge: .right, by: step, constrainedTo: bounds)
+                case 125: selection.resize(edge: .bottom, by: step, constrainedTo: bounds)
+                default: selection.resize(edge: .top, by: step, constrainedTo: bounds)
+                }
+            } else {
+                switch event.keyCode {
+                case 123: selection.nudge(dx: -step, dy: 0, resize: false, constrainedTo: bounds)
+                case 124: selection.nudge(dx: step, dy: 0, resize: false, constrainedTo: bounds)
+                case 125: selection.nudge(dx: 0, dy: step, resize: false, constrainedTo: bounds)
+                default: selection.nudge(dx: 0, dy: -step, resize: false, constrainedTo: bounds)
+                }
             }
             needsDisplay = true
             return true

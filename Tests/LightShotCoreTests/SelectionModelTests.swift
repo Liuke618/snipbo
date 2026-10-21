@@ -51,4 +51,64 @@ struct SelectionModelTests {
         model.nudge(dx: 0, dy: 0, resize: true, constrainedTo: bounds)
         #expect(model.rect == CGRect(x: 50, y: 50, width: 100, height: 80))
     }
+
+    @Test func testResizeLeftEdgeMovesLeft() {
+        var model = SelectionModel(rect: CGRect(x: 50, y: 50, width: 100, height: 80))
+        model.resize(edge: .left, by: 10, constrainedTo: bounds)
+        #expect(model.rect == CGRect(x: 40, y: 50, width: 110, height: 80))
+    }
+
+    @Test func testResizeRightEdgeMovesRight() {
+        var model = SelectionModel(rect: CGRect(x: 50, y: 50, width: 100, height: 80))
+        model.resize(edge: .right, by: 10, constrainedTo: bounds)
+        #expect(model.rect == CGRect(x: 50, y: 50, width: 110, height: 80))
+    }
+
+    @Test func testResizeTopEdgeMovesUp() {
+        var model = SelectionModel(rect: CGRect(x: 50, y: 50, width: 100, height: 80))
+        model.resize(edge: .top, by: 10, constrainedTo: bounds)
+        #expect(model.rect == CGRect(x: 50, y: 40, width: 100, height: 90))
+    }
+
+    @Test func testResizeBottomEdgeMovesDown() {
+        var model = SelectionModel(rect: CGRect(x: 50, y: 50, width: 100, height: 80))
+        model.resize(edge: .bottom, by: 10, constrainedTo: bounds)
+        #expect(model.rect == CGRect(x: 50, y: 50, width: 100, height: 90))
+    }
+
+    @Test func testResizeAtBoundsDoesNotLeaveTheScreen() {
+        var left = SelectionModel(rect: CGRect(x: 0, y: 50, width: 100, height: 80))
+        left.resize(edge: .left, by: 10, constrainedTo: bounds)
+        #expect(left.rect == CGRect(x: 0, y: 50, width: 100, height: 80))
+
+        var right = SelectionModel(rect: CGRect(x: 100, y: 50, width: 100, height: 80))
+        right.resize(edge: .right, by: 10, constrainedTo: bounds)
+        #expect(right.rect == CGRect(x: 100, y: 50, width: 100, height: 80))
+
+        var top = SelectionModel(rect: CGRect(x: 50, y: 0, width: 100, height: 80))
+        top.resize(edge: .top, by: 10, constrainedTo: bounds)
+        #expect(top.rect == CGRect(x: 50, y: 0, width: 100, height: 80))
+
+        var bottom = SelectionModel(rect: CGRect(x: 50, y: 120, width: 100, height: 80))
+        bottom.resize(edge: .bottom, by: 10, constrainedTo: bounds)
+        #expect(bottom.rect == CGRect(x: 50, y: 120, width: 100, height: 80))
+    }
+
+    @Test func testResizeStopsAtMinimumSize() {
+        var left = SelectionModel(rect: CGRect(x: 50, y: 50, width: 100, height: 80))
+        left.resize(edge: .left, by: -200, constrainedTo: bounds)
+        #expect(left.rect == CGRect(x: 149, y: 50, width: 1, height: 80))
+
+        var right = SelectionModel(rect: CGRect(x: 50, y: 50, width: 100, height: 80))
+        right.resize(edge: .right, by: -200, constrainedTo: bounds)
+        #expect(right.rect == CGRect(x: 50, y: 50, width: 1, height: 80))
+
+        var top = SelectionModel(rect: CGRect(x: 50, y: 50, width: 100, height: 80))
+        top.resize(edge: .top, by: -200, constrainedTo: bounds)
+        #expect(top.rect == CGRect(x: 50, y: 129, width: 100, height: 1))
+
+        var bottom = SelectionModel(rect: CGRect(x: 50, y: 50, width: 100, height: 80))
+        bottom.resize(edge: .bottom, by: -200, constrainedTo: bounds)
+        #expect(bottom.rect == CGRect(x: 50, y: 50, width: 100, height: 1))
+    }
 }

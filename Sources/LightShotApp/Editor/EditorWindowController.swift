@@ -10,22 +10,28 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     let controller: EditorController
     private let canvas: EditorCanvasView
     private let scrollView = NSScrollView()
-    private let settings: AppSettings
+    /// Read at action time so open editors follow live settings changes
+    /// (history toggle, save directory, format, JPEG quality).
+    private let settingsProvider: () -> AppSettings
+    private var settings: AppSettings { settingsProvider() }
     private let history: HistoryStore
+    private let pasteboard: any PasteboardWriting
     private let onClose: () -> Void
     private var keyMonitor: Any?
 
     init(
         document: EditDocument,
-        settings: AppSettings,
+        settingsProvider: @escaping () -> AppSettings,
         history: HistoryStore,
         identifier: UUID = UUID(),
+        pasteboard: any PasteboardWriting = NSPasteboard.general,
         onClose: @escaping () -> Void = {}
     ) {
         self.identifier = identifier
         self.controller = EditorController(document: document)
-        self.settings = settings
+        self.settingsProvider = settingsProvider
         self.history = history
+        self.pasteboard = pasteboard
         self.canvas = EditorCanvasView(controller: controller)
         self.onClose = onClose
         let window = NSWindow(
@@ -187,42 +193,15 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             reportCopyFailure()
             return false
         }
-        let pasteboard = NSPasteboard.general
-        let previousItems = Self.snapshotPasteboard(pasteboard)
-        pasteboard.clearContents()
-        guard pasteboard.setData(data, forType: .png) else {
-            // Clearing already dropped the previous contents; put them back
-            // before telling the user the copy failed.
-            Self.restorePasteboard(previousItems, to: pasteboard)
+        let pasteboard = self.pasteboard
+        guard PasteboardWriter.writePNG(data, to: pasteboard) else {
+            // The helper already put the previous contents back before
+            // telling the user the copy failed.
             reportCopyFailure()
             return false
         }
         HistoryRecorder.record(image, source: .region, settings: settings, history: history)
         return true
-    }
-
-    /// Copies the pasteboard's items so they can be restored after a failed
-    /// write. Items read from a pasteboard cannot be written back directly, so
-    /// each item's data is copied into a fresh item. Split out so the
-    /// snapshot/restore mechanics can be exercised without a real failure.
-    static func snapshotPasteboard(_ pasteboard: NSPasteboard) -> [NSPasteboardItem] {
-        (pasteboard.pasteboardItems ?? []).compactMap { item in
-            let copy = NSPasteboardItem()
-            var copiedAnyType = false
-            for type in item.types {
-                if let data = item.data(forType: type) {
-                    copy.setData(data, forType: type)
-                    copiedAnyType = true
-                }
-            }
-            return copiedAnyType ? copy : nil
-        }
-    }
-
-    static func restorePasteboard(_ items: [NSPasteboardItem], to pasteboard: NSPasteboard) {
-        guard !items.isEmpty else { return }
-        pasteboard.clearContents()
-        pasteboard.writeObjects(items)
     }
 
     private func reportCopyFailure() {
@@ -246,6 +225,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     private func saveAndClose(saveAs: Bool) {
         commitPendingText()
+        // Snapshot the live settings once so the file name, directory, format,
+        // and quality all come from the same action-time values.
+        let settings = self.settings
         guard let image = controller.renderForExport() else { return }
         let fileName = controller.defaultFileName(format: settings.format)
         let url: URL

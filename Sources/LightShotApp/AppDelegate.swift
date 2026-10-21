@@ -41,22 +41,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         let service = HotkeyService { coordinator.startRegionCapture() }
         hotkeyService = service
-        service.register(settings.hotkey)
-        registeredHotkey = settings.hotkey
+        if service.register(settings.hotkey) {
+            registeredHotkey = settings.hotkey
+        } else {
+            registeredHotkey = nil
+            showHotkeyFailure(for: settings.hotkey, previous: nil, restored: false)
+        }
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(historyWriteFailed(_:)),
+            name: .lightShotHistoryWriteFailed,
+            object: nil
+        )
 
         settingsModel.onChange = { [weak self] newSettings in
             guard let self else { return }
             if newSettings.hotkey != self.registeredHotkey {
-                self.registeredHotkey = newSettings.hotkey
-                self.hotkeyService?.register(newSettings.hotkey)
+                self.applyHotkey(newSettings.hotkey)
             }
             self.captureCoordinator.updateSettings(newSettings)
             Task {
-                try? await self.historyStore.updateLimits(
-                    maxItems: newSettings.historyMaxItems,
-                    maxBytes: newSettings.historyMaxBytes
-                )
+                do {
+                    try await self.historyStore.updateLimits(
+                        maxItems: newSettings.historyMaxItems,
+                        maxBytes: newSettings.historyMaxBytes
+                    )
+                    // Pruning can remove entries that the Recent menu still has
+                    // cached; tell it to reconcile with the store.
+                    NotificationCenter.default.post(name: .lightShotHistoryDidChange, object: nil)
+                } catch {
+                    let message = "The history limits could not be applied: \(error.localizedDescription)"
+                    HistoryRecorder.logger.error("\(message, privacy: .public)")
+                    NotificationCenter.default.post(name: .lightShotHistoryWriteFailed, object: message)
+                }
             }
+        }
+    }
+
+    /// Applies a hotkey change transactionally: only a successful registration
+    /// replaces the active chord. If the new chord is rejected, the previous
+    /// chord is registered again and the user is told what is still active.
+    private func applyHotkey(_ hotkey: Hotkey) {
+        let previous = registeredHotkey
+        if hotkeyService?.register(hotkey) == true {
+            registeredHotkey = hotkey
+            return
+        }
+        var restored = false
+        if let previous, hotkeyService?.register(previous) == true {
+            registeredHotkey = previous
+            restored = true
+        } else {
+            registeredHotkey = nil
+        }
+        HistoryRecorder.logger.error(
+            "Could not register \(hotkey.displayString, privacy: .public); previous hotkey restored: \(restored, privacy: .public)"
+        )
+        showHotkeyFailure(for: hotkey, previous: previous, restored: restored)
+    }
+
+    private func showHotkeyFailure(for hotkey: Hotkey, previous: Hotkey?, restored: Bool) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Global shortcut not registered"
+        if restored, let previous {
+            alert.informativeText = "LightShot could not register \(hotkey.displayString). The previous shortcut \(previous.displayString) is still active."
+        } else if previous != nil {
+            alert.informativeText = "LightShot could not register \(hotkey.displayString), and restoring the previous shortcut also failed. No global shortcut is active; choose another shortcut in Settings."
+        } else {
+            alert.informativeText = "LightShot could not register \(hotkey.displayString). No global shortcut is active; choose another shortcut in Settings."
+        }
+        alert.runModal()
+    }
+
+    /// Shows a history failure without interrupting the copy or save that has
+    /// already completed. A sheet is used when a window can host it; otherwise
+    /// the alert is shown after the failed background write, when nothing else
+    /// is waiting on the main thread.
+    @objc private func historyWriteFailed(_ notification: Notification) {
+        let detail = (notification.object as? String)
+            ?? "The last screenshot could not be added to history."
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Screenshot not added to history"
+        alert.informativeText = detail
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
         }
     }
 
@@ -90,7 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let identifier = UUID()
             let editor = EditorWindowController(
                 document: EditDocument(image: image),
-                settings: self.settings,
+                settingsProvider: { [weak self] in self?.settings ?? .default },
                 history: self.historyStore,
                 identifier: identifier,
                 onClose: { [weak self] in
