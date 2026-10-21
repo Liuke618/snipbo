@@ -3,4 +3,5 @@
 .build/
 .swiftpm/
 dist/
+Resources/AppIcon.iconset/
 .DS_Store
