@@ -43,6 +43,7 @@ public enum DocumentRenderer {
         canvasHeight: CGFloat,
         crop: CGRect
     ) {
+        guard annotation.kind != .pixelate else { return }
         switch annotation.geometry {
         case .rect(let rect):
             let cgRect = convert(rect, canvasHeight: canvasHeight, crop: crop)

@@ -26,14 +26,91 @@ struct DocumentRendererTests {
         #expect(rendered.height == 20)
     }
 
-    @Test func testArrowAndFreehandRender() throws {
+    @Test func testArrowRenders() throws {
         var document = EditDocument(image: try makeWhiteImage(width: 60, height: 60))
         document.annotations = [
-            Annotation(kind: .arrow, geometry: .line(start: CGPoint(x: 5, y: 5), end: CGPoint(x: 50, y: 50)), style: AnnotationStyle(), zIndex: 1),
-            Annotation(kind: .freehand, geometry: .path(points: [CGPoint(x: 5, y: 50), CGPoint(x: 30, y: 20), CGPoint(x: 55, y: 55)]), style: AnnotationStyle(), zIndex: 2),
+            Annotation(
+                kind: .arrow,
+                geometry: .line(start: CGPoint(x: 5, y: 5), end: CGPoint(x: 50, y: 50)),
+                style: AnnotationStyle(),
+                zIndex: 1
+            ),
         ]
         let rendered = try #require(DocumentRenderer.render(document))
         #expect(nonWhitePixelCount(rendered) > 0)
+    }
+
+    @Test func testFreehandRenders() throws {
+        var document = EditDocument(image: try makeWhiteImage(width: 60, height: 60))
+        document.annotations = [
+            Annotation(
+                kind: .freehand,
+                geometry: .path(points: [CGPoint(x: 5, y: 50), CGPoint(x: 30, y: 20), CGPoint(x: 55, y: 55)]),
+                style: AnnotationStyle(),
+                zIndex: 1
+            ),
+        ]
+        let rendered = try #require(DocumentRenderer.render(document))
+        #expect(nonWhitePixelCount(rendered) > 0)
+    }
+
+    @Test func testEllipseRenders() throws {
+        var document = EditDocument(image: try makeWhiteImage(width: 60, height: 60))
+        document.annotations = [
+            Annotation(
+                kind: .ellipse,
+                geometry: .rect(CGRect(x: 10, y: 10, width: 40, height: 30)),
+                style: AnnotationStyle(color: .red, lineWidth: 4),
+                zIndex: 1
+            ),
+        ]
+        let rendered = try #require(DocumentRenderer.render(document))
+        #expect(nonWhitePixelCount(rendered) > 0)
+    }
+
+    @Test func testLineRenders() throws {
+        var document = EditDocument(image: try makeWhiteImage(width: 60, height: 60))
+        document.annotations = [
+            Annotation(
+                kind: .line,
+                geometry: .line(start: CGPoint(x: 10, y: 10), end: CGPoint(x: 50, y: 50)),
+                style: AnnotationStyle(color: .red, lineWidth: 4),
+                zIndex: 1
+            ),
+        ]
+        let rendered = try #require(DocumentRenderer.render(document))
+        #expect(nonWhitePixelCount(rendered) > 0)
+    }
+
+    @Test func testHighlightRenders() throws {
+        var document = EditDocument(image: try makeWhiteImage(width: 60, height: 60))
+        document.annotations = [
+            Annotation(
+                kind: .highlight,
+                geometry: .line(start: CGPoint(x: 10, y: 30), end: CGPoint(x: 50, y: 30)),
+                style: AnnotationStyle(
+                    color: RGBA(red: 1, green: 1, blue: 0, alpha: 0.4),
+                    lineWidth: 14
+                ),
+                zIndex: 1
+            ),
+        ]
+        let rendered = try #require(DocumentRenderer.render(document))
+        #expect(nonWhitePixelCount(rendered) > 0)
+    }
+
+    @Test func testPixelateIsSkipped() throws {
+        var document = EditDocument(image: try makeWhiteImage(width: 60, height: 60))
+        document.annotations = [
+            Annotation(
+                kind: .pixelate,
+                geometry: .rect(CGRect(x: 10, y: 10, width: 40, height: 40)),
+                style: AnnotationStyle(color: .red, lineWidth: 8),
+                zIndex: 1
+            ),
+        ]
+        let rendered = try #require(DocumentRenderer.render(document))
+        #expect(nonWhitePixelCount(rendered) == 0)
     }
 }
 
