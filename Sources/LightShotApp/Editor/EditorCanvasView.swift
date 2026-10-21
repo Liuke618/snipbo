@@ -144,7 +144,22 @@ final class EditorCanvasView: NSView {
         )
     }
 
+    /// Commits the pending text edit, if any, using its current string. The
+    /// overlay's commit closure stores the annotation, removes the overlay and
+    /// restores canvas focus; empty or whitespace-only text is ignored by
+    /// `EditorController.commitText`, but the overlay still closes.
+    ///
+    /// Exposed to the editor window controller so other actions can commit a
+    /// pending edit before acting on the document.
+    func commitPendingText() {
+        guard let overlay = textOverlay else { return }
+        overlay.onCommit?(overlay.string)
+    }
+
     override func mouseDown(with event: NSEvent) {
+        // Clicking elsewhere on the canvas commits the pending text edit before
+        // starting a new one or any other tool's interaction.
+        commitPendingText()
         window?.makeFirstResponder(self)
         if controller.tool == .text {
             presentTextEditor(at: imagePoint(from: event))
@@ -160,6 +175,9 @@ final class EditorCanvasView: NSView {
     private func presentTextEditor(at point: CGPoint) {
         textOverlay?.removeFromSuperview()
         let widthInPoints: CGFloat = 260
+        // The committed width is in image pixels. Capture it at presentation so
+        // a zoom change before commit does not alter the annotation's width.
+        let imageWidth = widthInPoints / zoom
         let fontSize = max(12, controller.style.fontSize * zoom)
         // The canvas shows the committed crop zoomed, so map image pixels to
         // crop-relative view points before creating the overlay. The height
@@ -186,7 +204,7 @@ final class EditorCanvasView: NSView {
             guard let self, let editor else { return }
             // `point` stays in original image pixels; only the overlay frame is
             // crop-relative. The committed width is in image pixels too.
-            self.controller.commitText(value, at: point, width: widthInPoints / self.zoom)
+            self.controller.commitText(value, at: point, width: imageWidth)
             editor.removeFromSuperview()
             self.textOverlay = nil
             self.window?.makeFirstResponder(self)
