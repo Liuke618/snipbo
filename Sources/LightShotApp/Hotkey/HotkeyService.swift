@@ -59,4 +59,22 @@ final class HotkeyService {
             self.hotKeyRef = nil
         }
     }
+
+    /// Tears down everything installed in `init`: the hotkey registration and
+    /// the Carbon event handler.
+    ///
+    /// The installed handler holds an unretained pointer to `self`, so it must
+    /// not outlive this service. `HotkeyService` is owned for the lifetime of
+    /// the application, and `AppDelegate.applicationWillTerminate` calls this
+    /// method before the process exits. There is deliberately no `deinit`:
+    /// `@MainActor` classes get nonisolated deinitializers under Swift 6, so
+    /// the isolated teardown below cannot be expressed there; the explicit
+    /// shutdown is the contract for the app-lifetime owner.
+    func shutdown() {
+        unregister()
+        if let eventHandlerRef {
+            RemoveEventHandler(eventHandlerRef)
+            self.eventHandlerRef = nil
+        }
+    }
 }
