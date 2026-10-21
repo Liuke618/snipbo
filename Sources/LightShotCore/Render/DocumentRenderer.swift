@@ -150,7 +150,7 @@ public enum DocumentRenderer {
         smallContext.draw(sourceCrop, in: CGRect(x: 0, y: 0, width: smallWidth, height: smallHeight))
         guard let smallImage = smallContext.makeImage() else { return }
 
-        let cgRect = convert(rect, canvasHeight: canvasHeight, crop: crop)
+        let cgRect = convert(pixelRect, canvasHeight: canvasHeight, crop: crop)
         context.saveGState()
         context.interpolationQuality = .none
         context.draw(smallImage, in: cgRect)

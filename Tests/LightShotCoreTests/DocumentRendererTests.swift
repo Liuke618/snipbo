@@ -149,6 +149,42 @@ struct DocumentRendererTests {
         // color. Without pixelation the checkerboard stays non-uniform there.
         #expect(try regionIsUniform(rendered, CGRect(x: 10, y: 10, width: 8, height: 8)))
     }
+
+    @Test func testPixelateOutOfBoundsRectMatchesClippedRect() throws {
+        // A 40x40 source clipped at the right edge: a rect extending to x=80
+        // must render exactly like its in-bounds equivalent (x=20, width=20).
+        // Sampling is clipped to the image bounds, so the destination must be
+        // the clipped rect too; drawing into the unclipped rect would stretch
+        // the in-bounds content horizontally and misalign blocks.
+        let image = try makeCheckerboardImage(width: 40, height: 40, cellSize: 4)
+
+        var extended = EditDocument(image: image)
+        extended.annotations = [
+            Annotation(
+                kind: .pixelate,
+                geometry: .rect(CGRect(x: 20, y: 0, width: 60, height: 20)),
+                style: AnnotationStyle(pixelBlockSize: 4),
+                zIndex: 1
+            ),
+        ]
+
+        var clipped = EditDocument(image: image)
+        clipped.annotations = [
+            Annotation(
+                kind: .pixelate,
+                geometry: .rect(CGRect(x: 20, y: 0, width: 20, height: 20)),
+                style: AnnotationStyle(pixelBlockSize: 4),
+                zIndex: 1
+            ),
+        ]
+
+        let renderedExtended = try #require(DocumentRenderer.render(extended))
+        let renderedClipped = try #require(DocumentRenderer.render(clipped))
+
+        #expect(renderedExtended.width == renderedClipped.width)
+        #expect(renderedExtended.height == renderedClipped.height)
+        #expect(try differingPixelCount(renderedExtended, renderedClipped) == 0)
+    }
 }
 
 private func makeWhiteImage(width: Int, height: Int) throws -> CGImage {
@@ -251,4 +287,41 @@ private func regionIsUniform(_ image: CGImage, _ rect: CGRect) throws -> Bool {
         }
     }
     return true
+}
+
+/// Returns the number of pixels whose RGBA channels differ between two images,
+/// or `-1` when their dimensions differ.
+private func differingPixelCount(_ lhs: CGImage, _ rhs: CGImage) throws -> Int {
+    guard lhs.width == rhs.width, lhs.height == rhs.height else { return -1 }
+    let lhsBytes = try rgbaBytes(lhs)
+    let rhsBytes = try rgbaBytes(rhs)
+    var count = 0
+    for index in stride(from: 0, to: lhsBytes.count, by: 4) {
+        if lhsBytes[index] != rhsBytes[index]
+            || lhsBytes[index + 1] != rhsBytes[index + 1]
+            || lhsBytes[index + 2] != rhsBytes[index + 2]
+            || lhsBytes[index + 3] != rhsBytes[index + 3] {
+            count += 1
+        }
+    }
+    return count
+}
+
+/// Renders `image` into a premultiplied RGBA bitmap and returns its raw bytes.
+private func rgbaBytes(_ image: CGImage) throws -> [UInt8] {
+    let width = image.width
+    let height = image.height
+    let context = try #require(CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    let data = try #require(context.data)
+    let bytes = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
+    return Array(UnsafeBufferPointer(start: bytes, count: width * height * 4))
 }
