@@ -16,6 +16,10 @@ final class SelectionOverlayView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
     init(captured: CapturedImage) {
         self.captured = captured
         super.init(frame: CGRect(origin: .zero, size: captured.geometry.frame.size))
