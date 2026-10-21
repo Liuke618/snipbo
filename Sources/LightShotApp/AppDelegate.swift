@@ -16,7 +16,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let coordinator = captureCoordinator
         statusItemController = StatusItemController(
             onCaptureRegion: { coordinator.startRegionCapture() },
-            onCaptureTest: { [weak self] in self?.runCaptureTest() },
             onQuit: { NSApp.terminate(nil) }
         )
         hotkeyService = HotkeyService { coordinator.startRegionCapture() }
@@ -29,29 +28,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
-    }
-
-    private func runCaptureTest() {
-        if !PermissionService.hasScreenCaptureAccess,
-           !PermissionService.requestScreenCaptureAccess() {
-            PermissionService.openScreenRecordingSettings()
-            return
-        }
-        Task {
-            do {
-                let captures = try await captureService.captureAllDisplays(includeCursor: false)
-                guard let first = captures.first,
-                      let data = ImageExporter.pngData(from: first.image) else {
-                    NSSound.beep()
-                    return
-                }
-                let url = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("lightshot-capture-\(UUID().uuidString).png")
-                try data.write(to: url)
-                NSWorkspace.shared.open(url)
-            } catch {
-                NSAlert(error: error).runModal()
-            }
-        }
     }
 }
