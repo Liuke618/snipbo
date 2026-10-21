@@ -10,6 +10,7 @@ final class EditorCanvasView: NSView {
     private(set) var zoom: CGFloat = 1
     var onFit: (() -> Void)?
     var onActualSize: (() -> Void)?
+    private var textOverlay: TextEditingOverlay?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -145,8 +146,59 @@ final class EditorCanvasView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        if controller.tool == .text {
+            presentTextEditor(at: imagePoint(from: event))
+            return
+        }
         // Keep the select hit radius at ~8 view points at any zoom.
         controller.begin(at: imagePoint(from: event), tolerance: 8 / zoom)
+    }
+
+    /// Shows the text entry overlay at an original-image-pixel point and makes
+    /// it the first responder so typing reaches it. Any previous overlay is
+    /// discarded, matching the single-pending-edit behavior of the tool.
+    private func presentTextEditor(at point: CGPoint) {
+        textOverlay?.removeFromSuperview()
+        let widthInPoints: CGFloat = 260
+        let fontSize = max(12, controller.style.fontSize * zoom)
+        // The canvas shows the committed crop zoomed, so map image pixels to
+        // crop-relative view points before creating the overlay. The height
+        // follows the 1.4x line height used for text annotation bounds so the
+        // zoomed font is not clipped.
+        let frame = CGRect(
+            x: (point.x - controller.document.cropRect.minX) * zoom,
+            y: (point.y - controller.document.cropRect.minY) * zoom,
+            width: widthInPoints,
+            height: max(32, (fontSize * 1.4).rounded(.up))
+        )
+        let editor = TextEditingOverlay(frame: frame)
+        editor.font = .systemFont(ofSize: fontSize)
+        editor.textColor = NSColor(controller.style.color)
+        editor.drawsBackground = false
+        editor.isRichText = false
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false
+        editor.textContainerInset = .zero
+        // NSTextContainer pads lines by 5 points by default; remove it so the
+        // text being edited starts where the committed annotation will.
+        editor.textContainer?.lineFragmentPadding = 0
+        editor.onCommit = { [weak self, weak editor] value in
+            guard let self, let editor else { return }
+            // `point` stays in original image pixels; only the overlay frame is
+            // crop-relative. The committed width is in image pixels too.
+            self.controller.commitText(value, at: point, width: widthInPoints / self.zoom)
+            editor.removeFromSuperview()
+            self.textOverlay = nil
+            self.window?.makeFirstResponder(self)
+        }
+        editor.onCancel = { [weak self, weak editor] in
+            editor?.removeFromSuperview()
+            self?.textOverlay = nil
+            self?.window?.makeFirstResponder(self)
+        }
+        addSubview(editor)
+        textOverlay = editor
+        window?.makeFirstResponder(editor)
     }
 
     override func mouseDragged(with event: NSEvent) {
