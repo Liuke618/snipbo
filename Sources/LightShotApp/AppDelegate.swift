@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import LightShotCore
 
 @MainActor
@@ -10,10 +11,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindowController: SettingsWindowController?
     private var registeredHotkey: Hotkey?
     private let captureService = ScreenCaptureService()
+    private var historyEditorWindow: EditorWindowController?
     private lazy var historyStore = HistoryStore(
         baseDirectory: AppPaths.historyDirectory,
         maxItems: settings.historyMaxItems,
         maxBytes: settings.historyMaxBytes
+    )
+    private lazy var recentMenuController = RecentMenuController(
+        history: historyStore,
+        openEntry: { [weak self] entry in self?.openHistoryEntry(entry) }
     )
     private lazy var captureCoordinator = CaptureCoordinator(
         captureService: captureService,
@@ -23,11 +29,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let coordinator = captureCoordinator
+        let recentController = recentMenuController
         statusItemController = StatusItemController(
             onCaptureRegion: { coordinator.startRegionCapture() },
             onSettings: { [weak self] in self?.showSettings() },
+            recentMenu: recentController.menu,
             onQuit: { NSApp.terminate(nil) }
         )
+        // Populate the Recent submenu before the user opens it; refreshing only
+        // from `menuWillOpen` would leave the first open showing the empty
+        // placeholder while the history read is still in flight.
+        Task { await recentController.refresh() }
         let service = HotkeyService { coordinator.startRegionCapture() }
         hotkeyService = service
         service.register(settings.hotkey)
@@ -62,5 +74,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindowController = SettingsWindowController(model: settingsModel)
         }
         settingsWindowController?.show()
+    }
+
+    /// Opens a stored screenshot in a new editor. The PNG is decoded off the
+    /// menu action's synchronous path; if the file was deleted in the meantime
+    /// the action is ignored instead of crashing.
+    private func openHistoryEntry(_ entry: HistoryEntry) {
+        Task { [weak self] in
+            guard let self else { return }
+            let url = await self.historyStore.imageURL(for: entry)
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+                NSLog("LightShot: could not open the recent screenshot at %@", url.path)
+                return
+            }
+            let editor = EditorWindowController(
+                document: EditDocument(image: image),
+                settings: self.settings,
+                history: self.historyStore,
+                onClose: { [weak self] in self?.historyEditorWindow = nil }
+            )
+            self.historyEditorWindow = editor
+            editor.show()
+        }
     }
 }
