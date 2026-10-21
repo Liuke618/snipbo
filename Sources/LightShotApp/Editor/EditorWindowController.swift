@@ -10,6 +10,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private let settings: AppSettings
     private let history: HistoryStore
     private let onClose: () -> Void
+    private var keyMonitor: Any?
 
     init(
         document: EditDocument,
@@ -66,7 +67,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
-        canvas.onCopy = { [weak self] in self?.copyAndClose() }
+        // Cmd+C copies without closing; Enter and the toolbar Copy button copy
+        // and close.
+        canvas.onCopy = { [weak self] in self?.copyToPasteboard() }
+        canvas.onCopyAndClose = { [weak self] in self?.copyAndClose() }
         canvas.onSave = { [weak self] in self?.saveAndClose(saveAs: false) }
         canvas.onSaveAs = { [weak self] in self?.saveAndClose(saveAs: true) }
         canvas.onEscape = { [weak self] in self?.close() }
@@ -80,6 +84,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         window?.makeKeyAndOrderFront(nil)
         window?.layoutIfNeeded()
         fitToWindow()
+        installKeyMonitor()
         window?.makeFirstResponder(canvas)
     }
 
@@ -95,6 +100,69 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         canvas.setZoom(scale)
     }
 
+    // MARK: - Shortcuts while a toolbar control has focus
+
+    /// Routes editor shortcuts that would otherwise be consumed by a focused
+    /// toolbar control (color well, slider, segmented control, buttons). The
+    /// canvas and the text overlay keep handling their own key events.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, let window = self.window else { return event }
+            // Key events normally target the key window; synthetic events can
+            // carry their target window explicitly. Only handle events for this
+            // editor, never for panels or other windows.
+            guard window.isKeyWindow || event.window === window else { return event }
+            return self.handleEditorKey(event) ? nil : event
+        }
+    }
+
+    private func removeKeyMonitor() {
+        guard let keyMonitor else { return }
+        NSEvent.removeMonitor(keyMonitor)
+        self.keyMonitor = nil
+    }
+
+    /// Handles the editor shortcuts when the first responder is not the canvas
+    /// or the text overlay, which have their own key handling. Returns true
+    /// when the event was consumed.
+    func handleEditorKey(_ event: NSEvent) -> Bool {
+        guard let window else { return false }
+        let responder = window.firstResponder
+        if responder is EditorCanvasView || responder is TextEditingOverlay {
+            return false
+        }
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers.contains(.command),
+           let key = event.charactersIgnoringModifiers?.lowercased() {
+            switch key {
+            case "z":
+                if modifiers.contains(.shift) { controller.redo() } else { controller.undo() }
+                return true
+            case "c":
+                copyToPasteboard()
+                return true
+            case "s":
+                saveAndClose(saveAs: modifiers.contains(.shift))
+                return true
+            default:
+                break
+            }
+        }
+        switch event.keyCode {
+        case 36:
+            copyAndClose()
+            return true
+        case 53:
+            close()
+            return true
+        default:
+            return false
+        }
+    }
+
+    // MARK: - Copy and save
+
     /// Commits a pending text overlay before an action reads the document, so
     /// text still being edited is included in the export and is not lost when
     /// the window closes.
@@ -102,14 +170,72 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         canvas.commitPendingText()
     }
 
-    private func copyAndClose() {
+    /// Renders the document and writes it to the pasteboard, keeping the editor
+    /// open. Returns false when the image could not be encoded or written.
+    @discardableResult
+    func copyToPasteboard() -> Bool {
         commitPendingText()
+        // Encode before touching the pasteboard, so a render/encode failure
+        // leaves the user's current clipboard contents intact.
         guard let image = controller.renderForExport(),
-              let data = ImageExporter.pngData(from: image) else { return }
+              let data = ImageExporter.pngData(from: image) else {
+            reportCopyFailure()
+            return false
+        }
         let pasteboard = NSPasteboard.general
+        let previousItems = Self.snapshotPasteboard(pasteboard)
         pasteboard.clearContents()
-        pasteboard.setData(data, forType: .png)
-        Task { try? await history.record(image: ImageData(image), source: .region) }
+        guard pasteboard.setData(data, forType: .png) else {
+            // Clearing already dropped the previous contents; put them back
+            // before telling the user the copy failed.
+            Self.restorePasteboard(previousItems, to: pasteboard)
+            reportCopyFailure()
+            return false
+        }
+        HistoryRecorder.record(image, source: .region, settings: settings, history: history)
+        return true
+    }
+
+    /// Copies the pasteboard's items so they can be restored after a failed
+    /// write. Items read from a pasteboard cannot be written back directly, so
+    /// each item's data is copied into a fresh item. Split out so the
+    /// snapshot/restore mechanics can be exercised without a real failure.
+    static func snapshotPasteboard(_ pasteboard: NSPasteboard) -> [NSPasteboardItem] {
+        (pasteboard.pasteboardItems ?? []).compactMap { item in
+            let copy = NSPasteboardItem()
+            var copiedAnyType = false
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copy.setData(data, forType: type)
+                    copiedAnyType = true
+                }
+            }
+            return copiedAnyType ? copy : nil
+        }
+    }
+
+    static func restorePasteboard(_ items: [NSPasteboardItem], to pasteboard: NSPasteboard) {
+        guard !items.isEmpty else { return }
+        pasteboard.clearContents()
+        pasteboard.writeObjects(items)
+    }
+
+    private func reportCopyFailure() {
+        NSLog("LightShot: failed to copy the rendered screenshot to the pasteboard")
+        NSSound.beep()
+        guard let window, window.isVisible else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Copy failed"
+        alert.informativeText = "The screenshot could not be placed on the clipboard."
+        alert.runModal()
+    }
+
+    /// Copies the rendered document and closes the editor. Enter, the toolbar
+    /// Copy button, and any other "copy and finish" action use this; Cmd+C uses
+    /// `copyToPasteboard()` and keeps the editor open.
+    func copyAndClose() {
+        guard copyToPasteboard() else { return }
         close()
     }
 
@@ -127,7 +253,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         }
         do {
             try controller.write(image, to: url, format: settings.format, quality: settings.jpegQuality)
-            Task { try? await history.record(image: ImageData(image), source: .region) }
+            HistoryRecorder.record(image, source: .region, settings: settings, history: history)
             close()
         } catch {
             NSAlert(error: error).runModal()
@@ -145,11 +271,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     override func close() {
         commitPendingText()
+        removeKeyMonitor()
         super.close()
     }
 
     func windowWillClose(_ notification: Notification) {
         commitPendingText()
+        removeKeyMonitor()
         onClose()
     }
 }

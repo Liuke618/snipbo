@@ -92,7 +92,7 @@ final class CaptureCoordinator {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setData(data, forType: .png)
-        Task { try? await history.record(image: ImageData(cropped), source: .region) }
+        HistoryRecorder.record(cropped, source: .region, settings: settings, history: history)
     }
 
     private func dismiss() {

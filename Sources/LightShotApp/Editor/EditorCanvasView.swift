@@ -13,7 +13,10 @@ final class EditorCanvasView: NSView {
     private(set) var zoom: CGFloat = 1
     var onFit: (() -> Void)?
     var onActualSize: (() -> Void)?
+    /// Cmd+C: copy without closing.
     var onCopy: (() -> Void)?
+    /// Enter: copy and close.
+    var onCopyAndClose: (() -> Void)?
     var onSave: (() -> Void)?
     var onSaveAs: (() -> Void)?
     var onEscape: (() -> Void)?
@@ -260,7 +263,7 @@ final class EditorCanvasView: NSView {
             return
         }
         if event.keyCode == 36 {
-            onCopy?()
+            onCopyAndClose?()
             return
         }
         if event.keyCode == 53 {
