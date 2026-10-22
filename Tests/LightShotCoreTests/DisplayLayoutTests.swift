@@ -77,6 +77,35 @@ struct DisplayLayoutTests {
         )
     }
 
+    @Test func testAppKitOriginIsOnThePrimaryScreen() {
+        // AppKit (0, 0) is the primary display's bottom-left corner. It converts
+        // to local y == height, which must be treated as inside.
+        #expect(
+            layout.screen(containingAppKitPoint: .zero)?.displayID == 1
+        )
+    }
+
+    @Test func testPointOnOuterRightEdgeIsOnThePrimaryScreen() {
+        // AppKit x=1440 is the primary display's right edge. It converts to
+        // local x == width, which must be treated as inside.
+        #expect(
+            layout.screen(containingAppKitPoint: CGPoint(x: 1440, y: 450))?.displayID == 1
+        )
+    }
+
+    @Test func testPointOnOuterBottomCGEdgeIsOnThePrimaryScreen() {
+        // CG-global y=900 is the primary display's bottom edge.
+        #expect(
+            layout.screen(containingCGPoint: CGPoint(x: 720, y: 900))?.displayID == 1
+        )
+    }
+
+    @Test func testPointsJustOutsideTheEdgesAreNotContained() {
+        // The inclusive max edge must not leak past the display boundary.
+        #expect(layout.screen(containingAppKitPoint: CGPoint(x: 1440.5, y: 450)) == nil)
+        #expect(layout.screen(containingAppKitPoint: CGPoint(x: 720, y: -0.5)) == nil)
+    }
+
     @Test func testScreensIntersectingAWindowFrame() {
         // The boundary between the primary and the screen above is CG y=0.
         let spanning = CGRect(x: 100, y: -20, width: 200, height: 100)

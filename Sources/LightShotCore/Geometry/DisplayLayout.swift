@@ -35,6 +35,14 @@ public struct DisplayLayout: Equatable, Sendable {
         self.primaryHeight = primaryHeight
     }
 
+    /// The screen containing `point`, or `nil` if the point lies outside every
+    /// screen.
+    ///
+    /// Point containment is inclusive of the maximum edges: a cursor resting on
+    /// the bottom or right edge of a display still belongs to it (AppKit's
+    /// bottom edge flips to local `y == height`). A point exactly on a boundary
+    /// shared by two screens belongs to the first screen in `screens`. Area
+    /// queries below stay strictly positive so zero-area overlaps are excluded.
     public func screen(containingAppKitPoint point: CGPoint) -> Screen? {
         screen(containingCGPoint: CGPoint(x: point.x, y: primaryHeight - point.y))
     }
@@ -44,8 +52,8 @@ public struct DisplayLayout: Equatable, Sendable {
             let local = localPoint(fromCGPoint: point, on: screen)
             return local.x >= 0
                 && local.y >= 0
-                && local.x < screen.frame.width
-                && local.y < screen.frame.height
+                && local.x <= screen.frame.width
+                && local.y <= screen.frame.height
         }
     }
 
