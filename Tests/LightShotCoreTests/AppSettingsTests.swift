@@ -15,6 +15,8 @@ struct AppSettingsTests {
         #expect(settings.historyMaxBytes == 500 * 1024 * 1024)
         #expect(!settings.captureCursor)
         #expect(settings.saveDirectory.hasSuffix("Pictures/LightShot"))
+        #expect(settings.captureDelaySeconds == 3)
+        #expect(settings.ocrLanguages == ["zh-Hans", "en-US"])
     }
 
     @Test func testCodableRoundTrip() throws {
@@ -24,17 +26,44 @@ struct AppSettingsTests {
         #expect(decoded == settings)
     }
 
+    @Test func testLegacyPayloadWithoutPhaseTwoFieldsUsesDefaults() throws {
+        let current = try JSONEncoder().encode(AppSettings.default)
+        var object = try #require(
+            JSONSerialization.jsonObject(with: current) as? [String: Any]
+        )
+        object.removeValue(forKey: "captureDelaySeconds")
+        object.removeValue(forKey: "ocrLanguages")
+        let legacy = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: legacy)
+        #expect(decoded.captureDelaySeconds == AppSettings.default.captureDelaySeconds)
+        #expect(decoded.ocrLanguages == AppSettings.default.ocrLanguages)
+        #expect(decoded.hotkey == AppSettings.default.hotkey)
+        #expect(decoded.historyMaxItems == AppSettings.default.historyMaxItems)
+    }
+
     @Test func testNormalizationClampsValues() {
         var settings = AppSettings.default
         settings.jpegQuality = 3
         settings.historyMaxItems = 0
         settings.historyMaxBytes = 1
         settings.saveDirectory = ""
+        settings.captureDelaySeconds = 99
 
         let normalized = settings.normalized()
         #expect(normalized.jpegQuality == 1)
         #expect(normalized.historyMaxItems == 1)
         #expect(normalized.historyMaxBytes == 10 * 1024 * 1024)
         #expect(normalized.saveDirectory.hasSuffix("Pictures/LightShot"))
+        #expect(normalized.captureDelaySeconds == 30)
+    }
+
+    @Test func testOCRLanguageNormalizationFiltersDeduplicatesAndFallsBack() {
+        var settings = AppSettings.default
+        settings.ocrLanguages = ["fr-FR", "zh-Hans", "zh-Hans"]
+        #expect(settings.normalized().ocrLanguages == ["zh-Hans"])
+
+        settings.ocrLanguages = []
+        #expect(settings.normalized().ocrLanguages == AppSettings.defaultOCRLanguages)
     }
 }

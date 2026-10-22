@@ -8,7 +8,7 @@ import SwiftUI
 final class SettingsWindowController: NSWindowController {
     init(model: SettingsModel) {
         let window = NSWindow(
-            contentRect: CGRect(x: 0, y: 0, width: 520, height: 420),
+            contentRect: CGRect(x: 0, y: 0, width: 520, height: 720),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -19,7 +19,7 @@ final class SettingsWindowController: NSWindowController {
         // Assigning a hosting controller shrinks the window to SwiftUI's ideal
         // height. Keep the planned size so the form also fits when the JPEG
         // quality row appears.
-        window.setContentSize(NSSize(width: 520, height: 420))
+        window.setContentSize(NSSize(width: 520, height: 720))
         window.center()
         super.init(window: window)
     }

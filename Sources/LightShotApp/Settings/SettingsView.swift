@@ -30,8 +30,22 @@ struct SettingsView: View {
                         Slider(value: $model.settings.jpegQuality, in: 0.1...1)
                     }
                 }
+            }
+            Section("Capture") {
                 Toggle("Capture cursor", isOn: $model.settings.captureCursor)
                 Toggle("Open editor after capture", isOn: $model.settings.openEditorAfterCapture)
+                Stepper(
+                    "Timed capture countdown: \(model.settings.captureDelaySeconds) s",
+                    value: $model.settings.captureDelaySeconds,
+                    in: 0...30
+                )
+            }
+            Section("Recognition") {
+                Toggle("Simplified Chinese", isOn: languageBinding("zh-Hans"))
+                Toggle("English", isOn: languageBinding("en-US"))
+                Text("Text and barcodes are recognized locally with Apple's Vision framework.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("History") {
                 Toggle("Keep history", isOn: $model.settings.historyEnabled)
@@ -44,6 +58,23 @@ struct SettingsView: View {
         }
         .padding(20)
         .frame(width: 520)
+    }
+
+    /// Refuses to turn off the last enabled language; OCR needs at least one.
+    private func languageBinding(_ code: String) -> Binding<Bool> {
+        Binding(
+            get: { model.settings.ocrLanguages.contains(code) },
+            set: { enabled in
+                var languages = model.settings.ocrLanguages
+                if enabled {
+                    if !languages.contains(code) { languages.append(code) }
+                } else {
+                    guard languages.count > 1 else { return }
+                    languages.removeAll { $0 == code }
+                }
+                model.settings.ocrLanguages = languages
+            }
+        )
     }
 
     private func chooseFolder() {
