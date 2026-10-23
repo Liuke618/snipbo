@@ -7,6 +7,7 @@ enum CaptureError: Error, LocalizedError {
     case noDisplays
     case unmappedDisplay(CGDirectDisplayID)
     case displayNotFound(CGDirectDisplayID)
+    case screenNotFound
     case windowNotFound(CGWindowID)
     case noWindows
     case compositionFailed
@@ -26,6 +27,8 @@ enum CaptureError: Error, LocalizedError {
             return "No screen matches display ID \(displayID)."
         case .displayNotFound(let displayID):
             return "Display \(displayID) is no longer connected."
+        case .screenNotFound:
+            return "Could not determine the display under the pointer."
         case .windowNotFound(let windowID):
             return "The window \(windowID) is no longer available."
         case .noWindows:
@@ -43,6 +46,8 @@ enum CaptureError: Error, LocalizedError {
             return "Make sure Screen Recording permission is granted and the display is connected, then try again."
         case .displayNotFound:
             return "Reconnect the display or capture the screen under the pointer instead."
+        case .screenNotFound:
+            return "Move the pointer over a display and try again."
         case .windowNotFound, .noWindows:
             return "The window may have closed. Try again."
         case .compositionFailed:
@@ -129,7 +134,7 @@ final class ScreenCaptureService {
         }
         let layout = ScreenLayout.current()
         guard let screen = layout.bestScreen(forCGRect: window.frame) else {
-            throw CaptureError.noDisplays
+            throw CaptureError.screenNotFound
         }
 
         // The capture configuration is in pixels. Choose the backing scale of

@@ -65,8 +65,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.ocrLanguages = ocrLanguages
     }
 
-    /// Decodes every field defensively so payloads written by Phase 1 keep
-    /// working after new fields are introduced.
+    /// Decodes missing fields defensively so payloads written by earlier
+    /// versions keep working after new fields are introduced.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let fallback = AppSettings.default

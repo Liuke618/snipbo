@@ -69,10 +69,21 @@ struct SettingsView: View {
                 if enabled {
                     if !languages.contains(code) { languages.append(code) }
                 } else {
-                    guard languages.count > 1 else { return }
                     languages.removeAll { $0 == code }
                 }
-                model.settings.ocrLanguages = languages
+                if languages.isEmpty {
+                    // Republish the unchanged value so the rejected toggle
+                    // snaps back instead of staying visually off.
+                    model.settings.ocrLanguages = AppSettings.supportedOCRLanguages.filter(
+                        model.settings.ocrLanguages.contains
+                    )
+                    return
+                }
+                // Keep Vision's language priority in supported order rather
+                // than toggle-click order.
+                model.settings.ocrLanguages = AppSettings.supportedOCRLanguages.filter(
+                    languages.contains
+                )
             }
         )
     }

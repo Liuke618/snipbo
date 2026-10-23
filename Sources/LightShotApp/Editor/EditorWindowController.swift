@@ -24,6 +24,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private var recognitionPanelConstraints: [NSLayoutConstraint] = []
     private var scrollTrailingConstraint: NSLayoutConstraint!
     private var recognitionTask: Task<Void, Never>?
+    /// Invalidates stale tasks after cancel or a newer recognition request.
+    private var recognitionGeneration = 0
     private var toolbarView: EditorToolbarView?
 
     init(
@@ -300,6 +302,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         commitPendingText()
         guard let image = controller.renderForExport() else { return }
         let languages = settings.ocrLanguages
+        recognitionGeneration += 1
+        let generation = recognitionGeneration
 
         setRecognitionPanelVisible(true)
         recognitionPanel.showProgress()
@@ -314,6 +318,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                     languages: languages
                 )
                 try Task.checkCancellation()
+                guard generation == self.recognitionGeneration else { return }
                 self.recognitionTask = nil
                 self.toolbarView?.setRecognizing(false)
 
@@ -337,9 +342,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                 }
                 self.canvas.setRecognitionHighlights(textRects + barcodeRects)
             } catch is CancellationError {
+                guard generation == self.recognitionGeneration else { return }
                 self.recognitionTask = nil
                 self.toolbarView?.setRecognizing(false)
             } catch {
+                guard generation == self.recognitionGeneration else { return }
                 self.recognitionTask = nil
                 self.toolbarView?.setRecognizing(false)
                 self.recognitionPanel.showMessage(error.localizedDescription)
@@ -386,6 +393,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func cancelRecognition() {
+        recognitionGeneration += 1
         recognitionTask?.cancel()
         recognitionTask = nil
         toolbarView?.setRecognizing(false)

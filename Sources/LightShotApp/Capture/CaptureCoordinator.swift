@@ -92,7 +92,7 @@ final class CaptureCoordinator {
         guard beginCapture() else { return }
         let layout = ScreenLayout.current()
         guard let screen = layout.screen(containingAppKitPoint: NSEvent.mouseLocation) else {
-            fail(CaptureError.noDisplays)
+            fail(CaptureError.screenNotFound)
             return
         }
         Task {

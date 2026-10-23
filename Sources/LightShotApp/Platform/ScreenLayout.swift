@@ -5,7 +5,8 @@ import LightShotCore
 @MainActor
 enum ScreenLayout {
     static func current() -> DisplayLayout {
-        let screens = NSScreen.screens.compactMap { screen -> DisplayLayout.Screen? in
+        let nsScreens = NSScreen.screens
+        let screens = nsScreens.compactMap { screen -> DisplayLayout.Screen? in
             guard let number = screen.deviceDescription[
                 NSDeviceDescriptionKey("NSScreenNumber")
             ] as? NSNumber else { return nil }
@@ -16,7 +17,7 @@ enum ScreenLayout {
             )
         }
         // The primary display is the one whose AppKit origin is (0, 0).
-        let primaryHeight = NSScreen.screens
+        let primaryHeight = nsScreens
             .first(where: { $0.frame.origin == .zero })?
             .frame.maxY
             ?? screens.map(\.frame.maxY).max()
