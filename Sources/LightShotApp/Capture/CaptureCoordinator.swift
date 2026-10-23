@@ -15,6 +15,8 @@ final class CaptureCoordinator {
     private var activePicker: WindowPickerView?
     private var countdownController: CountdownController?
     private var isCapturing = false
+    private var captureGeneration = 0
+    private var captureWatchdog: Task<Void, Never>?
     /// Every open capture editor, retained until its own close callback runs.
     /// The callback removes exactly the editor that closed, so a second
     /// capture can never deallocate (and disable) the first editor.
@@ -63,13 +65,16 @@ final class CaptureCoordinator {
 
     func startRegionCapture() {
         guard beginCapture() else { return }
+        let generation = captureGeneration
         Task {
             do {
                 let captures = try await captureService.captureAllDisplays(
                     includeCursor: settings.captureCursor
                 )
+                guard endCaptureAttempt(generation) else { return }
                 present(captures: captures)
             } catch {
+                guard generation == captureGeneration else { return }
                 fail(error)
             }
         }
@@ -77,11 +82,14 @@ final class CaptureCoordinator {
 
     func startWindowCapture() {
         guard beginCapture() else { return }
+        let generation = captureGeneration
         Task {
             do {
                 let targets = try await captureService.windowInventory()
+                guard endCaptureAttempt(generation) else { return }
                 presentWindowPicker(targets)
             } catch {
+                guard generation == captureGeneration else { return }
                 fail(error)
             }
         }
@@ -90,6 +98,7 @@ final class CaptureCoordinator {
     /// Captures the display under the pointer.
     func startScreenCapture() {
         guard beginCapture() else { return }
+        let generation = captureGeneration
         let layout = ScreenLayout.current()
         guard let screen = layout.screen(containingAppKitPoint: NSEvent.mouseLocation) else {
             fail(CaptureError.screenNotFound)
@@ -101,9 +110,11 @@ final class CaptureCoordinator {
                     displayID: screen.displayID,
                     includeCursor: settings.captureCursor
                 )
+                guard endCaptureAttempt(generation) else { return }
                 isCapturing = false
                 deliver(capture.image, source: .fullScreen)
             } catch {
+                guard generation == captureGeneration else { return }
                 fail(error)
             }
         }
@@ -112,6 +123,7 @@ final class CaptureCoordinator {
     /// Captures every display and composes them in their physical arrangement.
     func startAllScreensCapture() {
         guard beginCapture() else { return }
+        let generation = captureGeneration
         Task {
             do {
                 let captures = try await captureService.captureAllDisplays(
@@ -141,9 +153,11 @@ final class CaptureCoordinator {
                     }
                     image = composed.cgImage
                 }
+                guard endCaptureAttempt(generation) else { return }
                 isCapturing = false
                 deliver(image, source: .fullScreen)
             } catch {
+                guard generation == captureGeneration else { return }
                 fail(error)
             }
         }
@@ -208,12 +222,14 @@ final class CaptureCoordinator {
         }
 
         guard beginCapture() else { return }
+        let generation = captureGeneration
         Task {
             do {
                 let capture = try await captureService.captureDisplay(
                     displayID: screen.displayID,
                     includeCursor: settings.captureCursor
                 )
+                guard endCaptureAttempt(generation) else { return }
                 isCapturing = false
                 guard let cropped = capture.cropped(toLocalPoints: region.rect) else {
                     showLastRegionUnavailable(
@@ -223,6 +239,7 @@ final class CaptureCoordinator {
                 }
                 deliver(cropped, source: .region)
             } catch {
+                guard generation == captureGeneration else { return }
                 fail(error)
             }
         }
@@ -244,9 +261,34 @@ final class CaptureCoordinator {
     }
 
     private func beginCapture() -> Bool {
-        guard !isCapturing else { return false }
+        guard !isCapturing else {
+            NSSound.beep()
+            return false
+        }
         guard ensurePermission() else { return false }
         isCapturing = true
+        captureGeneration += 1
+        armCaptureWatchdog()
+        return true
+    }
+
+    private func armCaptureWatchdog() {
+        captureWatchdog?.cancel()
+        let generation = captureGeneration
+        captureWatchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            guard self.captureGeneration == generation, self.isCapturing else { return }
+            self.fail(CaptureError.timedOut)
+        }
+    }
+
+    /// Called when the screen-capture request returns. Returns false when a
+    /// timeout already invalidated this attempt, so a late result is discarded.
+    private func endCaptureAttempt(_ generation: Int) -> Bool {
+        guard generation == captureGeneration, isCapturing else { return false }
+        captureWatchdog?.cancel()
+        captureWatchdog = nil
         return true
     }
 
@@ -337,16 +379,19 @@ final class CaptureCoordinator {
 
     private func capture(window target: WindowTarget) {
         dismiss()
-        isCapturing = true
+        guard beginCapture() else { return }
+        let generation = captureGeneration
         Task {
             do {
                 let capture = try await captureService.captureWindow(
                     windowID: target.windowID,
                     includeCursor: settings.captureCursor
                 )
+                guard endCaptureAttempt(generation) else { return }
                 isCapturing = false
                 deliver(capture.image, source: .window)
             } catch {
+                guard generation == captureGeneration else { return }
                 fail(error)
             }
         }
@@ -413,11 +458,16 @@ final class CaptureCoordinator {
     }
 
     private func fail(_ error: Error) {
+        captureWatchdog?.cancel()
+        captureWatchdog = nil
         dismiss()
         NSAlert(error: error).runModal()
     }
 
     private func dismiss() {
+        captureWatchdog?.cancel()
+        captureWatchdog = nil
+        captureGeneration += 1
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
             self.keyMonitor = nil

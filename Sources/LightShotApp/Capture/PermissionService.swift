@@ -32,6 +32,10 @@ enum PermissionService {
     }
 
     static func presentScreenRecordingGuide() {
+        // LSUIElement apps do not become active just because a menu action ran.
+        // Without this, the modal alert can be created behind the front app and
+        // the capture menu appears to do nothing.
+        NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Screen Recording permission is required"
@@ -42,6 +46,7 @@ enum PermissionService {
         """
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Cancel")
+        alert.window.level = .floating
         if alert.runModal() == .alertFirstButtonReturn {
             openScreenRecordingSettings()
         }
