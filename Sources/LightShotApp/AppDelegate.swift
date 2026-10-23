@@ -34,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let coordinator = captureCoordinator
         let recentController = recentMenuController
         statusItemController = StatusItemController(
-            onCaptureRegion: { coordinator.startRegionCapture() },
+            onCapture: { command in coordinator.start(command) },
             onSettings: { [weak self] in self?.showSettings() },
             recentMenu: recentController.menu,
             onQuit: { NSApp.terminate(nil) }
