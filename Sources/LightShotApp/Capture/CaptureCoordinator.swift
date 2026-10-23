@@ -12,6 +12,7 @@ final class CaptureCoordinator {
     private var keyMonitor: Any?
     private var activeView: SelectionOverlayView?
     private var activePicker: WindowPickerView?
+    private var countdownController: CountdownController?
     private var isCapturing = false
     /// Every open capture editor, retained until its own close callback runs.
     /// The callback removes exactly the editor that closed, so a second
@@ -48,6 +49,10 @@ final class CaptureCoordinator {
             startScreenCapture()
         case .allScreens:
             startAllScreensCapture()
+        case .timedRegion:
+            startTimedRegionCapture()
+        case .timedScreen:
+            startTimedScreenCapture()
         }
     }
 
@@ -137,6 +142,45 @@ final class CaptureCoordinator {
                 fail(error)
             }
         }
+    }
+
+    func startTimedRegionCapture() {
+        startTimedCapture { [weak self] in
+            self?.startRegionCapture()
+        }
+    }
+
+    func startTimedScreenCapture() {
+        startTimedCapture { [weak self] in
+            self?.startScreenCapture()
+        }
+    }
+
+    /// Runs `action` after the configured countdown. The countdown lives inside
+    /// the coordinator's capture state so no second capture can start while it
+    /// is visible.
+    private func startTimedCapture(_ action: @escaping () -> Void) {
+        guard !isCapturing, ensurePermission() else { return }
+        let seconds = settings.captureDelaySeconds
+        guard seconds > 0 else {
+            action()
+            return
+        }
+        isCapturing = true
+        let controller = CountdownController(
+            seconds: seconds,
+            onFinished: { [weak self] in
+                self?.countdownController = nil
+                self?.isCapturing = false
+                action()
+            },
+            onCancel: { [weak self] in
+                self?.countdownController = nil
+                self?.isCapturing = false
+            }
+        )
+        countdownController = controller
+        controller.start()
     }
 
     private func beginCapture() -> Bool {

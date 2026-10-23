@@ -29,6 +29,14 @@ final class StatusItemController {
         menu.addItem(makeItem("Capture Window", action: #selector(captureWindow)))
         menu.addItem(makeItem("Capture Screen", action: #selector(captureScreen)))
         menu.addItem(makeItem("Capture All Screens", action: #selector(captureAllScreens)))
+
+        let timedItem = NSMenuItem(title: "Timed Capture", action: nil, keyEquivalent: "")
+        let timedMenu = NSMenu()
+        timedMenu.addItem(makeItem("Region", action: #selector(captureTimedRegion)))
+        timedMenu.addItem(makeItem("Screen", action: #selector(captureTimedScreen)))
+        timedItem.submenu = timedMenu
+        menu.addItem(timedItem)
+
         menu.addItem(.separator())
 
         let recentItem = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
@@ -57,6 +65,8 @@ final class StatusItemController {
     @objc private func captureWindow() { onCapture(.window) }
     @objc private func captureScreen() { onCapture(.screen) }
     @objc private func captureAllScreens() { onCapture(.allScreens) }
+    @objc private func captureTimedRegion() { onCapture(.timedRegion) }
+    @objc private func captureTimedScreen() { onCapture(.timedScreen) }
     @objc private func openSettings() { onSettings() }
     @objc private func quit() { onQuit() }
 }
