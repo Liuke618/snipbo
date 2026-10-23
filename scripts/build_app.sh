@@ -22,4 +22,8 @@ fi
 
 IDENTITY="${LIGHTSHOT_SIGN_IDENTITY:--}"
 codesign --force --sign "$IDENTITY" --identifier "local.lightshot.app" "$APP_DIR"
+if [[ "$IDENTITY" == "-" ]]; then
+    echo "warning: ad-hoc signed; Screen Recording permission can reset after every rebuild."
+    echo "         Create a stable identity per scripts/setup_signing.sh and set LIGHTSHOT_SIGN_IDENTITY."
+fi
 echo "Built $APP_DIR"

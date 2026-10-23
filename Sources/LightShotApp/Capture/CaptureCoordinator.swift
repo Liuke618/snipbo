@@ -430,9 +430,6 @@ final class CaptureCoordinator {
     }
 
     private func ensurePermission() -> Bool {
-        if PermissionService.hasScreenCaptureAccess { return true }
-        if PermissionService.requestScreenCaptureAccess() { return true }
-        PermissionService.openScreenRecordingSettings()
-        return false
+        PermissionService.ensureScreenCaptureAccess()
     }
 }
