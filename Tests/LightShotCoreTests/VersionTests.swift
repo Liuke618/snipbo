@@ -3,7 +3,7 @@ import Testing
 
 @Suite("VersionTests")
 struct VersionTests {
-    @Test func testVersionIsPhaseOne() {
-        #expect(lightShotVersion == "0.1.0")
+    @Test func testVersionIsPhaseTwo() {
+        #expect(lightShotVersion == "0.2.0")
     }
 }
