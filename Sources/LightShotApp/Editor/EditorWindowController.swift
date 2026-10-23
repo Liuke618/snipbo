@@ -18,6 +18,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private let pasteboard: any PasteboardWriting
     private let onClose: () -> Void
     private var keyMonitor: Any?
+    private let recognitionService: RecognitionService
+    private let recognitionPanel: RecognitionResultsView
+    private let bodyView = NSView(frame: .zero)
+    private var recognitionPanelConstraints: [NSLayoutConstraint] = []
+    private var scrollTrailingConstraint: NSLayoutConstraint!
+    private var recognitionTask: Task<Void, Never>?
+    private var toolbarView: EditorToolbarView?
 
     init(
         document: EditDocument,
@@ -27,6 +34,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         pasteboard: any PasteboardWriting = NSPasteboard.general,
         onClose: @escaping () -> Void = {}
     ) {
+        self.recognitionService = RecognitionService.shared
+        self.recognitionPanel = RecognitionResultsView(frame: .zero)
         self.identifier = identifier
         self.controller = EditorController(document: document)
         self.settingsProvider = settingsProvider
@@ -49,10 +58,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             onRedo: { [weak controller] in controller?.redo() },
             onColor: { [weak controller] color in controller?.style.color = color },
             onWidth: { [weak controller] width in controller?.style.lineWidth = width },
+            onRecognize: { [weak self] in self?.recognize() },
             onCopy: { [weak self] in self?.copyAndClose() },
             onSave: { [weak self] in self?.saveAndClose(saveAs: false) },
             onClose: { [weak self] in self?.close() }
         )
+        self.toolbarView = toolbar
         window.title = "LightShot"
         window.center()
         window.delegate = self
@@ -66,17 +77,33 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         scrollView.hasVerticalScroller = true
         scrollView.documentView = canvas
 
-        let content = NSStackView(views: [toolbar, scrollView])
-        content.orientation = .vertical
-        content.spacing = 0
-        content.translatesAutoresizingMaskIntoConstraints = false
-        window.contentView = content
+        let body = bodyView
+        body.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        recognitionPanel.translatesAutoresizingMaskIntoConstraints = false
+        body.addSubview(scrollView)
+
+        scrollTrailingConstraint = scrollView.trailingAnchor.constraint(equalTo: body.trailingAnchor)
         NSLayoutConstraint.activate([
-            toolbar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: body.leadingAnchor),
+            scrollView.topAnchor.constraint(equalTo: body.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: body.bottomAnchor),
+            scrollTrailingConstraint,
+        ])
+
+        let contentView = NSView(frame: .zero)
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(toolbar)
+        contentView.addSubview(body)
+        window.contentView = contentView
+        NSLayoutConstraint.activate([
+            toolbar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            toolbar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            toolbar.topAnchor.constraint(equalTo: contentView.topAnchor),
+            body.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            body.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            body.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
         // Cmd+C copies without closing; Enter and the toolbar Copy button copy
         // and close.
@@ -85,6 +112,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         canvas.onSave = { [weak self] in self?.saveAndClose(saveAs: false) }
         canvas.onSaveAs = { [weak self] in self?.saveAndClose(saveAs: true) }
         canvas.onEscape = { [weak self] in self?.close() }
+        recognitionPanel.onCopy = { [weak self] text in
+            self?.copyRecognitionText(text)
+        }
+        recognitionPanel.onClose = { [weak self] in
+            self?.hideRecognitionPanel()
+        }
     }
 
     @available(*, unavailable)
@@ -141,6 +174,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         guard let window else { return false }
         let responder = window.firstResponder
         if responder is EditorCanvasView || responder is TextEditingOverlay {
+            return false
+        }
+        // The results panel owns its text-selection and button shortcuts.
+        if let view = responder as? NSView, view.isDescendant(of: recognitionPanel) {
             return false
         }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -256,14 +293,114 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         return panel
     }
 
+    // MARK: - Recognition
+
+    private func recognize() {
+        guard recognitionTask == nil else { return }
+        commitPendingText()
+        guard let image = controller.renderForExport() else { return }
+        let languages = settings.ocrLanguages
+
+        setRecognitionPanelVisible(true)
+        recognitionPanel.showProgress()
+        toolbarView?.setRecognizing(true)
+        canvas.setRecognitionHighlights([])
+
+        recognitionTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await self.recognitionService.recognize(
+                    ImageData(image),
+                    languages: languages
+                )
+                try Task.checkCancellation()
+                self.recognitionTask = nil
+                self.toolbarView?.setRecognizing(false)
+
+                if result.isEmpty {
+                    self.recognitionPanel.showMessage("No text or barcode found.")
+                    NSSound.beep()
+                    return
+                }
+
+                self.recognitionPanel.show(result)
+                // Vision boxes are relative to the rendered crop; the canvas
+                // works in original-image coordinates.
+                let origin = self.controller.document.cropRect.origin
+                let textRects = result.textBlocks.map {
+                    $0.pixelRect(imageWidth: image.width, imageHeight: image.height)
+                        .offsetBy(dx: origin.x, dy: origin.y)
+                }
+                let barcodeRects = result.barcodes.map {
+                    $0.pixelRect(imageWidth: image.width, imageHeight: image.height)
+                        .offsetBy(dx: origin.x, dy: origin.y)
+                }
+                self.canvas.setRecognitionHighlights(textRects + barcodeRects)
+            } catch is CancellationError {
+                self.recognitionTask = nil
+                self.toolbarView?.setRecognizing(false)
+            } catch {
+                self.recognitionTask = nil
+                self.toolbarView?.setRecognizing(false)
+                self.recognitionPanel.showMessage(error.localizedDescription)
+                NSSound.beep()
+            }
+        }
+    }
+
+    private func copyRecognitionText(_ text: String) {
+        guard !text.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    private func setRecognitionPanelVisible(_ visible: Bool) {
+        if visible {
+            guard recognitionPanel.superview == nil else { return }
+            bodyView.addSubview(recognitionPanel)
+            recognitionPanelConstraints = [
+                recognitionPanel.leadingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+                recognitionPanel.trailingAnchor.constraint(equalTo: bodyView.trailingAnchor),
+                recognitionPanel.topAnchor.constraint(equalTo: bodyView.topAnchor),
+                recognitionPanel.bottomAnchor.constraint(equalTo: bodyView.bottomAnchor),
+                recognitionPanel.widthAnchor.constraint(equalToConstant: 300),
+            ]
+            scrollTrailingConstraint.isActive = false
+            NSLayoutConstraint.activate(recognitionPanelConstraints)
+        } else {
+            guard recognitionPanel.superview != nil else { return }
+            NSLayoutConstraint.deactivate(recognitionPanelConstraints)
+            recognitionPanelConstraints.removeAll()
+            recognitionPanel.removeFromSuperview()
+            scrollTrailingConstraint.isActive = true
+        }
+        window?.layoutIfNeeded()
+    }
+
+    private func hideRecognitionPanel() {
+        cancelRecognition()
+        setRecognitionPanelVisible(false)
+        canvas.setRecognitionHighlights([])
+        window?.makeFirstResponder(canvas)
+    }
+
+    private func cancelRecognition() {
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        toolbarView?.setRecognizing(false)
+    }
+
     override func close() {
         commitPendingText()
+        cancelRecognition()
         removeKeyMonitor()
         super.close()
     }
 
     func windowWillClose(_ notification: Notification) {
         commitPendingText()
+        cancelRecognition()
         removeKeyMonitor()
         onClose()
     }

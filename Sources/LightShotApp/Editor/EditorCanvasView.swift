@@ -21,6 +21,9 @@ final class EditorCanvasView: NSView {
     var onSaveAs: (() -> Void)?
     var onEscape: (() -> Void)?
     private var textOverlay: TextEditingOverlay?
+    /// Image-pixel rects returned by the last recognition. They are drawn over
+    /// the current crop and are not part of the document or undo history.
+    private(set) var recognitionHighlights: [CGRect] = []
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -51,6 +54,11 @@ final class EditorCanvasView: NSView {
         needsDisplay = true
     }
 
+    func setRecognitionHighlights(_ rects: [CGRect]) {
+        recognitionHighlights = rects
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         guard let image = controller.render(includeDraft: true) else { return }
         NSImage(cgImage: image, size: bounds.size).draw(
@@ -64,6 +72,17 @@ final class EditorCanvasView: NSView {
 
         if let selected = selectedAnnotation, let box = imageBounds(of: selected) {
             drawSelectionBox(viewRect(fromImageRect: box).insetBy(dx: -3, dy: -3))
+        }
+
+        for rect in recognitionHighlights {
+            let highlight = viewRect(fromImageRect: rect).intersection(bounds)
+            guard !highlight.isNull, highlight.width > 0, highlight.height > 0 else { continue }
+            NSColor.systemBlue.withAlphaComponent(0.16).setFill()
+            NSBezierPath(rect: highlight).fill()
+            NSColor.systemBlue.withAlphaComponent(0.85).setStroke()
+            let border = NSBezierPath(rect: highlight.insetBy(dx: 0.5, dy: 0.5))
+            border.lineWidth = 1
+            border.stroke()
         }
 
         if let crop = controller.cropDraft {

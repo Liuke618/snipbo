@@ -18,6 +18,14 @@ final class EditorToolbarView: NSView {
     private let segmented = NSSegmentedControl(labels: EditorTool.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
     private let colorWell = NSColorWell()
     private let widthSlider = NSSlider(value: 3, minValue: 1, maxValue: 24, target: nil, action: nil)
+    private let recognizeButton = NSButton(
+        image: NSImage(
+            systemSymbolName: "text.viewfinder",
+            accessibilityDescription: "Recognize Text"
+        ) ?? NSImage(),
+        target: nil,
+        action: nil
+    )
     private let undoButton = NSButton(title: "Undo", target: nil, action: nil)
     private let redoButton = NSButton(title: "Redo", target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy", target: nil, action: nil)
@@ -29,6 +37,7 @@ final class EditorToolbarView: NSView {
     private let onRedo: () -> Void
     private let onColor: (RGBA) -> Void
     private let onWidth: (CGFloat) -> Void
+    private let onRecognize: () -> Void
     private let onCopy: () -> Void
     private let onSave: () -> Void
     private let onClose: () -> Void
@@ -39,6 +48,7 @@ final class EditorToolbarView: NSView {
         onRedo: @escaping () -> Void,
         onColor: @escaping (RGBA) -> Void,
         onWidth: @escaping (CGFloat) -> Void,
+        onRecognize: @escaping () -> Void,
         onCopy: @escaping () -> Void,
         onSave: @escaping () -> Void,
         onClose: @escaping () -> Void
@@ -48,14 +58,15 @@ final class EditorToolbarView: NSView {
         self.onRedo = onRedo
         self.onColor = onColor
         self.onWidth = onWidth
+        self.onRecognize = onRecognize
         self.onCopy = onCopy
         self.onSave = onSave
         self.onClose = onClose
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        // Small controls keep all eight groups inside the editor's default
+        // Small controls keep every group inside the editor's default
         // 1000-point width instead of forcing the window wider.
-        for control in [segmented, colorWell, widthSlider, undoButton, redoButton, copyButton, saveButton, closeButton] {
+        for control in [segmented, colorWell, widthSlider, recognizeButton, undoButton, redoButton, copyButton, saveButton, closeButton] {
             control.controlSize = .small
         }
         segmented.selectedSegment = 0
@@ -75,9 +86,13 @@ final class EditorToolbarView: NSView {
         saveButton.action = #selector(saveAction)
         closeButton.target = self
         closeButton.action = #selector(closeAction)
+        recognizeButton.imagePosition = .imageOnly
+        recognizeButton.toolTip = "Recognize text and barcodes"
+        recognizeButton.target = self
+        recognizeButton.action = #selector(recognizeAction)
 
         let stack = NSStackView(views: [
-            segmented, colorWell, widthSlider, undoButton, redoButton, copyButton, saveButton, closeButton,
+            segmented, colorWell, widthSlider, recognizeButton, undoButton, redoButton, copyButton, saveButton, closeButton,
         ])
         stack.orientation = .horizontal
         stack.spacing = 8
@@ -101,8 +116,13 @@ final class EditorToolbarView: NSView {
         onTool(EditorTool.allCases[index])
     }
 
+    func setRecognizing(_ recognizing: Bool) {
+        recognizeButton.isEnabled = !recognizing
+    }
+
     @objc private func colorChanged() { onColor(colorWell.color.rgbaValue) }
     @objc private func widthChanged() { onWidth(widthSlider.doubleValue) }
+    @objc private func recognizeAction() { onRecognize() }
     @objc private func undo() { onUndo() }
     @objc private func redo() { onRedo() }
     @objc private func copyAction() { onCopy() }
