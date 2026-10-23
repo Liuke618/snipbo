@@ -44,6 +44,10 @@ final class CaptureCoordinator {
             startRegionCapture()
         case .window:
             startWindowCapture()
+        case .screen:
+            startScreenCapture()
+        case .allScreens:
+            startAllScreensCapture()
         }
     }
 
@@ -67,6 +71,68 @@ final class CaptureCoordinator {
             do {
                 let targets = try await captureService.windowInventory()
                 presentWindowPicker(targets)
+            } catch {
+                fail(error)
+            }
+        }
+    }
+
+    /// Captures the display under the pointer.
+    func startScreenCapture() {
+        guard beginCapture() else { return }
+        let layout = ScreenLayout.current()
+        guard let screen = layout.screen(containingAppKitPoint: NSEvent.mouseLocation) else {
+            fail(CaptureError.noDisplays)
+            return
+        }
+        Task {
+            do {
+                let capture = try await captureService.captureDisplay(
+                    displayID: screen.displayID,
+                    includeCursor: settings.captureCursor
+                )
+                isCapturing = false
+                deliver(capture.image, source: .fullScreen)
+            } catch {
+                fail(error)
+            }
+        }
+    }
+
+    /// Captures every display and composes them in their physical arrangement.
+    func startAllScreensCapture() {
+        guard beginCapture() else { return }
+        Task {
+            do {
+                let captures = try await captureService.captureAllDisplays(
+                    includeCursor: settings.captureCursor
+                )
+                let image: CGImage
+                if captures.count == 1 {
+                    image = captures[0].image
+                } else {
+                    let slices = captures.map {
+                        ScreenSlice(
+                            image: $0.image,
+                            frame: $0.geometry.frame,
+                            backingScale: $0.geometry.backingScale
+                        )
+                    }
+                    // Composition touches every output pixel; keep it off the
+                    // main actor so a large multi-display capture does not
+                    // freeze the menu or editor. ImageData is the Sendable
+                    // wrapper for the resulting CGImage.
+                    let composed = await Task.detached(priority: .userInitiated) { () -> ImageData? in
+                        guard let composed = ScreenComposer.compose(slices) else { return nil }
+                        return ImageData(composed)
+                    }.value
+                    guard let composed else {
+                        throw CaptureError.compositionFailed
+                    }
+                    image = composed.cgImage
+                }
+                isCapturing = false
+                deliver(image, source: .fullScreen)
             } catch {
                 fail(error)
             }

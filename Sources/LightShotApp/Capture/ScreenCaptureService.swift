@@ -6,8 +6,10 @@ import ScreenCaptureKit
 enum CaptureError: Error, LocalizedError {
     case noDisplays
     case unmappedDisplay(CGDirectDisplayID)
+    case displayNotFound(CGDirectDisplayID)
     case windowNotFound(CGWindowID)
     case noWindows
+    case compositionFailed
     case unexpectedImageSize(
         displayID: CGDirectDisplayID,
         expectedWidth: Int,
@@ -22,10 +24,14 @@ enum CaptureError: Error, LocalizedError {
             return "ScreenCaptureKit returned no displays to capture."
         case .unmappedDisplay(let displayID):
             return "No screen matches display ID \(displayID)."
+        case .displayNotFound(let displayID):
+            return "Display \(displayID) is no longer connected."
         case .windowNotFound(let windowID):
             return "The window \(windowID) is no longer available."
         case .noWindows:
             return "No capturable windows were found."
+        case .compositionFailed:
+            return "The screens could not be combined into one image."
         case let .unexpectedImageSize(displayID, expectedWidth, expectedHeight, actualWidth, actualHeight):
             return "Captured image for display \(displayID) is \(actualWidth)x\(actualHeight) pixels; expected \(expectedWidth)x\(expectedHeight) pixels."
         }
@@ -35,8 +41,12 @@ enum CaptureError: Error, LocalizedError {
         switch self {
         case .noDisplays, .unmappedDisplay:
             return "Make sure Screen Recording permission is granted and the display is connected, then try again."
+        case .displayNotFound:
+            return "Reconnect the display or capture the screen under the pointer instead."
         case .windowNotFound, .noWindows:
             return "The window may have closed. Try again."
+        case .compositionFailed:
+            return "Try capturing a single screen."
         case .unexpectedImageSize:
             return "The display may have changed resolution during capture. Try again."
         }
@@ -64,6 +74,22 @@ final class ScreenCaptureService {
             ))
         }
         return results
+    }
+
+    func captureDisplay(displayID: CGDirectDisplayID, includeCursor: Bool) async throws -> CapturedImage {
+        let content = try await SCShareableContent.current
+        guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
+            throw CaptureError.displayNotFound(displayID)
+        }
+        guard let screen = screen(for: displayID) else {
+            throw CaptureError.unmappedDisplay(displayID)
+        }
+        return try await capture(
+            display: display,
+            screen: screen,
+            includeCursor: includeCursor,
+            excluding: ownWindows(in: content)
+        )
     }
 
     /// All capturable windows in front-to-back order. Windows owned by
