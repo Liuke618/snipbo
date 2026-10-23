@@ -24,10 +24,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         history: historyStore,
         openEntry: { [weak self] entry in self?.openHistoryEntry(entry) }
     )
+    private lazy var lastRegionStore = LastRegionStore()
     private lazy var captureCoordinator = CaptureCoordinator(
         captureService: captureService,
         settings: settings,
-        history: historyStore
+        history: historyStore,
+        lastRegion: lastRegionStore
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -37,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onCapture: { command in coordinator.start(command) },
             onSettings: { [weak self] in self?.showSettings() },
             recentMenu: recentController.menu,
+            lastRegionAvailable: { coordinator.canCaptureLastRegion() },
             onQuit: { NSApp.terminate(nil) }
         )
         let service = HotkeyService { coordinator.startRegionCapture() }

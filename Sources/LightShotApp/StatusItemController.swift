@@ -1,30 +1,37 @@
 import AppKit
 
 @MainActor
-final class StatusItemController {
+final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let onCapture: (CaptureCommand) -> Void
     private let onSettings: () -> Void
     private let recentMenu: NSMenu
+    private let lastRegionAvailable: () -> Bool
     private let onQuit: () -> Void
+    private var lastRegionItem: NSMenuItem?
 
     init(
         onCapture: @escaping (CaptureCommand) -> Void,
         onSettings: @escaping () -> Void,
         recentMenu: NSMenu,
+        lastRegionAvailable: @escaping () -> Bool,
         onQuit: @escaping () -> Void
     ) {
         self.onCapture = onCapture
         self.onSettings = onSettings
         self.recentMenu = recentMenu
+        self.lastRegionAvailable = lastRegionAvailable
         self.onQuit = onQuit
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        super.init()
+
         statusItem.button?.image = NSImage(
             systemSymbolName: "camera.viewfinder",
             accessibilityDescription: "LightShot"
         )
 
         let menu = NSMenu()
+        menu.delegate = self
         menu.addItem(makeItem("Capture Region", action: #selector(captureRegion)))
         menu.addItem(makeItem("Capture Window", action: #selector(captureWindow)))
         menu.addItem(makeItem("Capture Screen", action: #selector(captureScreen)))
@@ -37,8 +44,11 @@ final class StatusItemController {
         timedItem.submenu = timedMenu
         menu.addItem(timedItem)
 
-        menu.addItem(.separator())
+        let lastRegionItem = makeItem("Capture Last Region", action: #selector(captureLastRegion))
+        self.lastRegionItem = lastRegionItem
+        menu.addItem(lastRegionItem)
 
+        menu.addItem(.separator())
         let recentItem = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
         recentItem.submenu = recentMenu
         menu.addItem(recentItem)
@@ -55,6 +65,10 @@ final class StatusItemController {
         statusItem.menu = menu
     }
 
+    func menuWillOpen(_ menu: NSMenu) {
+        lastRegionItem?.isEnabled = lastRegionAvailable()
+    }
+
     private func makeItem(_ title: String, action: Selector) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
@@ -67,6 +81,7 @@ final class StatusItemController {
     @objc private func captureAllScreens() { onCapture(.allScreens) }
     @objc private func captureTimedRegion() { onCapture(.timedRegion) }
     @objc private func captureTimedScreen() { onCapture(.timedScreen) }
+    @objc private func captureLastRegion() { onCapture(.lastRegion) }
     @objc private func openSettings() { onSettings() }
     @objc private func quit() { onQuit() }
 }

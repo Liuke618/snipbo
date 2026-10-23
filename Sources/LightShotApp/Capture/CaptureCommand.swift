@@ -5,4 +5,5 @@ enum CaptureCommand: Equatable {
     case allScreens
     case timedRegion
     case timedScreen
+    case lastRegion
 }

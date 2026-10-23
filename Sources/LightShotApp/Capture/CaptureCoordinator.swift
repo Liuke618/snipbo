@@ -7,6 +7,7 @@ final class CaptureCoordinator {
     private let captureService: ScreenCaptureService
     private var settings: AppSettings
     private let history: HistoryStore
+    private let lastRegion: LastRegionStore
     private let pasteboardProvider: () -> any PasteboardWriting
     private var overlays: [NSWindow] = []
     private var keyMonitor: Any?
@@ -24,11 +25,13 @@ final class CaptureCoordinator {
         captureService: ScreenCaptureService,
         settings: AppSettings,
         history: HistoryStore,
+        lastRegion: LastRegionStore,
         pasteboardProvider: @escaping () -> any PasteboardWriting = { NSPasteboard.general }
     ) {
         self.captureService = captureService
         self.settings = settings
         self.history = history
+        self.lastRegion = lastRegion
         self.pasteboardProvider = pasteboardProvider
     }
 
@@ -53,6 +56,8 @@ final class CaptureCoordinator {
             startTimedRegionCapture()
         case .timedScreen:
             startTimedScreenCapture()
+        case .lastRegion:
+            startLastRegionCapture()
         }
     }
 
@@ -183,6 +188,61 @@ final class CaptureCoordinator {
         controller.start()
     }
 
+    func startLastRegionCapture() {
+        guard !isCapturing else { return }
+        guard let region = lastRegion.load() else {
+            showLastRegionUnavailable(
+                message: "No previous region has been saved yet. Capture a region first."
+            )
+            return
+        }
+
+        let layout = ScreenLayout.current()
+        guard let screen = layout.screens.first(where: { $0.displayID == region.displayID }),
+              region.isValid(for: screen.geometry) else {
+            lastRegion.clear()
+            showLastRegionUnavailable(
+                message: "The previous region is no longer valid because the display layout changed. Capture a new region first."
+            )
+            return
+        }
+
+        guard beginCapture() else { return }
+        Task {
+            do {
+                let capture = try await captureService.captureDisplay(
+                    displayID: screen.displayID,
+                    includeCursor: settings.captureCursor
+                )
+                isCapturing = false
+                guard let cropped = capture.cropped(toLocalPoints: region.rect) else {
+                    showLastRegionUnavailable(
+                        message: "The previous region could not be captured. Capture a new region first."
+                    )
+                    return
+                }
+                deliver(cropped, source: .region)
+            } catch {
+                fail(error)
+            }
+        }
+    }
+
+    /// The status menu stays enabled whenever a region is stored, even if the
+    /// layout changed, so clicking it can explain why the region is no longer
+    /// usable and clear it. It is disabled only when nothing is stored.
+    func canCaptureLastRegion() -> Bool {
+        lastRegion.load() != nil
+    }
+
+    private func showLastRegionUnavailable(message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "No usable previous region"
+        alert.informativeText = message
+        alert.runModal()
+    }
+
     private func beginCapture() -> Bool {
         guard !isCapturing else { return false }
         guard ensurePermission() else { return false }
@@ -299,6 +359,15 @@ final class CaptureCoordinator {
             dismiss()
             NSSound.beep()
             return
+        }
+        let region = LastRegion(
+            displayID: capture.geometry.displayID,
+            rect: rect,
+            screenFrame: capture.geometry.frame,
+            backingScale: capture.geometry.backingScale
+        )
+        if region.isValid(for: capture.geometry) {
+            lastRegion.save(region)
         }
         dismiss()
         deliver(cropped, source: .region)

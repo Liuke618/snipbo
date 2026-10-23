@@ -116,10 +116,14 @@ struct FinalFixHarness {
         settings.openEditorAfterCapture = true
         settings.historyEnabled = false
         let pasteboard = FakePasteboard()
+        let lastRegion = LastRegionStore(
+            defaults: UserDefaults(suiteName: "local.lightshot.harness.\(UUID().uuidString)")!
+        )
         let coordinator = CaptureCoordinator(
             captureService: ScreenCaptureService(),
             settings: settings,
             history: store,
+            lastRegion: lastRegion,
             pasteboardProvider: { pasteboard }
         )
         let capture = try makeCapture()
@@ -190,10 +194,14 @@ struct FinalFixHarness {
         var settings = AppSettings.default
         settings.openEditorAfterCapture = false
         settings.historyEnabled = true
+        let lastRegion = LastRegionStore(
+            defaults: UserDefaults(suiteName: "local.lightshot.harness.\(UUID().uuidString)")!
+        )
         let coordinator = CaptureCoordinator(
             captureService: ScreenCaptureService(),
             settings: settings,
             history: store,
+            lastRegion: lastRegion,
             pasteboardProvider: { pasteboard }
         )
         let capture = try makeCapture()
