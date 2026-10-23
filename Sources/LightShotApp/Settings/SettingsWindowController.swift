@@ -8,7 +8,7 @@ import SwiftUI
 final class SettingsWindowController: NSWindowController {
     init(model: SettingsModel) {
         let window = NSWindow(
-            contentRect: CGRect(x: 0, y: 0, width: 520, height: 720),
+            contentRect: CGRect(x: 0, y: 0, width: 560, height: 680),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -16,10 +16,8 @@ final class SettingsWindowController: NSWindowController {
         window.title = "LightShot Settings"
         window.isReleasedWhenClosed = false
         window.contentViewController = NSHostingController(rootView: SettingsView(model: model))
-        // Assigning a hosting controller shrinks the window to SwiftUI's ideal
-        // height. Keep the planned size so the form also fits when the JPEG
-        // quality row appears.
-        window.setContentSize(NSSize(width: 520, height: 720))
+        // The hosting controller sizes the window to the form's ideal height,
+        // including the optional JPEG quality row. The form owns the width.
         window.center()
         super.init(window: window)
     }

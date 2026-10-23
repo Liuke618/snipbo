@@ -8,56 +8,117 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
 
+    private let labelWidth: CGFloat = 190
+
     var body: some View {
-        Form {
-            Section("Hotkey") {
+        VStack(alignment: .leading, spacing: 0) {
+            SettingsRow("Hotkey", labelWidth: labelWidth) {
                 HotkeyRecorderView(hotkey: $model.settings.hotkey)
-                Text("Current: \(model.settings.hotkey.displayString)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .frame(width: 220, height: 32)
             }
-            Section("Output") {
-                Text(model.settings.saveDirectory)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Button("Choose Folder…") { chooseFolder() }
-                Picker("Format", selection: $model.settings.format) {
-                    Text("PNG").tag(ImageFormat.png)
-                    Text("JPEG").tag(ImageFormat.jpeg)
+
+            groupDivider
+
+            VStack(spacing: 8) {
+                SettingsRow("Screenshots folder", labelWidth: labelWidth) {
+                    HStack(spacing: 8) {
+                        Text(model.settings.saveDirectory)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .frame(height: 24)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                            )
+                        Button("Choose…") { chooseFolder() }
+                    }
                 }
+
+                SettingsRow("Save format", labelWidth: labelWidth) {
+                    Picker("", selection: $model.settings.format) {
+                        Text("PNG").tag(ImageFormat.png)
+                        Text("JPEG").tag(ImageFormat.jpeg)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 160)
+                }
+
                 if model.settings.format == .jpeg {
-                    LabeledContent("Quality") {
-                        Slider(value: $model.settings.jpegQuality, in: 0.1...1)
+                    SettingsRow("Quality", labelWidth: labelWidth) {
+                        HStack(spacing: 8) {
+                            Slider(value: $model.settings.jpegQuality, in: 0.1...1)
+                            Text("\(Int((model.settings.jpegQuality * 100).rounded()))%")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .frame(width: 36, alignment: .trailing)
+                        }
                     }
                 }
             }
-            Section("Capture") {
-                Toggle("Capture cursor", isOn: $model.settings.captureCursor)
-                Toggle("Open editor after capture", isOn: $model.settings.openEditorAfterCapture)
-                Stepper(
-                    "Timed capture countdown: \(model.settings.captureDelaySeconds) s",
-                    value: $model.settings.captureDelaySeconds,
-                    in: 0...30
-                )
+
+            groupDivider
+
+            VStack(spacing: 8) {
+                SettingsRow("Cursor", labelWidth: labelWidth) {
+                    Toggle("Capture cursor", isOn: $model.settings.captureCursor)
+                        .toggleStyle(.checkbox)
+                }
+
+                SettingsRow("After capture", labelWidth: labelWidth) {
+                    Toggle("Open editor", isOn: $model.settings.openEditorAfterCapture)
+                        .toggleStyle(.checkbox)
+                }
+
+                SettingsRow("Countdown", labelWidth: labelWidth) {
+                    Stepper(
+                        "\(model.settings.captureDelaySeconds) s",
+                        value: $model.settings.captureDelaySeconds,
+                        in: 0...30
+                    )
+                }
+
             }
-            Section("Recognition") {
-                Toggle("Simplified Chinese", isOn: languageBinding("zh-Hans"))
-                Toggle("English", isOn: languageBinding("en-US"))
-                Text("Text and barcodes are recognized locally with Apple's Vision framework.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+
+            groupDivider
+
+            SettingsRow("OCR languages", labelWidth: labelWidth) {
+                HStack(spacing: 16) {
+                    Toggle("Simplified Chinese", isOn: languageBinding("zh-Hans"))
+                        .toggleStyle(.checkbox)
+                    Toggle("English", isOn: languageBinding("en-US"))
+                        .toggleStyle(.checkbox)
+                }
             }
-            Section("History") {
-                Toggle("Keep history", isOn: $model.settings.historyEnabled)
-                Stepper(
-                    "Max items: \(model.settings.historyMaxItems)",
-                    value: $model.settings.historyMaxItems,
-                    in: 1...1000
-                )
+
+            groupDivider
+
+            VStack(spacing: 8) {
+                SettingsRow("History", labelWidth: labelWidth) {
+                    Toggle("Keep history", isOn: $model.settings.historyEnabled)
+                        .toggleStyle(.checkbox)
+                }
+
+                SettingsRow("Max items", labelWidth: labelWidth) {
+                    Stepper(
+                        "\(model.settings.historyMaxItems)",
+                        value: $model.settings.historyMaxItems,
+                        in: 1...1000
+                    )
+                }
             }
         }
         .padding(20)
-        .frame(width: 520)
+        .frame(width: 560)
+    }
+
+    private var groupDivider: some View {
+        Divider()
+            .padding(.vertical, 10)
     }
 
     /// Refuses to turn off the last enabled language; OCR needs at least one.
@@ -96,5 +157,27 @@ struct SettingsView: View {
         if panel.runModal() == .OK, let url = panel.url {
             model.settings.saveDirectory = url.path
         }
+    }
+}
+
+private struct SettingsRow<Content: View>: View {
+    let label: String
+    let labelWidth: CGFloat
+    let content: Content
+
+    init(_ label: String, labelWidth: CGFloat, @ViewBuilder content: () -> Content) {
+        self.label = label
+        self.labelWidth = labelWidth
+        self.content = content()
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(label)
+                .frame(width: labelWidth, alignment: .trailing)
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(minHeight: 26)
     }
 }
