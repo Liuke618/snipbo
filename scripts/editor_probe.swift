@@ -292,6 +292,23 @@ struct EditorProbe {
         } else {
             check("pin: window exists", false, "no pin panel found")
         }
+
+        // --- Case 8: tapered arrow rendering (thin + thick).
+        let arrowEditor = makeEditor(image: makeImage(width: 420, height: 320))
+        arrowEditor.show()
+        runTicks(6)
+        let arrowController = arrowEditor.controller
+        arrowController.tool = .arrow
+        arrowController.style.lineWidth = 3
+        arrowController.begin(at: CGPoint(x: 40, y: 60))
+        arrowController.drag(to: CGPoint(x: 200, y: 170))
+        arrowController.end(at: CGPoint(x: 200, y: 170))
+        arrowController.style.lineWidth = 16
+        arrowController.begin(at: CGPoint(x: 250, y: 50))
+        arrowController.drag(to: CGPoint(x: 330, y: 230))
+        arrowController.end(at: CGPoint(x: 330, y: 230))
+        if let window = arrowEditor.window { render(window, to: "/tmp/lightshot-editor-arrows.png") }
+        arrowEditor.close()
         print("probe done")
     }
 

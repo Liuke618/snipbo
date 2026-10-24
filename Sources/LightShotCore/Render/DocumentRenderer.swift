@@ -88,15 +88,16 @@ public enum DocumentRenderer {
         case .line(let start, let end):
             let startCG = convert(start, canvasHeight: canvasHeight, crop: crop)
             let endCG = convert(end, canvasHeight: canvasHeight, crop: crop)
-            context.setStrokeColor(color(annotation.style.color))
-            context.setLineWidth(annotation.style.lineWidth)
             context.setAlpha(annotation.style.opacity)
-            context.setLineCap(.round)
-            context.move(to: startCG)
-            context.addLine(to: endCG)
-            context.strokePath()
             if annotation.kind == .arrow {
-                drawArrowHead(from: startCG, to: endCG, in: context, style: annotation.style)
+                drawTaperedArrow(from: startCG, to: endCG, in: context, style: annotation.style)
+            } else {
+                context.setStrokeColor(color(annotation.style.color))
+                context.setLineWidth(annotation.style.lineWidth)
+                context.setLineCap(.round)
+                context.move(to: startCG)
+                context.addLine(to: endCG)
+                context.strokePath()
             }
         case .path(let points):
             guard let first = points.first else { return }
@@ -302,23 +303,53 @@ public enum DocumentRenderer {
         context.strokeEllipse(in: circle)
     }
 
-    private static func drawArrowHead(
+    /// Shottr-style solid tapered arrow: rounded tail, a shaft that narrows
+    /// toward the head, and a solid triangular head, all one filled shape. The
+    /// old stroked shaft + separate head triangle made a wide stroke poke out
+    /// of the head like a misaligned blob.
+    private static func drawTaperedArrow(
         from start: CGPoint,
         to end: CGPoint,
         in context: CGContext,
         style: AnnotationStyle
     ) {
-        let angle = atan2(end.y - start.y, end.x - start.x)
-        let length = max(8, style.lineWidth * 3)
-        let spread = CGFloat.pi / 7
-        let left = CGPoint(x: end.x - length * cos(angle - spread), y: end.y - length * sin(angle - spread))
-        let right = CGPoint(x: end.x - length * cos(angle + spread), y: end.y - length * sin(angle + spread))
+        let dx = end.x - start.x, dy = end.y - start.y
+        let distance = hypot(dx, dy)
+        guard distance > 1 else { return }
+        let ux = dx / distance, uy = dy / distance
+        let nx = -uy, ny = ux
+
+        let width = max(2, style.lineWidth)
+        // A short arrow shrinks its head so the tip stays at the end point.
+        let headLength = min(max(12, width * 3.4), distance * 0.55)
+        let headHalf = headLength * 0.52
+        let tailHalf = width / 2
+        let neckHalf = tailHalf * 0.5
+        let base = CGPoint(x: end.x - ux * headLength, y: end.y - uy * headLength)
+
+        let points = [
+            CGPoint(x: start.x + nx * tailHalf, y: start.y + ny * tailHalf),
+            CGPoint(x: base.x + nx * neckHalf, y: base.y + ny * neckHalf),
+            CGPoint(x: base.x + nx * headHalf, y: base.y + ny * headHalf),
+            end,
+            CGPoint(x: base.x - nx * headHalf, y: base.y - ny * headHalf),
+            CGPoint(x: base.x - nx * neckHalf, y: base.y - ny * neckHalf),
+            CGPoint(x: start.x - nx * tailHalf, y: start.y - ny * tailHalf),
+        ]
         context.setFillColor(color(style.color))
-        context.move(to: end)
-        context.addLine(to: left)
-        context.addLine(to: right)
+        context.move(to: points[0])
+        for point in points.dropFirst() {
+            context.addLine(to: point)
+        }
         context.closePath()
         context.fillPath()
+        // Rounded tail cap.
+        context.fillEllipse(in: CGRect(
+            x: start.x - tailHalf,
+            y: start.y - tailHalf,
+            width: width,
+            height: width
+        ))
     }
 
     private static func convert(_ point: CGPoint, canvasHeight: CGFloat, crop: CGRect) -> CGPoint {

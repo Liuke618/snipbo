@@ -88,12 +88,15 @@ public struct Annotation: Identifiable, Codable, Equatable, Sendable {
         case .rect(let rect):
             return rect
         case .line(let start, let end):
-            return CGRect(
+            let bounds = CGRect(
                 x: min(start.x, end.x),
                 y: min(start.y, end.y),
                 width: abs(end.x - start.x),
                 height: abs(end.y - start.y)
             )
+            // The selection box must cover the arrowhead, which spreads wider
+            // than the shaft (~1.7× the line width each side of the tip).
+            return bounds.insetBy(dx: -style.lineWidth * 1.3, dy: -style.lineWidth * 1.3)
         case .path(let points):
             guard let first = points.first else { return .zero }
             var minX = first.x, minY = first.y, maxX = first.x, maxY = first.y
