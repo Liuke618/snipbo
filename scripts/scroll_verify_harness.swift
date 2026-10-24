@@ -3,7 +3,7 @@ import CoreGraphics
 import CoreText
 import Foundation
 import ImageIO
-import LightShotCore
+import SnipboCore
 import Vision
 import UniformTypeIdentifiers
 
@@ -23,7 +23,7 @@ import UniformTypeIdentifiers
 /// limit, and an upward scroll that must append nothing.
 ///
 /// Run with `scripts/run_scroll_verify_harness.sh`. The stitched image is
-/// written to /tmp/lightshot-scroll-verify.png for eyeballing.
+/// written to /tmp/snipbo-scroll-verify.png for eyeballing.
 @main
 struct ScrollVerifyHarness {
     static func main() async {
@@ -77,7 +77,7 @@ struct ScrollVerifyHarness {
             "bands are strictly ordered with no duplicates (\(Set(bands).count) distinct of 100)"
         )
         if let image = result?.image {
-            savePNG(image, to: "/tmp/lightshot-scroll-verify.png")
+            savePNG(image, to: "/tmp/snipbo-scroll-verify.png")
         }
     }
 

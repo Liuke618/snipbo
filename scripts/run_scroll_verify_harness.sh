@@ -16,14 +16,14 @@ OUTPUT="$ROOT/.build/scroll-verify-harness"
 APP_SOURCES=()
 while IFS= read -r source; do
     APP_SOURCES+=("$source")
-done < <(find "$ROOT/Sources/LightShotApp" -name '*.swift' ! -name 'LightShotMain.swift' | sort)
+done < <(find "$ROOT/Sources/SnipboApp" -name '*.swift' ! -name 'SnipboMain.swift' | sort)
 
 swiftc \
     -swift-version 6 \
     -parse-as-library \
     -I "$BIN_DIR" \
     -L "$BIN_DIR" \
-    -lLightShotCore \
+    -lSnipboCore \
     "${APP_SOURCES[@]}" \
     "$ROOT/scripts/scroll_verify_harness.swift" \
     -o "$OUTPUT"

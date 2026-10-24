@@ -1,8 +1,8 @@
-# LightShot
+# Snipbo
 
 A fast, local-first screenshot and annotation tool for macOS. 截图、标注、OCR、贴图，全部在本机完成。
 
-LightShot 是一个常驻菜单栏的截图工具：按下一个全局快捷键进入选区，标注后回车复制或保存。应用不发起任何网络请求，不上传、不统计、不需要账户。
+Snipbo 是一个常驻菜单栏的截图工具：按下一个全局快捷键进入选区，标注后回车复制或保存。应用不发起任何网络请求，不上传、不统计、不需要账户。
 
 当前版本：**0.4.0**
 
@@ -89,31 +89,31 @@ LightShot 是一个常驻菜单栏的截图工具：按下一个全局快捷键�
 
 ### 下载
 
-从 [GitHub Releases](https://github.com/Liuke618/lightshot/releases) 下载最新的 `LightShot.app`，拖入 `/Applications`；如果没有现成构建，按下面的步骤从源码构建。
+从 [GitHub Releases](https://github.com/Liuke618/snipbo/releases) 下载最新的 `Snipbo.app`，拖入 `/Applications`；如果没有现成构建，按下面的步骤从源码构建。
 
 应用未做公证，首次打开若被 Gatekeeper 拦截，请在 Finder 中右键应用选择“打开”。
 
 ### 从源码构建
 
 ```bash
-git clone https://github.com/Liuke618/lightshot.git
-cd lightshot
+git clone https://github.com/Liuke618/snipbo.git
+cd snipbo
 ./scripts/build_app.sh
-open dist/LightShot.app
+open dist/Snipbo.app
 ```
 
 安装到应用目录：
 
 ```bash
-cp -R dist/LightShot.app /Applications/
-open /Applications/LightShot.app
+cp -R dist/Snipbo.app /Applications/
+open /Applications/Snipbo.app
 ```
 
 `build_app.sh` 会执行 release 构建、组装 `.app`、复制 `Info.plist` 与图标，并完成签名。
 
 ### 屏幕录制权限
 
-首次截图时 macOS 会请求“屏幕录制”权限，请在 系统设置 → 隐私与安全性 → 屏幕录制 中允许 LightShot。授权需要重启应用才生效；权限引导页提供了“重启 LightShot”按钮。每次启动最多只会自动请求一次权限，之后未授权时显示引导页。
+首次截图时 macOS 会请求“屏幕录制”权限，请在 系统设置 → 隐私与安全性 → 屏幕录制 中允许 Snipbo。授权需要重启应用才生效；权限引导页提供了“重启 Snipbo”按钮。每次启动最多只会自动请求一次权限，之后未授权时显示引导页。
 
 ad-hoc 签名每次重建都会改变 CDHash，权限可能反复失效。建议先创建一次本机自签名证书：
 
@@ -122,13 +122,13 @@ ad-hoc 签名每次重建都会改变 CDHash，权限可能反复失效。建议
 ./scripts/build_app.sh
 ```
 
-`build_app.sh` 会自动使用名为 `LightShot Local Signing` 的证书。之后在系统设置里移除旧的 LightShot 条目并重新添加，权限即可在后续重建中保持。
+`build_app.sh` 会自动使用名为 `Snipbo Local Signing` 的证书。之后在系统设置里移除旧的 Snipbo 条目并重新添加，权限即可在后续重建中保持。
 
 ## 数据与隐私
 
-- **设置**：`UserDefaults`，bundle id 为 `local.lightshot.app`。
-- **历史**：`~/Library/Application Support/LightShot/History/`，包含 `index.json`、原图 PNG 与缩略图；默认上限 200 条 / 500 MB，超出后按最旧优先清理。
-- **截图保存目录**：默认 `~/Pictures/LightShot`，可在设置中修改。
+- **设置**：`UserDefaults`，bundle id 为 `local.snipbo.app`。
+- **历史**：`~/Library/Application Support/Snipbo/History/`，包含 `index.json`、原图 PNG 与缩略图；默认上限 200 条 / 500 MB，超出后按最旧优先清理。
+- **截图保存目录**：默认 `~/Pictures/Snipbo`，可在设置中修改。
 - **网络**：应用代码不包含 `URLSession`，不发起任何网络请求，无上传、遥测或崩溃上报。设置中的“打开 GitHub Releases”只是调用系统浏览器打开链接。
 - **历史写入时机**：每次截图在交付（打开编辑器或直接复制/保存）时记录；编辑器内再次复制或保存不会产生重复条目。
 - **贴图**：不持久化，关闭应用后消失。
@@ -139,26 +139,26 @@ ad-hoc 签名每次重建都会改变 CDHash，权限可能反复失效。建议
 
 ```
 Sources/
-  LightShotCore/     # 纯逻辑：文档模型、标注、渲染、导出、几何、历史、滚动拼接、设置
-  LightShotApp/      # AppKit/SwiftUI：截图、编辑器、OCR、贴图、历史、设置
+  SnipboCore/     # 纯逻辑：文档模型、标注、渲染、导出、几何、历史、滚动拼接、设置
+  SnipboApp/      # AppKit/SwiftUI：截图、编辑器、OCR、贴图、历史、设置
 Tests/
-  LightShotCoreTests/
+  SnipboCoreTests/
 Resources/           # Info.plist、AppIcon、Lucide 图标
 scripts/             # 构建、签名、验证脚本
 docs/                # 设计文档与阶段计划
 ```
 
-`LightShotCore` 不依赖 UI，便于单元测试；所有 AppKit 对象与 UI 状态都在 `@MainActor` 上，截图、OCR、滚动帧处理与历史写盘在后台执行。
+`SnipboCore` 不依赖 UI，便于单元测试；所有 AppKit 对象与 UI 状态都在 `@MainActor` 上，截图、OCR、滚动帧处理与历史写盘在后台执行。
 
 ### 常用命令
 
 ```bash
 swift build            # debug 构建
 swift test             # Swift Testing 单元测试
-./scripts/build_app.sh # release 构建并打包到 dist/LightShot.app
+./scripts/build_app.sh # release 构建并打包到 dist/Snipbo.app
 ```
 
-`swift run` 产出的未打包进程不能用于验证屏幕录制权限，TCC 相关测试请始终运行打包后的 `dist/LightShot.app`。
+`swift run` 产出的未打包进程不能用于验证屏幕录制权限，TCC 相关测试请始终运行打包后的 `dist/Snipbo.app`。
 
 仓库内还有几个不需要真实屏幕的验证脚本：
 
@@ -183,7 +183,7 @@ swift test             # Swift Testing 单元测试
 - “上次区域”在显示器布局变化后失效，需要重新框选。
 - 滚动截图依赖画面中的可对齐内容；纯色或极度重复的页面可能提前停止并保留已捕获部分。
 - 超大长图受内存限制，可用“滚动高度”上限控制。
-- `LightShot` 为本地工作名，对外分发前应完成名称与商标检索。
+- `Snipbo` 为本地工作名，对外分发前应完成名称与商标检索。
 
 ## 原创性
 

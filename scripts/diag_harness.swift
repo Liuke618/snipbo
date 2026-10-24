@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import LightShotCore
+import SnipboCore
 import ScreenCaptureKit
 import CoreGraphics
 
@@ -43,7 +43,7 @@ struct DiagHarness {
             return
         }
         content.cacheDisplay(in: content.bounds, to: bitmap)
-        let url = URL(fileURLWithPath: "/tmp/lightshot-settings.png")
+        let url = URL(fileURLWithPath: "/tmp/snipbo-settings.png")
         try? bitmap.representation(using: .png, properties: [:])?.write(to: url)
         print("settings window: \(Int(window.frame.width))x\(Int(window.frame.height)) → \(url.path)")
         controller.close()

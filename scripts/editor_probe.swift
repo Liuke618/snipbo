@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import LightShotCore
+import SnipboCore
 
 // Editor layout probe (compiles together with the app sources):
 // 1. A large capture opens in a window sized to the image, capped to 90% of
@@ -67,7 +67,7 @@ struct EditorProbe {
             check("large: window fits the screen",
                   window.frame.width <= screen.width && window.frame.height <= screen.height + 2,
                   "frame \(window.frame), screen \(screen)")
-            render(window, to: "/tmp/lightshot-editor-large.png")
+            render(window, to: "/tmp/snipbo-editor-large.png")
             dumpClipGeometry(window)
             if let bitmap = bitmap(window) {
                 // The canvas (334 pt wide at fit zoom) must be centered in the
@@ -90,7 +90,7 @@ struct EditorProbe {
         editor.show()
         runTicks(10)
         if let window = editor.window {
-            render(window, to: "/tmp/lightshot-editor-small.png")
+            render(window, to: "/tmp/snipbo-editor-small.png")
             dumpClipGeometry(window)
             if let bitmap = bitmap(window) {
                 let content = window.contentView!.frame.size
@@ -207,7 +207,7 @@ struct EditorProbe {
         cropController.begin(at: CGPoint(x: 50, y: 40))
         cropController.drag(to: CGPoint(x: 250, y: 190))
         check("crop: draft visible", cropController.cropDraft != nil, "nil draft")
-        if let window = cropEditor.window { render(window, to: "/tmp/lightshot-editor-crop.png") }
+        if let window = cropEditor.window { render(window, to: "/tmp/snipbo-editor-crop.png") }
         cropController.cancelCropDraft()
         check("crop: escape cancels draft", cropController.cropDraft == nil, "draft survived")
         check("crop: cancel keeps crop rect",
@@ -307,7 +307,7 @@ struct EditorProbe {
         arrowController.begin(at: CGPoint(x: 250, y: 50))
         arrowController.drag(to: CGPoint(x: 330, y: 230))
         arrowController.end(at: CGPoint(x: 330, y: 230))
-        if let window = arrowEditor.window { render(window, to: "/tmp/lightshot-editor-arrows.png") }
+        if let window = arrowEditor.window { render(window, to: "/tmp/snipbo-editor-arrows.png") }
         arrowEditor.close()
         print("probe done")
     }
@@ -319,7 +319,7 @@ struct EditorProbe {
             settingsProvider: { AppSettings.default },
             history: HistoryStore(
                 baseDirectory: URL(fileURLWithPath: NSTemporaryDirectory())
-                    .appendingPathComponent("lightshot-probe-history", isDirectory: true),
+                    .appendingPathComponent("snipbo-probe-history", isDirectory: true),
                 maxItems: 20,
                 maxBytes: 64 * 1024 * 1024
             ),

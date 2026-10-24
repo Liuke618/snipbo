@@ -5,15 +5,15 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>LightShot</string>
+    <string>Snipbo</string>
     <key>CFBundleIdentifier</key>
-    <string>local.lightshot.app</string>
+    <string>local.snipbo.app</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>LightShot</string>
+    <string>Snipbo</string>
     <key>CFBundleDisplayName</key>
-    <string>LightShot</string>
+    <string>Snipbo</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

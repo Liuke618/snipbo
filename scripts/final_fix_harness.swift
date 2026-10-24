@@ -3,7 +3,7 @@ import Carbon.HIToolbox
 import CoreGraphics
 import Darwin
 import Foundation
-import LightShotCore
+import SnipboCore
 import UniformTypeIdentifiers
 
 /// Committed Phase 1 fix-wave harness.
@@ -117,7 +117,7 @@ struct FinalFixHarness {
         settings.historyEnabled = false
         let pasteboard = FakePasteboard()
         let lastRegion = LastRegionStore(
-            defaults: UserDefaults(suiteName: "local.lightshot.harness.\(UUID().uuidString)")!
+            defaults: UserDefaults(suiteName: "local.snipbo.harness.\(UUID().uuidString)")!
         )
         let coordinator = CaptureCoordinator(
             captureService: ScreenCaptureService(),
@@ -206,7 +206,7 @@ struct FinalFixHarness {
         settings.openEditorAfterCapture = false
         settings.historyEnabled = true
         let lastRegion = LastRegionStore(
-            defaults: UserDefaults(suiteName: "local.lightshot.harness.\(UUID().uuidString)")!
+            defaults: UserDefaults(suiteName: "local.snipbo.harness.\(UUID().uuidString)")!
         )
         let coordinator = CaptureCoordinator(
             captureService: ScreenCaptureService(),
@@ -403,7 +403,7 @@ struct FinalFixHarness {
 
     private static func makeDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LightShotHarness-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("SnipboHarness-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }

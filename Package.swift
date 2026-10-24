@@ -51,25 +51,25 @@ if activeDeveloperDirectory() == cltDeveloperDir,
 }
 
 let package = Package(
-    name: "LightShot",
+    name: "Snipbo",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "LightShot", targets: ["LightShotApp"]),
-        .library(name: "LightShotCore", targets: ["LightShotCore"]),
+        .executable(name: "Snipbo", targets: ["SnipboApp"]),
+        .library(name: "SnipboCore", targets: ["SnipboCore"]),
     ],
     targets: [
         .target(
-            name: "LightShotCore",
+            name: "SnipboCore",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .executableTarget(
-            name: "LightShotApp",
-            dependencies: ["LightShotCore"],
+            name: "SnipboApp",
+            dependencies: ["SnipboCore"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
-            name: "LightShotCoreTests",
-            dependencies: ["LightShotCore"],
+            name: "SnipboCoreTests",
+            dependencies: ["SnipboCore"],
             swiftSettings: testSwiftSettings
         ),
     ]
