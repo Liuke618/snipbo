@@ -6,4 +6,5 @@ enum CaptureCommand: Equatable {
     case timedRegion
     case timedScreen
     case lastRegion
+    case scrolling
 }

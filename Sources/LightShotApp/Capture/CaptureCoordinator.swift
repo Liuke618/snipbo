@@ -17,6 +17,15 @@ final class CaptureCoordinator {
     private var isCapturing = false
     private var captureGeneration = 0
     private var captureWatchdog: Task<Void, Never>?
+
+    private enum SelectionPurpose {
+        case region
+        case scrolling
+    }
+
+    private var scrollingSession: ScrollingCaptureSession?
+    private var scrollingControl: ScrollingControlController?
+    private var scrollingInProgress = false
     /// Every open capture editor, retained until its own close callback runs.
     /// The callback removes exactly the editor that closed, so a second
     /// capture can never deallocate (and disable) the first editor.
@@ -60,6 +69,8 @@ final class CaptureCoordinator {
             startTimedScreenCapture()
         case .lastRegion:
             startLastRegionCapture()
+        case .scrolling:
+            startScrollingCapture()
         }
     }
 
@@ -72,7 +83,22 @@ final class CaptureCoordinator {
                     includeCursor: settings.captureCursor
                 )
                 guard endCaptureAttempt(generation) else { return }
-                present(captures: captures)
+                present(captures: captures, purpose: .region)
+            } catch {
+                guard generation == captureGeneration else { return }
+                fail(error)
+            }
+        }
+    }
+
+    func startScrollingCapture() {
+        guard beginCapture() else { return }
+        let generation = captureGeneration
+        Task {
+            do {
+                let captures = try await captureService.captureAllDisplays(includeCursor: false)
+                guard endCaptureAttempt(generation) else { return }
+                present(captures: captures, purpose: .scrolling)
             } catch {
                 guard generation == captureGeneration else { return }
                 fail(error)
@@ -260,6 +286,127 @@ final class CaptureCoordinator {
         alert.runModal()
     }
 
+    private func beginScrolling(capture: CapturedImage, rect: CGRect) {
+        guard rect.width >= 8, rect.height >= 8 else {
+            dismiss()
+            NSSound.beep()
+            return
+        }
+        dismiss()
+        isCapturing = true
+        scrollingInProgress = true
+        let maxHeight = settings.scrollMaxHeight
+
+        let control = ScrollingControlController(
+            onStop: { [weak self] in self?.stopScrolling() },
+            onCancel: { [weak self] in self?.cancelScrolling() }
+        )
+        let session = ScrollingCaptureSession(
+            displayID: capture.geometry.displayID,
+            rect: rect,
+            backingScale: capture.geometry.backingScale,
+            maxHeight: maxHeight,
+            onProgress: { [weak self] height in
+                self?.scrollingControl?.update(height: height)
+            },
+            onAutomaticFinish: { [weak self] result in
+                self?.finishScrolling(result)
+            }
+        )
+        scrollingControl = control
+        scrollingSession = session
+        control.show()
+
+        Task {
+            do {
+                try await session.start()
+            } catch {
+                guard scrollingInProgress else { return }
+                cancelScrolling()
+                fail(error)
+            }
+        }
+    }
+
+    private func stopScrolling() {
+        guard scrollingInProgress, let session = scrollingSession else { return }
+        Task {
+            let result = await session.stop()
+            guard scrollingInProgress else { return }
+            if let result {
+                finishScrolling(.success(result))
+            } else {
+                scrollingInProgress = false
+                scrollingSession = nil
+                scrollingControl?.close()
+                scrollingControl = nil
+                isCapturing = false
+                NSSound.beep()
+                presentScrollingMessage(
+                    title: "No scrolling detected",
+                    message: "Scroll the content while the capture is running, then press Stop."
+                )
+            }
+        }
+    }
+
+    private func cancelScrolling() {
+        guard scrollingInProgress else { return }
+        scrollingInProgress = false
+        let session = scrollingSession
+        scrollingSession = nil
+        scrollingControl?.close()
+        scrollingControl = nil
+        isCapturing = false
+        Task { await session?.cancel() }
+    }
+
+    private func finishScrolling(_ result: Result<ScrollingCaptureResult, Error>) {
+        guard scrollingInProgress else { return }
+        scrollingInProgress = false
+        scrollingSession = nil
+        scrollingControl?.close()
+        scrollingControl = nil
+        isCapturing = false
+
+        switch result {
+        case .failure(let error):
+            fail(error)
+        case .success(let capture):
+            if capture.reason == .noMovement {
+                NSSound.beep()
+                presentScrollingMessage(
+                    title: "No scrolling detected",
+                    message: "Scroll the content while the capture is running, then press Stop."
+                )
+                return
+            }
+            deliver(capture.image, source: .scrolling)
+            switch capture.reason {
+            case .limitReached:
+                presentScrollingMessage(
+                    title: "Scrolling capture truncated",
+                    message: "The stitched image reached the configured maximum height. Increase it in Settings if needed."
+                )
+            case .lowConfidence:
+                presentScrollingMessage(
+                    title: "Scrolling alignment lost",
+                    message: "The stitched image contains the content captured before alignment became unreliable."
+                )
+            case .stopped, .noMovement:
+                break
+            }
+        }
+    }
+
+    private func presentScrollingMessage(title: String, message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = title
+        alert.informativeText = message
+        alert.runModal()
+    }
+
     private func beginCapture() -> Bool {
         guard !isCapturing else {
             NSSound.beep()
@@ -292,13 +439,18 @@ final class CaptureCoordinator {
         return true
     }
 
-    private func present(captures: [CapturedImage]) {
+    private func present(captures: [CapturedImage], purpose: SelectionPurpose) {
         NSApp.activate(ignoringOtherApps: true)
         overlays = captures.map { capture in
             let window = SelectionOverlayWindow(screenFrame: capture.geometry.frame)
             let view = SelectionOverlayView(captured: capture)
             view.onConfirm = { [weak self] rect in
-                self?.complete(capture: capture, rect: rect)
+                switch purpose {
+                case .region:
+                    self?.complete(capture: capture, rect: rect)
+                case .scrolling:
+                    self?.beginScrolling(capture: capture, rect: rect)
+                }
             }
             view.onCancel = { [weak self] in
                 self?.dismiss()

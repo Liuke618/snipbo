@@ -47,6 +47,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let lastRegionItem = makeItem("Capture Last Region", action: #selector(captureLastRegion))
         self.lastRegionItem = lastRegionItem
         menu.addItem(lastRegionItem)
+        menu.addItem(makeItem("Scrolling Capture", action: #selector(captureScrolling)))
 
         menu.addItem(.separator())
         let recentItem = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
@@ -82,6 +83,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func captureTimedRegion() { onCapture(.timedRegion) }
     @objc private func captureTimedScreen() { onCapture(.timedScreen) }
     @objc private func captureLastRegion() { onCapture(.lastRegion) }
+
+    @objc private func captureScrolling() { onCapture(.scrolling) }
     @objc private func openSettings() { onSettings() }
     @objc private func quit() { onQuit() }
 }
