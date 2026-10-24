@@ -42,6 +42,8 @@ struct SettingsView: View {
                 case .general: generalTab
                 case .hotkeys: hotkeysTab
                 case .advanced: advancedTab
+                case .updates: updatesTab
+                case .about: aboutTab
                 }
             }
             // Fixed content height: switching tabs swaps rows in place instead
@@ -319,7 +321,103 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Updates
+
+    private var updatesTab: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(spacing: 8) {
+                SettingsRow(L10n.tr("Current version", "当前版本"), labelWidth: labelWidth) {
+                    Text(versionText)
+                        .monospacedDigit()
+                }
+            }
+
+            groupDivider
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L10n.tr("Getting updates", "获取更新"))
+                    .font(.system(size: 13, weight: .semibold))
+                Text(L10n.tr(
+                    "This app never contacts the network, so it cannot check for updates itself. Download the newest LightShot.app from the GitHub Releases page and drag it into /Applications to replace the old copy — your settings and history are kept.",
+                    "本应用完全不联网，因此无法自动检查更新。请到 GitHub Releases 页面下载最新的 LightShot.app，拖入 /Applications 替换旧版本即可 —— 设置与历史记录会自动保留。"
+                ))
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+
+                Button(L10n.tr("Open GitHub Releases", "打开 GitHub Releases 页面")) {
+                    if let url = URL(string: "https://github.com/Liuke618/lightshot/releases") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+
+    // MARK: - About
+
+    private var aboutTab: some View {
+        VStack(spacing: 14) {
+            VStack(spacing: 6) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .frame(width: 64, height: 64)
+                Text("LightShot")
+                    .font(.system(size: 17, weight: .semibold))
+                Text(L10n.tr("Version", "版本") + " \(versionText)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L10n.tr(
+                    "A fast, local-first screenshot tool for macOS: region, window, fullscreen, and scrolling capture; an annotation editor with OCR; floating pins; and a local history.",
+                    "一款快速、本地优先的 macOS 截图工具：区域 / 窗口 / 全屏 / 滚动截图，带 OCR 识别的标注编辑器、贴图置顶和本地历史。"
+                ))
+                .font(.system(size: 12))
+                Text(L10n.tr(
+                    "Privacy: the app makes no network requests at all — no uploads, no telemetry, no crash reporting. Screenshots never leave your computer.",
+                    "隐私：本应用不发起任何网络请求 —— 无上传、无遥测、无崩溃上报。截图永远留在你的电脑上。"
+                ))
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                Text(L10n.tr(
+                    "Built with Swift and Apple frameworks only. Toolbar and menu icons are Lucide (ISC license).",
+                    "仅使用 Swift 与 Apple 框架构建。工具栏与菜单图标来自 Lucide（ISC 许可证）。"
+                ))
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(L10n.tr("Copy Version Info", "复制版本信息")) { copyVersionInfo() }
+                .controlSize(.small)
+        }
+        .padding(.top, 8)
+    }
+
     // MARK: - Helpers
+
+    private var versionText: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+        return "v\(version) (\(build))"
+    }
+
+    private func copyVersionInfo() {
+        let macOS = ProcessInfo.processInfo.operatingSystemVersionString
+        #if arch(arm64)
+        let chip = "arm64"
+        #elseif arch(x86_64)
+        let chip = "x86_64"
+        #else
+        let chip = "unknown"
+        #endif
+        let info = "LightShot \(versionText)\n\(macOS)\n\(chip)"
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(info, forType: .string)
+    }
 
     private var groupDivider: some View {
         Divider()
@@ -373,17 +471,20 @@ struct SettingsView: View {
     }
 }
 
-/// The Settings window's tabs. Uploading/License-style tabs are intentionally
-/// absent: the app makes no network requests and has no licensing.
+/// The Settings window's tabs. Uploading/License/Diagnostics tabs are
+/// intentionally absent: the app makes no network requests, collects nothing,
+/// and has no licensing. Updates is manual-only for the same reason.
 @MainActor
 enum SettingsTab: String, CaseIterable {
-    case general, hotkeys, advanced
+    case general, hotkeys, advanced, updates, about
 
     var title: String {
         switch self {
         case .general: return L10n.tr("General", "通用")
         case .hotkeys: return L10n.tr("Hotkeys", "快捷键")
         case .advanced: return L10n.tr("Advanced", "高级")
+        case .updates: return L10n.tr("Updates", "更新")
+        case .about: return L10n.tr("About", "关于")
         }
     }
 
@@ -394,6 +495,8 @@ enum SettingsTab: String, CaseIterable {
         case .general: return "gearshape"
         case .hotkeys: return "keyboard"
         case .advanced: return "slider.horizontal.3"
+        case .updates: return "arrow.triangle.2.circlepath"
+        case .about: return "info.circle"
         }
     }
 }
