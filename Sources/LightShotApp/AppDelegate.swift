@@ -58,11 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
+        syncLoginItem(settings)
         settingsModel.onChange = { [weak self] newSettings in
             guard let self else { return }
             if newSettings.hotkey != self.registeredHotkey {
                 self.applyHotkey(newSettings.hotkey)
             }
+            self.syncLoginItem(newSettings)
             self.captureCoordinator.updateSettings(newSettings)
             Task {
                 do {
@@ -102,6 +104,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "Could not register \(hotkey.displayString, privacy: .public); previous hotkey restored: \(restored, privacy: .public)"
         )
         showHotkeyFailure(for: hotkey, previous: previous, restored: restored)
+    }
+
+    private var appliedLoginItem: Bool?
+
+    /// Applies launch-at-login only when the desired state changes, so a
+    /// Settings window left open cannot re-register on every keystroke.
+    private func syncLoginItem(_ settings: AppSettings) {
+        guard appliedLoginItem != settings.launchAtLogin else { return }
+        appliedLoginItem = settings.launchAtLogin
+        LoginItemService.sync(enabled: settings.launchAtLogin)
     }
 
     private func showHotkeyFailure(for hotkey: Hotkey, previous: Hotkey?, restored: Bool) {

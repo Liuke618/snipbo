@@ -32,6 +32,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Applied when the editor does not open: save the capture to the save
     /// directory immediately.
     public var afterCaptureSave: Bool
+    /// Keeps the app registered as a macOS login item.
+    public var launchAtLogin: Bool
 
     private enum CodingKeys: String, CodingKey {
         case hotkey
@@ -48,6 +50,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case scrollMaxHeight
         case afterCaptureCopy
         case afterCaptureSave
+        case launchAtLogin
     }
 
     public init(
@@ -64,7 +67,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ocrLanguages: [String] = AppSettings.defaultOCRLanguages,
         scrollMaxHeight: Int = 20_000,
         afterCaptureCopy: Bool = true,
-        afterCaptureSave: Bool = false
+        afterCaptureSave: Bool = false,
+        launchAtLogin: Bool = false
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -80,6 +84,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.scrollMaxHeight = scrollMaxHeight
         self.afterCaptureCopy = afterCaptureCopy
         self.afterCaptureSave = afterCaptureSave
+        self.launchAtLogin = launchAtLogin
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -104,6 +109,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.afterCaptureCopy
         afterCaptureSave = try container.decodeIfPresent(Bool.self, forKey: .afterCaptureSave)
             ?? fallback.afterCaptureSave
+        launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin)
+            ?? fallback.launchAtLogin
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -125,7 +132,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ocrLanguages: AppSettings.defaultOCRLanguages,
         scrollMaxHeight: 20_000,
         afterCaptureCopy: true,
-        afterCaptureSave: false
+        afterCaptureSave: false,
+        launchAtLogin: false
     )
 
     public func normalized() -> AppSettings {

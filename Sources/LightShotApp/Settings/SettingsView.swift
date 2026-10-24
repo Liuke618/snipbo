@@ -80,6 +80,11 @@ struct SettingsView: View {
                     }
                 }
 
+                SettingsRow("Launch", labelWidth: labelWidth) {
+                    Toggle("Start at login", isOn: $model.settings.launchAtLogin)
+                        .toggleStyle(.checkbox)
+                }
+
                 SettingsRow("Countdown", labelWidth: labelWidth) {
                     Stepper(
                         "\(model.settings.captureDelaySeconds) s",

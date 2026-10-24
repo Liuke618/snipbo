@@ -138,4 +138,23 @@ struct AppSettingsTests {
         #expect(!editorOn.afterCaptureCopy)
         #expect(!editorOn.afterCaptureSave)
     }
+
+    @Test func testLaunchAtLoginRoundTripAndLegacyDecode() throws {
+        var settings = AppSettings.default
+        #expect(!settings.launchAtLogin)
+        settings.launchAtLogin = true
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(decoded.launchAtLogin)
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        object.removeValue(forKey: "launchAtLogin")
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(!legacy.launchAtLogin)
+    }
 }
