@@ -22,4 +22,24 @@ enum EditorTool: String, CaseIterable {
         case .crop: return L10n.tr("Crop", "裁剪")
         }
     }
+
+    /// Lucide icon file name (Resources/Icons) for the toolbar.
+    var iconName: String {
+        switch self {
+        case .select: return "mouse-pointer-2"
+        case .arrow: return "arrow-up-right"
+        case .rectangle: return "square"
+        case .ellipse: return "circle"
+        case .line: return "slash"
+        case .freehand: return "pencil"
+        case .highlight: return "highlighter"
+        case .text: return "type"
+        case .pixelate: return "grid-3x3"
+        case .blur: return "droplets"
+        case .spotlight: return "flashlight"
+        case .counter: return "list-ordered"
+        case .magnifier: return "zoom-in"
+        case .crop: return "crop"
+        }
+    }
 }

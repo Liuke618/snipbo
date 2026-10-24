@@ -15,11 +15,13 @@ extension NSColor {
 
 @MainActor
 final class EditorToolbarView: NSView {
-    private let segmented = NSSegmentedControl(labels: EditorTool.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
+    /// Image-based tool segments when all Lucide icons loaded; otherwise the
+    /// label-based fallback (unbundled harness contexts).
+    private let segmented: NSSegmentedControl
     private let colorWell = NSColorWell()
     private let widthSlider = NSSlider(value: 3, minValue: 1, maxValue: 24, target: nil, action: nil)
     private let recognizeButton = NSButton(
-        image: NSImage(
+        image: EditorToolbarView.icon("scan-text") ?? NSImage(
             systemSymbolName: "text.viewfinder",
             accessibilityDescription: "Recognize Text"
         ) ?? NSImage(),
@@ -27,18 +29,50 @@ final class EditorToolbarView: NSView {
         action: nil
     )
     private let pinButton = NSButton(
-        image: NSImage(
+        image: EditorToolbarView.icon("pin") ?? NSImage(
             systemSymbolName: "pin",
             accessibilityDescription: "Pin"
         ) ?? NSImage(),
         target: nil,
         action: nil
     )
-    private let undoButton = NSButton(title: L10n.tr("Undo", "撤销"), target: nil, action: nil)
-    private let redoButton = NSButton(title: L10n.tr("Redo", "重做"), target: nil, action: nil)
-    private let copyButton = NSButton(title: L10n.tr("Copy", "复制"), target: nil, action: nil)
-    private let saveButton = NSButton(title: L10n.tr("Save", "保存"), target: nil, action: nil)
-    private let closeButton = NSButton(title: L10n.tr("Close", "关闭"), target: nil, action: nil)
+    private let undoButton = NSButton(
+        image: EditorToolbarView.icon("undo-2") ?? NSImage(),
+        target: nil,
+        action: nil
+    )
+    private let redoButton = NSButton(
+        image: EditorToolbarView.icon("redo-2") ?? NSImage(),
+        target: nil,
+        action: nil
+    )
+    private let copyButton = NSButton(
+        image: EditorToolbarView.icon("copy") ?? NSImage(),
+        target: nil,
+        action: nil
+    )
+    private let saveButton = NSButton(
+        image: EditorToolbarView.icon("save") ?? NSImage(),
+        target: nil,
+        action: nil
+    )
+    private let closeButton = NSButton(
+        image: EditorToolbarView.icon("x") ?? NSImage(),
+        target: nil,
+        action: nil
+    )
+
+    /// Loads a bundled Lucide SVG as a monochrome template image.
+    private static func icon(_ name: String, size: CGFloat = 16) -> NSImage? {
+        guard let url = Bundle.main.url(
+            forResource: name,
+            withExtension: "svg",
+            subdirectory: "Icons"
+        ), let image = NSImage(contentsOf: url) else { return nil }
+        image.isTemplate = true
+        image.size = NSSize(width: size, height: size)
+        return image
+    }
 
     private let onTool: (EditorTool) -> Void
     private let onUndo: () -> Void
@@ -73,12 +107,39 @@ final class EditorToolbarView: NSView {
         self.onCopy = onCopy
         self.onSave = onSave
         self.onClose = onClose
+
+        // Image-based tool segments with hover tooltips when every Lucide
+        // icon is bundled; label fallback keeps the harness usable.
+        let toolImages = EditorTool.allCases.compactMap { EditorToolbarView.icon($0.iconName, size: 15) }
+        let control: NSSegmentedControl
+        if toolImages.count == EditorTool.allCases.count {
+            control = NSSegmentedControl(images: toolImages, trackingMode: .selectOne, target: nil, action: nil)
+            for (index, tool) in EditorTool.allCases.enumerated() {
+                control.setToolTip(tool.title, forSegment: index)
+                control.setWidth(30, forSegment: index)
+            }
+        } else {
+            control = NSSegmentedControl(labels: EditorTool.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
+        }
+        segmented = control
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+
         // Small controls keep every group inside the editor's default
         // 1000-point width instead of forcing the window wider.
         for control in [segmented, colorWell, widthSlider, recognizeButton, pinButton, undoButton, redoButton, copyButton, saveButton, closeButton] {
             control.controlSize = .small
+        }
+        // Icon-only buttons carry their meaning in the hover tooltip.
+        for (button, tooltip) in [
+            (undoButton, L10n.tr("Undo", "撤销")),
+            (redoButton, L10n.tr("Redo", "重做")),
+            (copyButton, L10n.tr("Copy", "复制")),
+            (saveButton, L10n.tr("Save", "保存")),
+            (closeButton, L10n.tr("Close", "关闭")),
+        ] {
+            button.imagePosition = .imageOnly
+            button.toolTip = tooltip
         }
         segmented.selectedSegment = 0
         segmented.target = self
