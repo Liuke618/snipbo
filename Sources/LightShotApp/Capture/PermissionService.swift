@@ -40,15 +40,31 @@ enum PermissionService {
         alert.alertStyle = .warning
         alert.messageText = "Screen Recording permission is required"
         alert.informativeText = """
-        Enable LightShot in System Settings → Privacy & Security → Screen Recording, then quit and reopen LightShot.
+        Enable LightShot in System Settings → Privacy & Security → Screen Recording.
 
-        If permission resets after rebuilding, the app was signed ad-hoc and macOS now sees a different build. Sign with a stable local identity (scripts/setup_signing.sh) and grant permission once more.
+        A granted permission only takes effect after the app restarts — use Restart below once you have toggled LightShot on.
         """
         alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Restart LightShot")
         alert.addButton(withTitle: "Cancel")
         alert.window.level = .floating
-        if alert.runModal() == .alertFirstButtonReturn {
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
             openScreenRecordingSettings()
+        case .alertSecondButtonReturn:
+            restartApp()
+        default:
+            break
         }
+    }
+
+    /// Launches a fresh instance and terminates this one, so a just-granted
+    /// Screen Recording permission takes effect without a manual quit/reopen.
+    private static func restartApp() {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = [Bundle.main.bundleURL.path]
+        try? task.run()
+        NSApp.terminate(nil)
     }
 }
