@@ -274,6 +274,24 @@ struct EditorProbe {
 
         cropEditor.close()
         retinaEditor.close()
+
+        // --- Case 7: pins are truly always-on-top and join every Space.
+        PinBoard.shared.pin(makeImage(width: 120, height: 80))
+        runTicks(4)
+        let pinWindow = NSApp.windows.first {
+            $0.isVisible && $0 is NSPanel && $0.styleMask.contains(.nonactivatingPanel)
+        }
+        if let pinWindow {
+            check("pin: floats above normal windows",
+                  pinWindow.level == .floating, "level \(pinWindow.level.rawValue)")
+            check("pin: joins all Spaces",
+                  pinWindow.collectionBehavior.contains(.canJoinAllSpaces),
+                  "\(pinWindow.collectionBehavior.rawValue)")
+            pinWindow.close()
+            runTicks(2)
+        } else {
+            check("pin: window exists", false, "no pin panel found")
+        }
         print("probe done")
     }
 

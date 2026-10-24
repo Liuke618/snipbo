@@ -20,6 +20,13 @@ final class PinBoard {
         pins.append(controller)
         controller.show()
     }
+
+    /// Closes every live pin (context menu → "Close All").
+    func closeAll() {
+        for controller in pins {
+            controller.window?.close()
+        }
+    }
 }
 
 @MainActor
@@ -44,13 +51,21 @@ final class PinWindowController: NSWindowController, NSWindowDelegate {
         panel.isMovableByWindowBackground = true
         super.init(window: panel)
         panel.delegate = self
+        // True always-on-top: above every app's normal windows, visible on
+        // all Spaces (and beside fullscreen windows), never hidden when the
+        // app deactivates. Without the level bump the panel sits at .normal
+        // and sinks behind other apps on first switch.
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func show() {
-        NSApp.activate(ignoringOtherApps: true)
+        // Order front and take key without activating the app — pinning must
+        // never steal focus from whatever the user is doing (Shottr-style).
         window?.orderFrontRegardless()
         window?.makeKey()
         window?.makeFirstResponder(window?.contentView)
@@ -102,6 +117,32 @@ private final class PinContentView: NSView {
     init(image: CGImage) {
         self.image = image
         super.init(frame: .zero)
+        // Borderless panels have no close affordance, so right-click offers
+        // one; these work regardless of key status.
+        let menu = NSMenu()
+        let copyItem = NSMenuItem(
+            title: L10n.tr("Copy (⌘C)", "复制 (⌘C)"),
+            action: #selector(copyImageAction),
+            keyEquivalent: ""
+        )
+        copyItem.target = self
+        menu.addItem(copyItem)
+        menu.addItem(.separator())
+        let closeItem = NSMenuItem(
+            title: L10n.tr("Close (Esc)", "关闭 (Esc)"),
+            action: #selector(closeAction),
+            keyEquivalent: ""
+        )
+        closeItem.target = self
+        menu.addItem(closeItem)
+        let closeAllItem = NSMenuItem(
+            title: L10n.tr("Close All Pins", "关闭全部贴图"),
+            action: #selector(closeAllAction),
+            keyEquivalent: ""
+        )
+        closeAllItem.target = self
+        menu.addItem(closeAllItem)
+        self.menu = menu
     }
 
     @available(*, unavailable)
@@ -147,12 +188,25 @@ private final class PinContentView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        // Clicking the pin makes it the key window again (without activating
+        // the app), so ⌘C and Esc keep working after other windows had focus.
+        window?.makeKey()
         window?.makeFirstResponder(self)
     }
 
     private func copyImage() {
         guard let data = ImageExporter.pngData(from: image) else { return }
         _ = PasteboardWriter.writePNG(data, to: NSPasteboard.general)
+    }
+
+    @objc private func copyImageAction() { copyImage() }
+
+    @objc private func closeAction() {
+        window?.close()
+    }
+
+    @objc private func closeAllAction() {
+        PinBoard.shared.closeAll()
     }
 }
 
