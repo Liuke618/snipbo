@@ -39,8 +39,11 @@ struct SettingsView: View {
                 case .advanced: advancedTab
                 }
             }
+            // Fixed content height: switching tabs swaps rows in place instead
+            // of resizing the window, which read as constant jumpy resizing.
+            // 470 pt fits the tallest tab (General with the JPEG quality row).
             .padding(20)
-            .frame(width: 560, alignment: .top)
+            .frame(width: 560, height: 510, alignment: .top)
         }
         .frame(width: 560)
     }
