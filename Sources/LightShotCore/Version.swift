@@ -1,1 +1,1 @@
-public let lightShotVersion = "0.2.0"
+public let lightShotVersion = "0.3.0"
