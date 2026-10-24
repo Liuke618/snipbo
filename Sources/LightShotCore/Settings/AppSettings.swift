@@ -38,6 +38,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var retinaDownscale: Bool
     /// Joins OCR text blocks into one paragraph without line breaks.
     public var ocrRemoveLineBreaks: Bool
+    /// Frame rate target for scrolling capture, in frames per second.
+    public var scrollCaptureFPS: Int
 
     private enum CodingKeys: String, CodingKey {
         case hotkey
@@ -57,6 +59,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case launchAtLogin
         case retinaDownscale
         case ocrRemoveLineBreaks
+        case scrollCaptureFPS
     }
 
     public init(
@@ -76,7 +79,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         afterCaptureSave: Bool = false,
         launchAtLogin: Bool = false,
         retinaDownscale: Bool = false,
-        ocrRemoveLineBreaks: Bool = false
+        ocrRemoveLineBreaks: Bool = false,
+        scrollCaptureFPS: Int = 10
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -95,6 +99,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.launchAtLogin = launchAtLogin
         self.retinaDownscale = retinaDownscale
         self.ocrRemoveLineBreaks = ocrRemoveLineBreaks
+        self.scrollCaptureFPS = scrollCaptureFPS
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -125,6 +130,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.retinaDownscale
         ocrRemoveLineBreaks = try container.decodeIfPresent(Bool.self, forKey: .ocrRemoveLineBreaks)
             ?? fallback.ocrRemoveLineBreaks
+        scrollCaptureFPS = try container.decodeIfPresent(Int.self, forKey: .scrollCaptureFPS)
+            ?? fallback.scrollCaptureFPS
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -149,7 +156,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         afterCaptureSave: false,
         launchAtLogin: false,
         retinaDownscale: false,
-        ocrRemoveLineBreaks: false
+        ocrRemoveLineBreaks: false,
+        scrollCaptureFPS: 10
     )
 
     public func normalized() -> AppSettings {
@@ -159,6 +167,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         copy.historyMaxBytes = min(10 * 1024 * 1024 * 1024, max(10 * 1024 * 1024, historyMaxBytes))
         copy.captureDelaySeconds = min(30, max(0, captureDelaySeconds))
         copy.scrollMaxHeight = min(100_000, max(1_000, scrollMaxHeight))
+        copy.scrollCaptureFPS = min(30, max(5, scrollCaptureFPS))
         // A direct capture (editor off) must never be silently discarded.
         if !copy.openEditorAfterCapture, !copy.afterCaptureCopy, !copy.afterCaptureSave {
             copy.afterCaptureCopy = true

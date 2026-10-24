@@ -157,4 +157,27 @@ struct AppSettingsTests {
         )
         #expect(!legacy.launchAtLogin)
     }
+
+    @Test func testScrollCaptureFPSDefaultsAndClamps() throws {
+        #expect(AppSettings.default.scrollCaptureFPS == 10)
+        var settings = AppSettings.default
+        settings.scrollCaptureFPS = 20
+        let data = try JSONEncoder().encode(settings)
+        #expect(try JSONDecoder().decode(AppSettings.self, from: data).scrollCaptureFPS == 20)
+
+        settings.scrollCaptureFPS = 1
+        #expect(settings.normalized().scrollCaptureFPS == 5)
+        settings.scrollCaptureFPS = 99
+        #expect(settings.normalized().scrollCaptureFPS == 30)
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: try JSONEncoder().encode(AppSettings.default)) as? [String: Any]
+        )
+        object.removeValue(forKey: "scrollCaptureFPS")
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(legacy.scrollCaptureFPS == 10)
+    }
 }

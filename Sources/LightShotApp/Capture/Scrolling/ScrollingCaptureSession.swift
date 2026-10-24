@@ -44,6 +44,7 @@ final class ScrollingCaptureSession: @unchecked Sendable {
     private let displayID: CGDirectDisplayID
     private let rect: CGRect
     private let backingScale: CGFloat
+    private let fps: Int
     private let onAutomaticFinish: @MainActor @Sendable (Result<ScrollingCaptureResult, Error>) -> Void
 
     private let stateQueue = DispatchQueue(label: "local.lightshot.scrolling.state")
@@ -63,12 +64,14 @@ final class ScrollingCaptureSession: @unchecked Sendable {
         rect: CGRect,
         backingScale: CGFloat,
         maxHeight: Int,
+        fps: Int,
         onProgress: @MainActor @Sendable @escaping (Int) -> Void,
         onAutomaticFinish: @MainActor @Sendable @escaping (Result<ScrollingCaptureResult, Error>) -> Void
     ) {
         self.displayID = displayID
         self.rect = rect
         self.backingScale = backingScale
+        self.fps = fps
         self.onAutomaticFinish = onAutomaticFinish
         self.processor = ScrollFrameProcessor(
             maxHeight: maxHeight,
@@ -93,7 +96,7 @@ final class ScrollingCaptureSession: @unchecked Sendable {
         configuration.sourceRect = rect
         configuration.width = max(1, Int((rect.width * backingScale).rounded()))
         configuration.height = max(1, Int((rect.height * backingScale).rounded()))
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 10)
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(max(1, fps)))
         configuration.queueDepth = 5
         configuration.pixelFormat = kCVPixelFormatType_32BGRA
         configuration.showsCursor = false

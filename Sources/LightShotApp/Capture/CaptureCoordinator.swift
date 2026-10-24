@@ -308,6 +308,7 @@ final class CaptureCoordinator {
             rect: rect,
             backingScale: capture.geometry.backingScale,
             maxHeight: maxHeight,
+            fps: settings.scrollCaptureFPS,
             onProgress: { [weak self] height in
                 self?.scrollingControl?.update(height: height)
             },

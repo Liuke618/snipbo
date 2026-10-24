@@ -107,6 +107,15 @@ struct SettingsView: View {
                     )
                 }
 
+                SettingsRow("Scroll speed", labelWidth: labelWidth) {
+                    Stepper(
+                        "\(model.settings.scrollCaptureFPS) fps",
+                        value: $model.settings.scrollCaptureFPS,
+                        in: 5...30,
+                        step: 1
+                    )
+                }
+
             }
 
             groupDivider
