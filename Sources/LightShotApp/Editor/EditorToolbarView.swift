@@ -34,11 +34,11 @@ final class EditorToolbarView: NSView {
         target: nil,
         action: nil
     )
-    private let undoButton = NSButton(title: "Undo", target: nil, action: nil)
-    private let redoButton = NSButton(title: "Redo", target: nil, action: nil)
-    private let copyButton = NSButton(title: "Copy", target: nil, action: nil)
-    private let saveButton = NSButton(title: "Save", target: nil, action: nil)
-    private let closeButton = NSButton(title: "Close", target: nil, action: nil)
+    private let undoButton = NSButton(title: L10n.tr("Undo", "撤销"), target: nil, action: nil)
+    private let redoButton = NSButton(title: L10n.tr("Redo", "重做"), target: nil, action: nil)
+    private let copyButton = NSButton(title: L10n.tr("Copy", "复制"), target: nil, action: nil)
+    private let saveButton = NSButton(title: L10n.tr("Save", "保存"), target: nil, action: nil)
+    private let closeButton = NSButton(title: L10n.tr("Close", "关闭"), target: nil, action: nil)
 
     private let onTool: (EditorTool) -> Void
     private let onUndo: () -> Void
@@ -98,11 +98,11 @@ final class EditorToolbarView: NSView {
         closeButton.target = self
         closeButton.action = #selector(closeAction)
         recognizeButton.imagePosition = .imageOnly
-        recognizeButton.toolTip = "Recognize text and barcodes"
+        recognizeButton.toolTip = L10n.tr("Recognize text and barcodes", "识别文字与条码")
         recognizeButton.target = self
         recognizeButton.action = #selector(recognizeAction)
         pinButton.imagePosition = .imageOnly
-        pinButton.toolTip = "Pin as floating window (⌘P)"
+        pinButton.toolTip = L10n.tr("Pin as floating window (⌘P)", "贴图置顶 (⌘P)")
         pinButton.target = self
         pinButton.action = #selector(pinAction)
 

@@ -38,15 +38,22 @@ enum PermissionService {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Screen Recording permission is required"
-        alert.informativeText = """
-        Enable LightShot in System Settings → Privacy & Security → Screen Recording.
+        alert.messageText = L10n.tr("Screen Recording permission is required", "需要屏幕录制权限")
+        alert.informativeText = L10n.tr(
+            """
+            Enable LightShot in System Settings → Privacy & Security → Screen Recording.
 
-        A granted permission only takes effect after the app restarts — use Restart below once you have toggled LightShot on.
-        """
-        alert.addButton(withTitle: "Open System Settings")
-        alert.addButton(withTitle: "Restart LightShot")
-        alert.addButton(withTitle: "Cancel")
+            A granted permission only takes effect after the app restarts — use Restart below once you have toggled LightShot on.
+            """,
+            """
+            请在 系统设置 → 隐私与安全性 → 屏幕录制 中开启 LightShot。
+
+            授权在应用重启后才会生效——开启后请点击下方“重启 LightShot”。
+            """
+        )
+        alert.addButton(withTitle: L10n.tr("Open System Settings", "打开系统设置"))
+        alert.addButton(withTitle: L10n.tr("Restart LightShot", "重启 LightShot"))
+        alert.addButton(withTitle: L10n.tr("Cancel", "取消"))
         alert.window.level = .floating
         switch alert.runModal() {
         case .alertFirstButtonReturn:

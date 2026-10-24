@@ -216,4 +216,34 @@ struct AppSettingsTests {
         )
         #expect(!legacy.windowShadowTrim)
     }
+
+    @Test func testUILanguageDefaultsAndRoundTrip() throws {
+        #expect(AppSettings.default.uiLanguage == .system)
+        var settings = AppSettings.default
+        settings.uiLanguage = .chinese
+        let data = try JSONEncoder().encode(settings)
+        #expect(try JSONDecoder().decode(AppSettings.self, from: data).uiLanguage == .chinese)
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        object.removeValue(forKey: "uiLanguage")
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(legacy.uiLanguage == .system)
+    }
+
+    @Test func testAppLanguageResolution() {
+        // Explicit choices resolve to themselves.
+        #expect(AppLanguage.english.resolved == "en")
+        #expect(AppLanguage.chinese.resolved == "zh-Hans")
+        // System resolution maps zh* to zh-Hans, en* to en, and falls back to en.
+        #expect(AppLanguage.system.resolve(["zh-CN", "en"]) == "zh-Hans")
+        #expect(AppLanguage.system.resolve(["en-US", "zh-Hans"]) == "en")
+        #expect(AppLanguage.system.resolve(["fr-FR"]) == "en")
+        // An unsupported first preference falls through to the next supported one.
+        #expect(AppLanguage.system.resolve(["ja", "zh-TW"]) == "zh-Hans")
+    }
 }

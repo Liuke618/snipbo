@@ -81,7 +81,7 @@ final class RecognitionResultsView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func showProgress() {
-        showMessage("Recognizing…")
+        showMessage(L10n.tr("Recognizing…", "识别中…"))
     }
 
     func showMessage(_ message: String) {

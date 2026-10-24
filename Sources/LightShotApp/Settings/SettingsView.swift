@@ -11,28 +11,41 @@ struct SettingsView: View {
     private let labelWidth: CGFloat = 190
 
     /// Modes that can carry their own chord besides the base region hotkey.
-    private static let extraHotkeyModes: [(String, String)] = [
-        ("window", "Window hotkey"),
-        ("screen", "Screen hotkey"),
-        ("allScreens", "All screens hotkey"),
-        ("timedRegion", "Timed region hotkey"),
-        ("timedScreen", "Timed screen hotkey"),
-        ("lastRegion", "Last region hotkey"),
-        ("scrolling", "Scrolling hotkey"),
-    ]
+    private var extraHotkeyModes: [(String, String)] {
+        [
+            ("window", L10n.tr("Window hotkey", "窗口热键")),
+            ("screen", L10n.tr("Screen hotkey", "屏幕热键")),
+            ("allScreens", L10n.tr("All screens hotkey", "全部屏幕热键")),
+            ("timedRegion", L10n.tr("Timed region hotkey", "延时区域热键")),
+            ("timedScreen", L10n.tr("Timed screen hotkey", "延时屏幕热键")),
+            ("lastRegion", L10n.tr("Last region hotkey", "上次区域热键")),
+            ("scrolling", L10n.tr("Scrolling hotkey", "滚动热键")),
+        ]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SettingsRow("Hotkey", labelWidth: labelWidth) {
+            SettingsRow(L10n.tr("Hotkey", "快捷键"), labelWidth: labelWidth) {
                 HotkeyRecorderView(hotkey: $model.settings.hotkey)
                     .frame(width: 220, height: 32)
             }
 
+            SettingsRow(L10n.tr("Language", "语言"), labelWidth: labelWidth) {
+                Picker("", selection: $model.settings.uiLanguage) {
+                    Text(L10n.tr("Follow System", "跟随系统")).tag(AppLanguage.system)
+                    Text("English").tag(AppLanguage.english)
+                    Text("简体中文").tag(AppLanguage.chinese)
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 160)
+            }
+
             groupDivider
 
-            DisclosureGroup("Per-mode shortcuts") {
+            DisclosureGroup(L10n.tr("Per-mode shortcuts", "分模式快捷键")) {
                 VStack(spacing: 8) {
-                    ForEach(Self.extraHotkeyModes, id: \.0) { mode, title in
+                    ForEach(extraHotkeyModes, id: \.0) { mode, title in
                         SettingsRow(title, labelWidth: labelWidth) {
                             HStack(spacing: 8) {
                                 ModeHotkeyRecorderView(
@@ -41,7 +54,7 @@ struct SettingsView: View {
                                 )
                                 .frame(width: 210, height: 32)
                                 if model.settings.modeHotkeys[mode] != nil {
-                                    Button("Clear") {
+                                    Button(L10n.tr("Clear", "清除")) {
                                         model.settings.modeHotkeys[mode] = nil
                                     }
                                     .controlSize(.small)
@@ -57,7 +70,7 @@ struct SettingsView: View {
             groupDivider
 
             VStack(spacing: 8) {
-                SettingsRow("Screenshots folder", labelWidth: labelWidth) {
+                SettingsRow(L10n.tr("Screenshots folder", "保存文件夹"), labelWidth: labelWidth) {
                     HStack(spacing: 8) {
                         Text(model.settings.saveDirectory)
                             .lineLimit(1)
@@ -71,11 +84,11 @@ struct SettingsView: View {
                                 RoundedRectangle(cornerRadius: 5)
                                     .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
                             )
-                        Button("Choose…") { chooseFolder() }
+                        Button(L10n.tr("Choose…", "选择…")) { chooseFolder() }
                     }
                 }
 
-                SettingsRow("Save format", labelWidth: labelWidth) {
+                SettingsRow(L10n.tr("Save format", "保存格式"), labelWidth: labelWidth) {
                     Picker("", selection: $model.settings.format) {
                         Text("PNG").tag(ImageFormat.png)
                         Text("JPEG").tag(ImageFormat.jpeg)
@@ -86,7 +99,7 @@ struct SettingsView: View {
                 }
 
                 if model.settings.format == .jpeg {
-                    SettingsRow("Quality", labelWidth: labelWidth) {
+                    SettingsRow(L10n.tr("Quality", "质量"), labelWidth: labelWidth) {
                         HStack(spacing: 8) {
                             Slider(value: $model.settings.jpegQuality, in: 0.1...1)
                             Text("\(Int((model.settings.jpegQuality * 100).rounded()))%")
@@ -101,38 +114,38 @@ struct SettingsView: View {
             groupDivider
 
             VStack(spacing: 8) {
-                SettingsRow("Cursor", labelWidth: labelWidth) {
-                    Toggle("Capture cursor", isOn: $model.settings.captureCursor)
+                SettingsRow(L10n.tr("Cursor", "光标"), labelWidth: labelWidth) {
+                    Toggle(L10n.tr("Capture cursor", "捕捉鼠标指针"), isOn: $model.settings.captureCursor)
                         .toggleStyle(.checkbox)
                 }
 
-                SettingsRow("After capture", labelWidth: labelWidth) {
+                SettingsRow(L10n.tr("After capture", "截图后"), labelWidth: labelWidth) {
                     HStack(spacing: 14) {
-                        Toggle("Open editor", isOn: $model.settings.openEditorAfterCapture)
+                        Toggle(L10n.tr("Open editor", "打开编辑器"), isOn: $model.settings.openEditorAfterCapture)
                             .toggleStyle(.checkbox)
-                        Toggle("Copy", isOn: $model.settings.afterCaptureCopy)
+                        Toggle(L10n.tr("Copy", "复制"), isOn: $model.settings.afterCaptureCopy)
                             .toggleStyle(.checkbox)
-                        Toggle("Save", isOn: $model.settings.afterCaptureSave)
+                        Toggle(L10n.tr("Save", "保存"), isOn: $model.settings.afterCaptureSave)
                             .toggleStyle(.checkbox)
                     }
                 }
 
-                SettingsRow("Launch", labelWidth: labelWidth) {
-                    Toggle("Start at login", isOn: $model.settings.launchAtLogin)
+                SettingsRow(L10n.tr("Launch", "启动"), labelWidth: labelWidth) {
+                    Toggle(L10n.tr("Start at login", "登录时启动"), isOn: $model.settings.launchAtLogin)
                         .toggleStyle(.checkbox)
                 }
 
-                SettingsRow("Export", labelWidth: labelWidth) {
-                    Toggle("Downscale retina captures to 1x", isOn: $model.settings.retinaDownscale)
+                SettingsRow(L10n.tr("Export", "导出"), labelWidth: labelWidth) {
+                    Toggle(L10n.tr("Downscale retina captures to 1x", "Retina 截图缩至 1x"), isOn: $model.settings.retinaDownscale)
                         .toggleStyle(.checkbox)
                 }
 
-                SettingsRow("Esc in editor", labelWidth: labelWidth) {
-                    Toggle("Copy image before closing", isOn: $model.settings.copyOnEditorEscape)
+                SettingsRow(L10n.tr("Esc in editor", "编辑器 Esc 键"), labelWidth: labelWidth) {
+                    Toggle(L10n.tr("Copy image before closing", "关闭前复制图像"), isOn: $model.settings.copyOnEditorEscape)
                         .toggleStyle(.checkbox)
                 }
 
-                SettingsRow("Countdown", labelWidth: labelWidth) {
+                SettingsRow(L10n.tr("Countdown", "倒计时"), labelWidth: labelWidth) {
                     Stepper(
                         "\(model.settings.captureDelaySeconds) s",
                         value: $model.settings.captureDelaySeconds,
@@ -140,7 +153,7 @@ struct SettingsView: View {
                     )
                 }
 
-                SettingsRow("Scroll height", labelWidth: labelWidth) {
+                SettingsRow(L10n.tr("Scroll height", "滚动高度"), labelWidth: labelWidth) {
                     Stepper(
                         "\(model.settings.scrollMaxHeight) px",
                         value: $model.settings.scrollMaxHeight,
@@ -149,7 +162,7 @@ struct SettingsView: View {
                     )
                 }
 
-                SettingsRow("Scroll speed", labelWidth: labelWidth) {
+                SettingsRow(L10n.tr("Scroll speed", "滚动速度"), labelWidth: labelWidth) {
                     Stepper(
                         "\(model.settings.scrollCaptureFPS) fps",
                         value: $model.settings.scrollCaptureFPS,
@@ -158,8 +171,8 @@ struct SettingsView: View {
                     )
                 }
 
-                SettingsRow("Window capture", labelWidth: labelWidth) {
-                    Toggle("Trim shadow", isOn: $model.settings.windowShadowTrim)
+                SettingsRow(L10n.tr("Window capture", "窗口截图"), labelWidth: labelWidth) {
+                    Toggle(L10n.tr("Trim shadow", "裁掉阴影"), isOn: $model.settings.windowShadowTrim)
                         .toggleStyle(.checkbox)
                 }
 
@@ -167,29 +180,29 @@ struct SettingsView: View {
 
             groupDivider
 
-            SettingsRow("OCR languages", labelWidth: labelWidth) {
+            SettingsRow(L10n.tr("OCR languages", "OCR 语言"), labelWidth: labelWidth) {
                 HStack(spacing: 16) {
-                    Toggle("Simplified Chinese", isOn: languageBinding("zh-Hans"))
+                    Toggle(L10n.tr("Simplified Chinese", "简体中文"), isOn: languageBinding("zh-Hans"))
                         .toggleStyle(.checkbox)
-                    Toggle("English", isOn: languageBinding("en-US"))
+                    Toggle(L10n.tr("English", "英语"), isOn: languageBinding("en-US"))
                         .toggleStyle(.checkbox)
                 }
             }
 
-            SettingsRow("OCR text", labelWidth: labelWidth) {
-                Toggle("Remove line breaks", isOn: $model.settings.ocrRemoveLineBreaks)
+            SettingsRow(L10n.tr("OCR text", "OCR 文本"), labelWidth: labelWidth) {
+                Toggle(L10n.tr("Remove line breaks", "去除换行"), isOn: $model.settings.ocrRemoveLineBreaks)
                     .toggleStyle(.checkbox)
             }
 
             groupDivider
 
             VStack(spacing: 8) {
-                SettingsRow("History", labelWidth: labelWidth) {
-                    Toggle("Keep history", isOn: $model.settings.historyEnabled)
+                SettingsRow(L10n.tr("History", "历史记录"), labelWidth: labelWidth) {
+                    Toggle(L10n.tr("Keep history", "保留历史"), isOn: $model.settings.historyEnabled)
                         .toggleStyle(.checkbox)
                 }
 
-                SettingsRow("Max items", labelWidth: labelWidth) {
+                SettingsRow(L10n.tr("Max items", "条数上限"), labelWidth: labelWidth) {
                     Stepper(
                         "\(model.settings.historyMaxItems)",
                         value: $model.settings.historyMaxItems,

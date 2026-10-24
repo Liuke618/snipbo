@@ -32,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        L10n.languageProvider = { [weak self] in
+            self?.settingsModel.settings.uiLanguage ?? .system
+        }
         let coordinator = captureCoordinator
         let recentController = recentMenuController
         statusItemController = StatusItemController(
@@ -60,10 +63,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         syncLoginItem(settings)
+        appliedLanguage = settings.uiLanguage
         settingsModel.onChange = { [weak self] newSettings in
             guard let self else { return }
             self.applyModeHotkeys(newSettings)
             self.syncLoginItem(newSettings)
+            if newSettings.uiLanguage != self.appliedLanguage {
+                self.appliedLanguage = newSettings.uiLanguage
+                self.statusItemController?.refreshLocalization()
+            }
             self.captureCoordinator.updateSettings(newSettings)
             Task {
                 do {
@@ -142,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var appliedLoginItem: Bool?
+    private var appliedLanguage: AppLanguage?
 
     /// Applies launch-at-login only when the desired state changes, so a
     /// Settings window left open cannot re-register on every keystroke.

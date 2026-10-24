@@ -13,7 +13,7 @@ final class HistoryBrowserWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Screenshot History"
+        window.title = L10n.tr("Screenshot History", "截图历史")
         window.isReleasedWhenClosed = false
         window.contentViewController = NSHostingController(
             rootView: HistoryBrowserView(model: model, openInEditor: openInEditor)
@@ -117,10 +117,10 @@ struct HistoryBrowserView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("\(model.entries.count) screenshots")
+                Text(L10n.tr("\(model.entries.count) screenshots", "\(model.entries.count) 张截图"))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Clear All") {
+                Button(L10n.tr("Clear All", "全部清空")) {
                     Task { await model.clearAll() }
                 }
                 .disabled(model.entries.isEmpty)
@@ -128,7 +128,7 @@ struct HistoryBrowserView: View {
             .padding(12)
             Divider()
             if model.loadFailed {
-                Text("The history index could not be read.")
+                Text(L10n.tr("The history index could not be read.", "历史索引无法读取。"))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if model.entries.isEmpty {
@@ -136,7 +136,7 @@ struct HistoryBrowserView: View {
                     Image(systemName: "camera.viewfinder")
                         .font(.system(size: 32))
                         .foregroundStyle(.secondary)
-                    Text("No screenshots yet. They appear here after you copy or save one.")
+                    Text(L10n.tr("No screenshots yet. They appear here after you copy or save one.", "还没有截图。复制或保存后，截图会出现在这里。"))
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -188,12 +188,12 @@ struct HistoryBrowserView: View {
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onTapGesture(count: 2) { openInEditor(entry) }
         .contextMenu {
-            Button("Open in Editor") { openInEditor(entry) }
-            Button("Pin") { Task { await model.pin(entry) } }
-            Button("Copy") { Task { await model.copy(entry) } }
-            Button("Show in Finder") { Task { await model.reveal(entry) } }
+            Button(L10n.tr("Open in Editor", "在编辑器中打开")) { openInEditor(entry) }
+            Button(L10n.tr("Pin", "贴图")) { Task { await model.pin(entry) } }
+            Button(L10n.tr("Copy", "复制")) { Task { await model.copy(entry) } }
+            Button(L10n.tr("Show in Finder", "在 Finder 中显示")) { Task { await model.reveal(entry) } }
             Divider()
-            Button("Delete", role: .destructive) {
+            Button(L10n.tr("Delete", "删除"), role: .destructive) {
                 Task { await model.delete(entry) }
             }
         }

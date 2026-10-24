@@ -35,39 +35,51 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         let menu = NSMenu()
         menu.delegate = self
-        menu.addItem(makeItem("Capture Region", action: #selector(captureRegion)))
-        menu.addItem(makeItem("Capture Window", action: #selector(captureWindow)))
-        menu.addItem(makeItem("Capture Screen", action: #selector(captureScreen)))
-        menu.addItem(makeItem("Capture All Screens", action: #selector(captureAllScreens)))
+        populateMenu(menu)
+        statusItem.menu = menu
+    }
 
-        let timedItem = NSMenuItem(title: "Timed Capture", action: nil, keyEquivalent: "")
+    /// Rebuilds every item so a language change takes effect the next time
+    /// the menu opens.
+    func refreshLocalization() {
+        guard let menu = statusItem.menu else { return }
+        menu.removeAllItems()
+        populateMenu(menu)
+    }
+
+    private func populateMenu(_ menu: NSMenu) {
+        menu.addItem(makeItem(L10n.tr("Capture Region", "区域截图"), action: #selector(captureRegion)))
+        menu.addItem(makeItem(L10n.tr("Capture Window", "窗口截图"), action: #selector(captureWindow)))
+        menu.addItem(makeItem(L10n.tr("Capture Screen", "屏幕截图"), action: #selector(captureScreen)))
+        menu.addItem(makeItem(L10n.tr("Capture All Screens", "全部屏幕"), action: #selector(captureAllScreens)))
+
+        let timedItem = NSMenuItem(title: L10n.tr("Timed Capture", "延时截图"), action: nil, keyEquivalent: "")
         let timedMenu = NSMenu()
-        timedMenu.addItem(makeItem("Region", action: #selector(captureTimedRegion)))
-        timedMenu.addItem(makeItem("Screen", action: #selector(captureTimedScreen)))
+        timedMenu.addItem(makeItem(L10n.tr("Region", "区域"), action: #selector(captureTimedRegion)))
+        timedMenu.addItem(makeItem(L10n.tr("Screen", "屏幕"), action: #selector(captureTimedScreen)))
         timedItem.submenu = timedMenu
         menu.addItem(timedItem)
 
-        let lastRegionItem = makeItem("Capture Last Region", action: #selector(captureLastRegion))
+        let lastRegionItem = makeItem(L10n.tr("Capture Last Region", "上次区域截图"), action: #selector(captureLastRegion))
         self.lastRegionItem = lastRegionItem
         menu.addItem(lastRegionItem)
-        menu.addItem(makeItem("Scrolling Capture", action: #selector(captureScrolling)))
+        menu.addItem(makeItem(L10n.tr("Scrolling Capture", "滚动截图"), action: #selector(captureScrolling)))
 
         menu.addItem(.separator())
-        let recentItem = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
+        let recentItem = NSMenuItem(title: L10n.tr("Recent", "最近截图"), action: nil, keyEquivalent: "")
         recentItem.submenu = recentMenu
         menu.addItem(recentItem)
-        menu.addItem(makeItem("History Browser…", action: #selector(openHistoryBrowser)))
+        menu.addItem(makeItem(L10n.tr("History Browser…", "历史浏览…"), action: #selector(openHistoryBrowser)))
 
         menu.addItem(.separator())
-        let settingsItem = makeItem("Settings…", action: #selector(openSettings))
+        let settingsItem = makeItem(L10n.tr("Settings…", "设置…"), action: #selector(openSettings))
         settingsItem.keyEquivalent = ","
         menu.addItem(settingsItem)
         menu.addItem(.separator())
 
-        let quitItem = makeItem("Quit LightShot", action: #selector(quit))
+        let quitItem = makeItem(L10n.tr("Quit LightShot", "退出 LightShot"), action: #selector(quit))
         quitItem.keyEquivalent = "q"
         menu.addItem(quitItem)
-        statusItem.menu = menu
     }
 
     func menuWillOpen(_ menu: NSMenu) {

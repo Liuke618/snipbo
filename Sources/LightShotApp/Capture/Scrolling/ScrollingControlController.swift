@@ -10,7 +10,7 @@ private final class ScrollingControlPanel: NSPanel {
 @MainActor
 final class ScrollingControlController {
     private let panel: ScrollingControlPanel
-    private let label = NSTextField(labelWithString: "Scrolling… 0 px")
+    private let label = NSTextField(labelWithString: L10n.tr("Scrolling… 0 px", "滚动中… 0 px"))
     private var shownHeight = 0
     private var keyMonitor: Any?
     private let onStop: () -> Void
@@ -53,13 +53,13 @@ final class ScrollingControlController {
         label.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(label)
 
-        let stop = NSButton(title: "Stop", target: self, action: #selector(stopAction))
+        let stop = NSButton(title: L10n.tr("Stop", "停止"), target: self, action: #selector(stopAction))
         stop.bezelStyle = .rounded
         stop.controlSize = .small
         stop.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stop)
 
-        let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelAction))
+        let cancel = NSButton(title: L10n.tr("Cancel", "取消"), target: self, action: #selector(cancelAction))
         cancel.bezelStyle = .rounded
         cancel.controlSize = .small
         cancel.translatesAutoresizingMaskIntoConstraints = false
@@ -93,7 +93,7 @@ final class ScrollingControlController {
         // backwards.
         guard height > shownHeight else { return }
         shownHeight = height
-        label.stringValue = "Scrolling… \(height) px"
+        label.stringValue = L10n.tr("Scrolling… \(height) px", "滚动中… \(height) px")
     }
 
     func close() {

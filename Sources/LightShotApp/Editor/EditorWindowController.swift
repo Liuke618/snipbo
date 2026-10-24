@@ -345,7 +345,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                 self.toolbarView?.setRecognizing(false)
 
                 if result.isEmpty {
-                    self.recognitionPanel.showMessage("No text or barcode found.")
+                    self.recognitionPanel.showMessage(L10n.tr("No text or barcode found.", "未识别到文字或条码。"))
                     NSSound.beep()
                     return
                 }

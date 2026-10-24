@@ -48,6 +48,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// entry fall back to `hotkey` for the region mode and have no chord
     /// otherwise.
     public var modeHotkeys: [String: Hotkey]
+    /// UI language for menus, settings, and dialogs.
+    public var uiLanguage: AppLanguage
 
     /// Capture modes that can carry their own global shortcut, in the order
     /// used to resolve chord conflicts.
@@ -97,6 +99,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case copyOnEditorEscape
         case windowShadowTrim
         case modeHotkeys
+        case uiLanguage
     }
 
     public init(
@@ -120,7 +123,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         scrollCaptureFPS: Int = 10,
         copyOnEditorEscape: Bool = false,
         windowShadowTrim: Bool = false,
-        modeHotkeys: [String: Hotkey] = [:]
+        modeHotkeys: [String: Hotkey] = [:],
+        uiLanguage: AppLanguage = .system
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -143,6 +147,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.copyOnEditorEscape = copyOnEditorEscape
         self.windowShadowTrim = windowShadowTrim
         self.modeHotkeys = modeHotkeys
+        self.uiLanguage = uiLanguage
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -181,6 +186,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.windowShadowTrim
         modeHotkeys = try container.decodeIfPresent([String: Hotkey].self, forKey: .modeHotkeys)
             ?? fallback.modeHotkeys
+        uiLanguage = try container.decodeIfPresent(AppLanguage.self, forKey: .uiLanguage)
+            ?? fallback.uiLanguage
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -208,7 +215,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ocrRemoveLineBreaks: false,
         copyOnEditorEscape: false,
         windowShadowTrim: false,
-        modeHotkeys: [:]
+        modeHotkeys: [:],
+        uiLanguage: .system
     )
 
     public func normalized() -> AppSettings {

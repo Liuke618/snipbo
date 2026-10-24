@@ -239,7 +239,7 @@ final class CaptureCoordinator {
         guard !isCapturing else { return }
         guard let region = lastRegion.load() else {
             showLastRegionUnavailable(
-                message: "No previous region has been saved yet. Capture a region first."
+                message: L10n.tr("No previous region has been saved yet. Capture a region first.", "还没有保存过区域，请先进行一次区域截图。")
             )
             return
         }
@@ -249,7 +249,7 @@ final class CaptureCoordinator {
               region.isValid(for: screen.geometry) else {
             lastRegion.clear()
             showLastRegionUnavailable(
-                message: "The previous region is no longer valid because the display layout changed. Capture a new region first."
+                message: L10n.tr("The previous region is no longer valid because the display layout changed. Capture a new region first.", "显示器布局已变化，上次的区域不再有效，请重新进行区域截图。")
             )
             return
         }
@@ -266,7 +266,7 @@ final class CaptureCoordinator {
                 isCapturing = false
                 guard let cropped = capture.cropped(toLocalPoints: region.rect) else {
                     showLastRegionUnavailable(
-                        message: "The previous region could not be captured. Capture a new region first."
+                        message: L10n.tr("The previous region could not be captured. Capture a new region first.", "上次区域截取失败，请重新进行区域截图。")
                     )
                     return
                 }
@@ -288,7 +288,7 @@ final class CaptureCoordinator {
     private func showLastRegionUnavailable(message: String) {
         let alert = NSAlert()
         alert.alertStyle = .informational
-        alert.messageText = "No usable previous region"
+        alert.messageText = L10n.tr("No usable previous region", "没有可用的上次区域")
         alert.informativeText = message
         alert.runModal()
     }
@@ -357,8 +357,8 @@ final class CaptureCoordinator {
                 isCapturing = false
                 NSSound.beep()
                 presentScrollingMessage(
-                    title: "No scrolling detected",
-                    message: "Scroll the content while the capture is running, then press Stop."
+                    title: L10n.tr("No scrolling detected", "未检测到滚动"),
+                    message: L10n.tr("Scroll the content while the capture is running, then press Stop.", "请在截图进行中滚动内容，然后按停止。")
                 )
             }
         }
@@ -390,8 +390,8 @@ final class CaptureCoordinator {
             if capture.reason == .noMovement {
                 NSSound.beep()
                 presentScrollingMessage(
-                    title: "No scrolling detected",
-                    message: "Scroll the content while the capture is running, then press Stop."
+                    title: L10n.tr("No scrolling detected", "未检测到滚动"),
+                    message: L10n.tr("Scroll the content while the capture is running, then press Stop.", "请在截图进行中滚动内容，然后按停止。")
                 )
                 return
             }
@@ -399,13 +399,13 @@ final class CaptureCoordinator {
             switch capture.reason {
             case .limitReached:
                 presentScrollingMessage(
-                    title: "Scrolling capture truncated",
-                    message: "The stitched image reached the maximum supported height."
+                    title: L10n.tr("Scrolling capture truncated", "滚动截图已截断"),
+                    message: L10n.tr("The stitched image reached the maximum supported height.", "拼接图像已达到最大支持高度。")
                 )
             case .lowConfidence:
                 presentScrollingMessage(
-                    title: "Scrolling alignment lost",
-                    message: "The stitched image contains the content captured before alignment became unreliable."
+                    title: L10n.tr("Scrolling alignment lost", "滚动对齐丢失"),
+                    message: L10n.tr("The stitched image contains the content captured before alignment became unreliable.", "已保留对齐失效前捕获的内容。")
                 )
             case .stopped, .noMovement:
                 break
