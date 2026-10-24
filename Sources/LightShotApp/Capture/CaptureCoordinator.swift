@@ -320,6 +320,11 @@ final class CaptureCoordinator {
         Task {
             do {
                 try await session.start()
+                guard scrollingInProgress else {
+                    // Cancel/Esc won while the stream was starting.
+                    await session.cancel()
+                    return
+                }
             } catch {
                 guard scrollingInProgress else { return }
                 cancelScrolling()
@@ -386,7 +391,7 @@ final class CaptureCoordinator {
             case .limitReached:
                 presentScrollingMessage(
                     title: "Scrolling capture truncated",
-                    message: "The stitched image reached the configured maximum height. Increase it in Settings if needed."
+                    message: "The stitched image reached the maximum supported height."
                 )
             case .lowConfidence:
                 presentScrollingMessage(

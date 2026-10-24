@@ -11,6 +11,7 @@ private final class ScrollingControlPanel: NSPanel {
 final class ScrollingControlController {
     private let panel: ScrollingControlPanel
     private let label = NSTextField(labelWithString: "Scrolling… 0 px")
+    private var shownHeight = 0
     private var keyMonitor: Any?
     private let onStop: () -> Void
     private let onCancel: () -> Void
@@ -88,6 +89,10 @@ final class ScrollingControlController {
     }
 
     func update(height: Int) {
+        // Frame-processing hops can arrive out of order; never move the label
+        // backwards.
+        guard height > shownHeight else { return }
+        shownHeight = height
         label.stringValue = "Scrolling… \(height) px"
     }
 

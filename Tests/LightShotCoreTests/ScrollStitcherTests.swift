@@ -60,6 +60,49 @@ struct ScrollStitcherTests {
     }
 }
 
+@Suite("ScrollAlignmentTests")
+struct ScrollAlignmentTests {
+    @Test func testScrollDownYieldsTopOverlap() {
+        // Empirical Vision convention: scrolling down moves the previous
+        // content toward the frame bottom, giving a negative ty whose
+        // magnitude is the rows of new content.
+        #expect(ScrollAlignment.overlapRows(translationY: -1, frameHeight: 4) == 3)
+        #expect(ScrollAlignment.overlapRows(translationY: -32, frameHeight: 128) == 96)
+    }
+
+    @Test func testUpwardScrollNoMovementAndImplausibleJumpsAreSkipped() {
+        #expect(ScrollAlignment.overlapRows(translationY: 1, frameHeight: 4) == nil)
+        #expect(ScrollAlignment.overlapRows(translationY: 0, frameHeight: 4) == nil)
+        #expect(ScrollAlignment.overlapRows(translationY: -4, frameHeight: 4) == nil)
+        #expect(ScrollAlignment.overlapRows(translationY: -5, frameHeight: 4) == nil)
+    }
+
+    @Test func testStitchedScrollProducesContinuousImage() throws {
+        // Review Critical #1 regression: a real scroll of one row. The frame's
+        // content is the composite shifted up by one, so the overlap is
+        // H − dy = 3, and appending must add exactly the single new row.
+        let composite = try makeRows([0, 1, 2, 3])
+        let frame = try makeRows([1, 2, 3, 4])
+        let overlap = try #require(ScrollAlignment.overlapRows(translationY: -1, frameHeight: 4))
+        let result = try #require(ScrollStitcher.append(
+            composite: composite,
+            frame: frame,
+            offset: overlap,
+            maxHeight: 100
+        ))
+        #expect(try rows(of: result.image) == [0, 1, 2, 3, 4])
+    }
+
+    @Test func testEffectiveMaxHeightIsAreaCapped() {
+        // 40 Mpx budget: a 4000 px wide frame caps at 10000 rows.
+        #expect(ScrollAlignment.effectiveMaxHeight(requested: 100_000, width: 4_000) == 10_000)
+        // The default 20000 px at 2000 px width stays untouched.
+        #expect(ScrollAlignment.effectiveMaxHeight(requested: 20_000, width: 2_000) == 20_000)
+        // Narrow captures keep the full requested height.
+        #expect(ScrollAlignment.effectiveMaxHeight(requested: 100_000, width: 100) == 100_000)
+    }
+}
+
 // sRGB everywhere: a DeviceRGB fill→makeImage→draw round-trip perturbs low
 // byte values by ~1 (color matching), which would break exact row assertions.
 private let rowColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
