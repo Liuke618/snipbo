@@ -34,6 +34,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var afterCaptureSave: Bool
     /// Keeps the app registered as a macOS login item.
     public var launchAtLogin: Bool
+    /// Exports retina captures at 1x by halving the pixel size.
+    public var retinaDownscale: Bool
 
     private enum CodingKeys: String, CodingKey {
         case hotkey
@@ -51,6 +53,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case afterCaptureCopy
         case afterCaptureSave
         case launchAtLogin
+        case retinaDownscale
     }
 
     public init(
@@ -68,7 +71,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         scrollMaxHeight: Int = 20_000,
         afterCaptureCopy: Bool = true,
         afterCaptureSave: Bool = false,
-        launchAtLogin: Bool = false
+        launchAtLogin: Bool = false,
+        retinaDownscale: Bool = false
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -85,6 +89,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.afterCaptureCopy = afterCaptureCopy
         self.afterCaptureSave = afterCaptureSave
         self.launchAtLogin = launchAtLogin
+        self.retinaDownscale = retinaDownscale
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -111,6 +116,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.afterCaptureSave
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin)
             ?? fallback.launchAtLogin
+        retinaDownscale = try container.decodeIfPresent(Bool.self, forKey: .retinaDownscale)
+            ?? fallback.retinaDownscale
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -133,7 +140,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         scrollMaxHeight: 20_000,
         afterCaptureCopy: true,
         afterCaptureSave: false,
-        launchAtLogin: false
+        launchAtLogin: false,
+        retinaDownscale: false
     )
 
     public func normalized() -> AppSettings {

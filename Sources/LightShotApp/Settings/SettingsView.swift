@@ -85,6 +85,11 @@ struct SettingsView: View {
                         .toggleStyle(.checkbox)
                 }
 
+                SettingsRow("Export", labelWidth: labelWidth) {
+                    Toggle("Downscale retina captures to 1x", isOn: $model.settings.retinaDownscale)
+                        .toggleStyle(.checkbox)
+                }
+
                 SettingsRow("Countdown", labelWidth: labelWidth) {
                     Stepper(
                         "\(model.settings.captureDelaySeconds) s",

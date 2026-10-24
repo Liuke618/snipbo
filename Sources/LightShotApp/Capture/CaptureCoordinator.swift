@@ -26,6 +26,7 @@ final class CaptureCoordinator {
     private var scrollingSession: ScrollingCaptureSession?
     private var scrollingControl: ScrollingControlController?
     private var scrollingInProgress = false
+    private var scrollingBackingScale: CGFloat = 1
     /// Every open capture editor, retained until its own close callback runs.
     /// The callback removes exactly the editor that closed, so a second
     /// capture can never deallocate (and disable) the first editor.
@@ -138,7 +139,7 @@ final class CaptureCoordinator {
                 )
                 guard endCaptureAttempt(generation) else { return }
                 isCapturing = false
-                deliver(capture.image, source: .fullScreen)
+                deliver(capture.image, source: .fullScreen, backingScale: capture.geometry.backingScale)
             } catch {
                 guard generation == captureGeneration else { return }
                 fail(error)
@@ -181,7 +182,7 @@ final class CaptureCoordinator {
                 }
                 guard endCaptureAttempt(generation) else { return }
                 isCapturing = false
-                deliver(image, source: .fullScreen)
+                deliver(image, source: .fullScreen, backingScale: captures.first?.geometry.backingScale ?? 1)
             } catch {
                 guard generation == captureGeneration else { return }
                 fail(error)
@@ -263,7 +264,7 @@ final class CaptureCoordinator {
                     )
                     return
                 }
-                deliver(cropped, source: .region)
+                deliver(cropped, source: .region, backingScale: screen.geometry.backingScale)
             } catch {
                 guard generation == captureGeneration else { return }
                 fail(error)
@@ -295,6 +296,7 @@ final class CaptureCoordinator {
         dismiss()
         isCapturing = true
         scrollingInProgress = true
+        scrollingBackingScale = capture.geometry.backingScale
         let maxHeight = settings.scrollMaxHeight
 
         let control = ScrollingControlController(
@@ -386,7 +388,7 @@ final class CaptureCoordinator {
                 )
                 return
             }
-            deliver(capture.image, source: .scrolling)
+            deliver(capture.image, source: .scrolling, backingScale: scrollingBackingScale)
             switch capture.reason {
             case .limitReached:
                 presentScrollingMessage(
@@ -546,7 +548,7 @@ final class CaptureCoordinator {
                 )
                 guard endCaptureAttempt(generation) else { return }
                 isCapturing = false
-                deliver(capture.image, source: .window)
+                deliver(capture.image, source: .window, backingScale: capture.geometry.backingScale)
             } catch {
                 guard generation == captureGeneration else { return }
                 fail(error)
@@ -572,13 +574,17 @@ final class CaptureCoordinator {
             lastRegion.save(region)
         }
         dismiss()
-        deliver(cropped, source: .region)
+        deliver(cropped, source: .region, backingScale: capture.geometry.backingScale)
     }
 
     /// Opens the editor or copies directly according to the live setting. The
     /// delivery path is shared by every capture mode so history sources and
     /// failure handling cannot drift.
-    private func deliver(_ image: CGImage, source: CaptureSource) {
+    private func deliver(_ image: CGImage, source: CaptureSource, backingScale: CGFloat = 1) {
+        // Optional retina downscale keeps exports at 1x.
+        let image = settings.retinaDownscale && backingScale > 1
+            ? ImageExporter.downscaled(image, by: 1 / backingScale)
+            : image
         if settings.openEditorAfterCapture {
             let identifier = UUID()
             let editor = EditorWindowController(

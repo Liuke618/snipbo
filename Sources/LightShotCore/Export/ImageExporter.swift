@@ -8,6 +8,27 @@ public enum ImageExporter {
         encode(image, type: UTType.png.identifier as CFString, options: nil)
     }
 
+    /// Downscales by `factor` with high-quality interpolation. Returns the
+    /// original image unchanged for out-of-range factors or degenerate sizes.
+    public static func downscaled(_ image: CGImage, by factor: CGFloat) -> CGImage {
+        guard factor > 0, factor < 1 else { return image }
+        let width = max(1, Int((CGFloat(image.width) * factor).rounded()))
+        let height = max(1, Int((CGFloat(image.height) * factor).rounded()))
+        guard width != image.width || height != image.height else { return image }
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return image }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage() ?? image
+    }
+
     public static func jpegData(from image: CGImage, quality: CGFloat) -> Data? {
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
