@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settingsModel = SettingsModel()
     private var settings: AppSettings { settingsModel.settings }
     private var settingsWindowController: SettingsWindowController?
+    private var settingsShortcutMonitor: Any?
     private let captureService = ScreenCaptureService()
     /// Every open history editor, retained until its own close callback runs.
     /// The close callback removes exactly the editor that closed, so one
@@ -55,6 +56,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let service = HotkeyService(handlers: handlers)
         hotkeyService = service
         applyModeHotkeys(settings)
+
+        // The status-menu key equivalent only fires while that menu is open,
+        // and the capture overlay is a screen-saver-level window. Handle ⌘,
+        // locally whenever Snipbo is frontmost instead of registering a global
+        // chord that would steal it from other apps.
+        settingsShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            return self.handleSettingsShortcut(event) ? nil : event
+        }
 
         NotificationCenter.default.addObserver(
             self,
@@ -182,6 +192,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let settingsShortcutMonitor {
+            NSEvent.removeMonitor(settingsShortcutMonitor)
+            self.settingsShortcutMonitor = nil
+        }
         hotkeyService?.shutdown()
     }
 
@@ -194,6 +208,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindowController = SettingsWindowController(model: settingsModel)
         }
         settingsWindowController?.show()
+    }
+
+    /// Opens Settings with ⌘, while Snipbo is frontmost. Capture must be
+    /// cancelled first: its overlay sits above normal windows. While Settings
+    /// itself is key, the event is left alone so the hotkey recorder can
+    /// capture ⌘, as a chord.
+    private func handleSettingsShortcut(_ event: NSEvent) -> Bool {
+        if settingsWindowController?.window?.isKeyWindow == true { return false }
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        guard SettingsShortcut.matches(
+            keyCode: UInt32(event.keyCode),
+            modifiers: hotkeyModifiers(from: flags)
+        ) else { return false }
+        captureCoordinator.cancelActiveCapture()
+        showSettings()
+        return true
+    }
+
+    private func hotkeyModifiers(from flags: NSEvent.ModifierFlags) -> HotkeyModifiers {
+        var result: HotkeyModifiers = []
+        if flags.contains(.command) { result.insert(.command) }
+        if flags.contains(.shift) { result.insert(.shift) }
+        if flags.contains(.option) { result.insert(.option) }
+        if flags.contains(.control) { result.insert(.control) }
+        return result
     }
 
     private var historyBrowserController: HistoryBrowserWindowController?

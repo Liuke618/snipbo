@@ -52,3 +52,13 @@ public struct Hotkey: Codable, Equatable, Hashable, Sendable {
         keyNames[keyCode] ?? "Key\(keyCode)"
     }
 }
+
+/// The non-global shortcut for opening Settings while Snipbo is frontmost.
+/// Kept out of the Carbon hotkey table so it cannot steal ⌘, from other apps.
+public enum SettingsShortcut {
+    public static let hotkey = Hotkey(keyCode: 43, modifiers: [.command])
+
+    public static func matches(keyCode: UInt32, modifiers: HotkeyModifiers) -> Bool {
+        Hotkey(keyCode: keyCode, modifiers: modifiers) == hotkey
+    }
+}

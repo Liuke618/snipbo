@@ -76,7 +76,7 @@ final class CountdownController {
         onFinished()
     }
 
-    private func cancel() {
+    func cancel() {
         stop()
         onCancel()
     }

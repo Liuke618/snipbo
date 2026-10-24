@@ -29,6 +29,13 @@ struct HotkeyTests {
         #expect(Hotkey.keyGlyph(for: 999) == nil)
     }
 
+    @Test func testSettingsShortcutIsCommandCommaOnly() {
+        #expect(SettingsShortcut.matches(keyCode: 43, modifiers: [.command]))
+        #expect(!SettingsShortcut.matches(keyCode: 43, modifiers: [.command, .shift]))
+        #expect(!SettingsShortcut.matches(keyCode: 43, modifiers: []))
+        #expect(!SettingsShortcut.matches(keyCode: 44, modifiers: [.command]))
+    }
+
     @Test func testModeHotkeysFallbackToRegionHotkey() {
         var settings = AppSettings.default
         let region = settings.hotkey

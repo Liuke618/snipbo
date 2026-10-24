@@ -663,6 +663,16 @@ final class CaptureCoordinator {
         NSAlert(error: error).runModal()
     }
 
+    /// Cancels whichever capture phase is active (countdown, selection
+    /// overlay, window picker, scrolling, or an in-flight capture request) so
+    /// a normal-level settings window is not hidden behind the overlay.
+    func cancelActiveCapture() {
+        countdownController?.cancel()
+        countdownController = nil
+        cancelScrolling()
+        dismiss()
+    }
+
     private func dismiss() {
         captureWatchdog?.cancel()
         captureWatchdog = nil
