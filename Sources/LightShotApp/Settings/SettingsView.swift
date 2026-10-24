@@ -69,6 +69,11 @@ struct SettingsView: View {
                         .toggleStyle(.checkbox)
                 }
 
+                SettingsRow("Window capture", labelWidth: labelWidth) {
+                    Toggle("Trim shadow", isOn: $model.settings.windowShadowTrim)
+                        .toggleStyle(.checkbox)
+                }
+
                 SettingsRow("After capture", labelWidth: labelWidth) {
                     VStack(alignment: .leading, spacing: 6) {
                         Toggle("Open editor", isOn: $model.settings.openEditorAfterCapture)

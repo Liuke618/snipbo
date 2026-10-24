@@ -42,6 +42,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var scrollCaptureFPS: Int
     /// Copies the rendered image before an editor Esc closes the window.
     public var copyOnEditorEscape: Bool
+    /// Crops the transparent shadow padding off window captures.
+    public var windowShadowTrim: Bool
 
     private enum CodingKeys: String, CodingKey {
         case hotkey
@@ -63,6 +65,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case ocrRemoveLineBreaks
         case scrollCaptureFPS
         case copyOnEditorEscape
+        case windowShadowTrim
     }
 
     public init(
@@ -84,7 +87,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         retinaDownscale: Bool = false,
         ocrRemoveLineBreaks: Bool = false,
         scrollCaptureFPS: Int = 10,
-        copyOnEditorEscape: Bool = false
+        copyOnEditorEscape: Bool = false,
+        windowShadowTrim: Bool = false
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -105,6 +109,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.ocrRemoveLineBreaks = ocrRemoveLineBreaks
         self.scrollCaptureFPS = scrollCaptureFPS
         self.copyOnEditorEscape = copyOnEditorEscape
+        self.windowShadowTrim = windowShadowTrim
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -139,6 +144,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.scrollCaptureFPS
         copyOnEditorEscape = try container.decodeIfPresent(Bool.self, forKey: .copyOnEditorEscape)
             ?? fallback.copyOnEditorEscape
+        windowShadowTrim = try container.decodeIfPresent(Bool.self, forKey: .windowShadowTrim)
+            ?? fallback.windowShadowTrim
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -165,7 +172,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         retinaDownscale: false,
         ocrRemoveLineBreaks: false,
         scrollCaptureFPS: 10,
-        copyOnEditorEscape: false
+        copyOnEditorEscape: false,
+        windowShadowTrim: false
     )
 
     public func normalized() -> AppSettings {

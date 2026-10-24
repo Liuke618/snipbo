@@ -549,7 +549,11 @@ final class CaptureCoordinator {
                 )
                 guard endCaptureAttempt(generation) else { return }
                 isCapturing = false
-                deliver(capture.image, source: .window, backingScale: capture.geometry.backingScale)
+                // Optional: crop the shadow padding off the window image.
+                let image = settings.windowShadowTrim
+                    ? (ImageTrimming.trimmedToOpaqueBounds(capture.image) ?? capture.image)
+                    : capture.image
+                deliver(image, source: .window, backingScale: capture.geometry.backingScale)
             } catch {
                 guard generation == captureGeneration else { return }
                 fail(error)
