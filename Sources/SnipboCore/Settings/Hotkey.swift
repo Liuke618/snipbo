@@ -62,3 +62,13 @@ public enum SettingsShortcut {
         Hotkey(keyCode: keyCode, modifiers: modifiers) == hotkey
     }
 }
+
+/// The standard quit chord, also handled locally: the app is an accessory
+/// with no main menu, so ⌘Q would otherwise do nothing in its windows.
+public enum QuitShortcut {
+    public static let hotkey = Hotkey(keyCode: 12, modifiers: [.command])
+
+    public static func matches(keyCode: UInt32, modifiers: HotkeyModifiers) -> Bool {
+        Hotkey(keyCode: keyCode, modifiers: modifiers) == hotkey
+    }
+}

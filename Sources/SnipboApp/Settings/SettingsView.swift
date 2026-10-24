@@ -187,6 +187,23 @@ struct SettingsView: View {
                         .toggleStyle(.checkbox)
                 }
 
+                SettingsRow(L10n.tr("Menu bar", "菜单栏"), labelWidth: labelWidth) {
+                    // The hint sits beside the checkbox so showing it never
+                    // changes the row height or shifts the rows below.
+                    HStack(spacing: 10) {
+                        Toggle(L10n.tr("Hide menu bar icon", "隐藏菜单栏图标"), isOn: $model.settings.hideMenuBarIcon)
+                            .toggleStyle(.checkbox)
+                        if model.settings.hideMenuBarIcon {
+                            Text(L10n.tr(
+                                "Reopen from Spotlight or Finder",
+                                "Spotlight/访达重开可回到设置"
+                            ))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 SettingsRow(L10n.tr("After capture", "截图后"), labelWidth: labelWidth) {
                     HStack(spacing: 14) {
                         Toggle(L10n.tr("Show editor", "打开编辑器"), isOn: $model.settings.openEditorAfterCapture)

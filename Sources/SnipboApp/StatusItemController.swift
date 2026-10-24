@@ -51,6 +51,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         statusItem.menu = menu
     }
 
+    /// Hides or shows the menu bar icon without recreating the item, so the
+    /// menu keeps its state while the user is in Settings.
+    func setIconHidden(_ hidden: Bool) {
+        statusItem.isVisible = !hidden
+    }
+
     /// Rebuilds every item so a language or hotkey change takes effect the
     /// next time the menu opens.
     func refreshLocalization() {

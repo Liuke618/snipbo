@@ -53,6 +53,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var modeHotkeys: [String: Hotkey]
     /// UI language for menus, settings, and dialogs.
     public var uiLanguage: AppLanguage
+    /// Hides the menu bar icon. Settings can still be reopened from
+    /// Spotlight or Finder, which activates the app and shows Settings.
+    public var hideMenuBarIcon: Bool
 
     /// Capture modes that can carry their own global shortcut, in the order
     /// used to resolve chord conflicts.
@@ -104,6 +107,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case windowShadowTrim
         case modeHotkeys
         case uiLanguage
+        case hideMenuBarIcon
     }
 
     public init(
@@ -129,7 +133,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         saveOnEditorEscape: Bool = false,
         windowShadowTrim: Bool = false,
         modeHotkeys: [String: Hotkey] = [:],
-        uiLanguage: AppLanguage = .system
+        uiLanguage: AppLanguage = .system,
+        hideMenuBarIcon: Bool = false
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -154,6 +159,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.windowShadowTrim = windowShadowTrim
         self.modeHotkeys = modeHotkeys
         self.uiLanguage = uiLanguage
+        self.hideMenuBarIcon = hideMenuBarIcon
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -196,6 +202,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.modeHotkeys
         uiLanguage = try container.decodeIfPresent(AppLanguage.self, forKey: .uiLanguage)
             ?? fallback.uiLanguage
+        hideMenuBarIcon = try container.decodeIfPresent(Bool.self, forKey: .hideMenuBarIcon)
+            ?? fallback.hideMenuBarIcon
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -225,7 +233,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         saveOnEditorEscape: false,
         windowShadowTrim: false,
         modeHotkeys: [:],
-        uiLanguage: .system
+        uiLanguage: .system,
+        hideMenuBarIcon: false
     )
 
     public func normalized() -> AppSettings {

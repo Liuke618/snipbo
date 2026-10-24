@@ -36,6 +36,13 @@ struct HotkeyTests {
         #expect(!SettingsShortcut.matches(keyCode: 44, modifiers: [.command]))
     }
 
+    @Test func testQuitShortcutIsCommandQOnly() {
+        #expect(QuitShortcut.matches(keyCode: 12, modifiers: [.command]))
+        #expect(!QuitShortcut.matches(keyCode: 12, modifiers: [.command, .shift]))
+        #expect(!QuitShortcut.matches(keyCode: 12, modifiers: []))
+        #expect(!QuitShortcut.matches(keyCode: 13, modifiers: [.command]))
+    }
+
     @Test func testModeHotkeysFallbackToRegionHotkey() {
         var settings = AppSettings.default
         let region = settings.hotkey

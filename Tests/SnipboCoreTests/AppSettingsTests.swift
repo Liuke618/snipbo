@@ -217,6 +217,24 @@ struct AppSettingsTests {
         #expect(!legacy.windowShadowTrim)
     }
 
+    @Test func testHideMenuBarIconDefaultsRoundTripAndLegacyDecode() throws {
+        #expect(!AppSettings.default.hideMenuBarIcon)
+        var settings = AppSettings.default
+        settings.hideMenuBarIcon = true
+        let data = try JSONEncoder().encode(settings)
+        #expect(try JSONDecoder().decode(AppSettings.self, from: data).hideMenuBarIcon)
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        object.removeValue(forKey: "hideMenuBarIcon")
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(!legacy.hideMenuBarIcon)
+    }
+
     @Test func testUILanguageDefaultsAndRoundTrip() throws {
         #expect(AppSettings.default.uiLanguage == .system)
         var settings = AppSettings.default

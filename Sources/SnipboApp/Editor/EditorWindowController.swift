@@ -30,6 +30,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     /// Invalidates stale tasks after cancel or a newer recognition request.
     private var recognitionGeneration = 0
     private var toolbarView: EditorToolbarView?
+    private var stylePanel: EditorStylePanelView?
+    /// Exposed for probes: the floating style panel over the canvas.
+    var stylePanelView: EditorStylePanelView? { stylePanel }
 
     init(
         document: EditDocument,
@@ -61,8 +64,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             onTool: { [weak controller] tool in controller?.tool = tool },
             onUndo: { [weak controller] in controller?.undo() },
             onRedo: { [weak controller] in controller?.redo() },
-            onColor: { [weak controller] color in controller?.setColor(color) },
-            onWidth: { [weak controller] width in controller?.setLineWidth(width) },
             onRecognize: { [weak self] in self?.recognize() },
             onPin: { [weak self] in self?.pinAction() },
             onCopy: { [weak self] in self?.copyAndClose() },
@@ -70,6 +71,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             onShowOptions: { [weak self] in self?.showOptionsPopover() }
         )
         self.toolbarView = toolbar
+        let stylePanel = EditorStylePanelView(
+            onColor: { [weak controller] color in controller?.setColor(color) },
+            onWidth: { [weak controller] width in controller?.setLineWidth(width) }
+        )
+        self.stylePanel = stylePanel
         window.title = "Snipbo"
         window.center()
         window.delegate = self
@@ -102,6 +108,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         body.addSubview(scrollView)
         body.addSubview(toolbar)
+        body.addSubview(stylePanel)
 
         scrollTrailingConstraint = scrollView.trailingAnchor.constraint(equalTo: body.trailingAnchor)
         NSLayoutConstraint.activate([
@@ -114,6 +121,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             scrollView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: body.bottomAnchor),
             scrollTrailingConstraint,
+            // Anchored to the canvas viewport rather than the window so the
+            // panel moves aside with the canvas when the recognition panel
+            // opens, and floats above the image instead of taking layout space.
+            stylePanel.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12),
+            stylePanel.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -12),
         ])
 
         let contentView = NSView(frame: .zero)
@@ -194,16 +206,18 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         refreshReadouts()
     }
 
-    /// Live title-bar readouts: the crop draft's size while cropping, else the
-    /// current crop size, plus the zoom level. Also mirrors the style being
-    /// edited — the selected annotation's, or the default for new annotations
-    /// — into the color well, hex label, and width slider.
+    /// Live readouts: the crop draft's size while cropping, else the current
+    /// crop size, plus the zoom level. Also mirrors the style being edited —
+    /// the selected annotation's, or the default for new annotations — into
+    /// the floating panel, which only shows when it can affect something.
     private func refreshReadouts() {
         let size = controller.cropDraft?.size ?? controller.document.cropRect.size
         toolbarView?.updateReadouts(size: size, zoom: canvas.zoom)
         toolbarView?.setSelectedTool(controller.tool)
         let editedStyle = controller.selectedStyle ?? controller.style
-        toolbarView?.syncStyleControls(lineWidth: editedStyle.lineWidth, color: editedStyle.color)
+        stylePanel?.syncStyleControls(lineWidth: editedStyle.lineWidth, color: editedStyle.color)
+        stylePanel?.isHidden = controller.selectedStyle == nil
+            && (controller.tool == .select || controller.tool == .crop)
     }
 
     // MARK: - Options popover

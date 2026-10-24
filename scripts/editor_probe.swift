@@ -54,7 +54,7 @@ struct EditorProbe {
             // Measure the toolbar floor with the real readout strings — the
             // size label ("2022×5175 px") is much wider than the placeholder.
             let probeToolbar = EditorToolbarView(
-                onTool: { _ in }, onUndo: {}, onRedo: {}, onColor: { _ in }, onWidth: { _ in },
+                onTool: { _ in }, onUndo: {}, onRedo: {},
                 onRecognize: {}, onPin: {}, onCopy: {}, onSave: {}, onShowOptions: {}
             )
             probeToolbar.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: fitZoom)
@@ -307,9 +307,63 @@ struct EditorProbe {
         arrowController.begin(at: CGPoint(x: 250, y: 50))
         arrowController.drag(to: CGPoint(x: 330, y: 230))
         arrowController.end(at: CGPoint(x: 330, y: 230))
+        check("style panel: visible for a drawing tool",
+              arrowEditor.stylePanelView?.isHidden == false,
+              "hidden while arrow tool is active")
         if let window = arrowEditor.window { render(window, to: "/tmp/snipbo-editor-arrows.png") }
+
+        // The panel hides for plain selection and cropping, and returns when an
+        // annotation is selected so its style can still be edited.
+        arrowController.tool = .select
+        arrowController.setSelected(id: nil)
+        runTicks(2)
+        check("style panel: hidden for select without a selection",
+              arrowEditor.stylePanelView?.isHidden == true,
+              "visible while select tool has no selection")
+        arrowController.setSelected(id: arrowController.document.annotations[0].id)
+        runTicks(2)
+        check("style panel: visible with a selected annotation",
+              arrowEditor.stylePanelView?.isHidden == false,
+              "hidden while an annotation is selected")
+        arrowController.tool = .crop
+        arrowController.setSelected(id: nil)
+        runTicks(2)
+        check("style panel: hidden for crop",
+              arrowEditor.stylePanelView?.isHidden == true,
+              "visible while cropping")
+
+        // The size readout in the toolbar is the resize entry point: clicking
+        // it must open the options popover (anchored to that readout).
+        if let window = arrowEditor.window,
+           let sizeButton = findButton(in: window.contentView, title: "420×320 px") {
+            let windowsBefore = Set(NSApp.windows.map(ObjectIdentifier.init))
+            sizeButton.performClick(nil)
+            runTicks(4)
+            let popoverWindow = NSApp.windows.first {
+                !windowsBefore.contains(ObjectIdentifier($0)) && $0.isVisible
+            }
+            check("size readout opens the resize popover",
+                  popoverWindow != nil,
+                  "no new visible window after clicking the size readout")
+            popoverWindow?.orderOut(nil)
+        } else {
+            check("size readout is clickable", false, "size button not found")
+        }
         arrowEditor.close()
         print("probe done")
+    }
+
+    /// Finds the borderless readout button by its visible title so the probe
+    /// can click it like a user would.
+    static func findButton(in view: NSView?, title: String) -> NSButton? {
+        guard let view else { return nil }
+        if let button = view as? NSButton, button.attributedTitle.string == title {
+            return button
+        }
+        for subview in view.subviews {
+            if let found = findButton(in: subview, title: title) { return found }
+        }
+        return nil
     }
 
     @MainActor

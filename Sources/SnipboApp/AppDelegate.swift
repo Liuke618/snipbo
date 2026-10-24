@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settingsModel = SettingsModel()
     private var settings: AppSettings { settingsModel.settings }
     private var settingsWindowController: SettingsWindowController?
-    private var settingsShortcutMonitor: Any?
+    private var localShortcutMonitor: Any?
     private let captureService = ScreenCaptureService()
     /// Every open history editor, retained until its own close callback runs.
     /// The close callback removes exactly the editor that closed, so one
@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastRegionAvailable: { coordinator.canCaptureLastRegion() },
             onQuit: { NSApp.terminate(nil) }
         )
+        statusItemController?.setIconHidden(settings.hideMenuBarIcon)
         var handlers: [UInt32: @MainActor () -> Void] = [:]
         for mode in AppSettings.hotkeyModeIDs {
             guard let carbonID = AppSettings.hotkeyModeIDsToCarbonID[mode],
@@ -57,13 +58,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyService = service
         applyModeHotkeys(settings)
 
-        // The status-menu key equivalent only fires while that menu is open,
-        // and the capture overlay is a screen-saver-level window. Handle ⌘,
-        // locally whenever Snipbo is frontmost instead of registering a global
-        // chord that would steal it from other apps.
-        settingsShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        // The status-menu key equivalents only fire while that menu is open,
+        // the capture overlay is a screen-saver-level window, and the app has
+        // no main menu to route ⌘Q. Handle both chords locally whenever Snipbo
+        // is frontmost instead of registering global chords that would steal
+        // them from other apps.
+        localShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            return self.handleSettingsShortcut(event) ? nil : event
+            return self.handleLocalShortcut(event) ? nil : event
         }
 
         NotificationCenter.default.addObserver(
@@ -85,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // The menu shows item icons, localized titles, and per-mode key
             // equivalents; rebuild it whenever settings change (cheap).
             self.statusItemController?.refreshLocalization()
+            self.statusItemController?.setIconHidden(newSettings.hideMenuBarIcon)
             self.captureCoordinator.updateSettings(newSettings)
             Task {
                 do {
@@ -192,15 +195,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if let settingsShortcutMonitor {
-            NSEvent.removeMonitor(settingsShortcutMonitor)
-            self.settingsShortcutMonitor = nil
+        if let localShortcutMonitor {
+            NSEvent.removeMonitor(localShortcutMonitor)
+            self.localShortcutMonitor = nil
         }
         hotkeyService?.shutdown()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    /// With the menu bar icon hidden there is no Dock icon to click, so
+    /// reopening Snipbo from Spotlight or Finder must lead back to Settings
+    /// (where the icon can be shown again).
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            showSettings()
+        }
+        return true
     }
 
     private func showSettings() {
@@ -210,17 +223,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindowController?.show()
     }
 
-    /// Opens Settings with ⌘, while Snipbo is frontmost. Capture must be
+    /// Handles ⌘Q and ⌘, while Snipbo is frontmost. For ⌘, capture must be
     /// cancelled first: its overlay sits above normal windows. While Settings
-    /// itself is key, the event is left alone so the hotkey recorder can
-    /// capture ⌘, as a chord.
-    private func handleSettingsShortcut(_ event: NSEvent) -> Bool {
-        if settingsWindowController?.window?.isKeyWindow == true { return false }
+    /// itself is key, ⌘, is left alone so the hotkey recorder can capture it
+    /// as a chord; ⌘Q still quits.
+    private func handleLocalShortcut(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
-        guard SettingsShortcut.matches(
-            keyCode: UInt32(event.keyCode),
-            modifiers: hotkeyModifiers(from: flags)
-        ) else { return false }
+        let modifiers = hotkeyModifiers(from: flags)
+        let keyCode = UInt32(event.keyCode)
+        if QuitShortcut.matches(keyCode: keyCode, modifiers: modifiers) {
+            NSApp.terminate(nil)
+            return true
+        }
+        if settingsWindowController?.window?.isKeyWindow == true { return false }
+        guard SettingsShortcut.matches(keyCode: keyCode, modifiers: modifiers) else { return false }
         captureCoordinator.cancelActiveCapture()
         showSettings()
         return true

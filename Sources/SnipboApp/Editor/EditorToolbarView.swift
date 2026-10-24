@@ -14,24 +14,22 @@ extension NSColor {
 }
 
 /// Shottr-style editor toolbar pinned to the top of a full-size-content
-/// window: actions and tools on the left, recognize/undo/redo/color and the
-/// live size/zoom readouts on the right. The bar drags the window; the canvas
-/// below does not.
+/// window: actions and tools on the left, recognize/undo/redo and the live
+/// size/zoom readouts on the right. The style controls live in the floating
+/// panel over the canvas. The bar drags the window; the canvas below does not.
 @MainActor
 final class EditorToolbarView: NSView {
     /// Shottr-style standalone tool buttons, one per `EditorTool`.
     private var toolButtons: [ToolButton] = []
-    private let colorWell = NSColorWell()
-    private let hexLabel = NSTextField(labelWithString: "#FF0000")
-    private let widthSlider = NSSlider(value: 3, minValue: 1, maxValue: 24, target: nil, action: nil)
     private let recognizeButton = NSButton()
     private let pinButton = NSButton()
     private let copyButton = NSButton()
     private let saveButton = NSButton()
     private let undoButton = NSButton()
     private let redoButton = NSButton()
-    private let optionsButton = NSButton()
-    private let sizeLabel = NSTextField(labelWithString: "0×0 px")
+    /// The size readout doubles as the resize entry point: clicking the size
+    /// that sits just before the zoom percentage opens the image options.
+    private let sizeButton = NSButton()
     private let zoomLabel = NSTextField(labelWithString: "100%")
 
     /// Loads a bundled Lucide SVG as a monochrome template image.
@@ -49,8 +47,6 @@ final class EditorToolbarView: NSView {
     private let onTool: (EditorTool) -> Void
     private let onUndo: () -> Void
     private let onRedo: () -> Void
-    private let onColor: (RGBA) -> Void
-    private let onWidth: (CGFloat) -> Void
     private let onRecognize: () -> Void
     private let onPin: () -> Void
     private let onCopy: () -> Void
@@ -64,8 +60,6 @@ final class EditorToolbarView: NSView {
         onTool: @escaping (EditorTool) -> Void,
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
-        onColor: @escaping (RGBA) -> Void,
-        onWidth: @escaping (CGFloat) -> Void,
         onRecognize: @escaping () -> Void,
         onPin: @escaping () -> Void,
         onCopy: @escaping () -> Void,
@@ -75,8 +69,6 @@ final class EditorToolbarView: NSView {
         self.onTool = onTool
         self.onUndo = onUndo
         self.onRedo = onRedo
-        self.onColor = onColor
-        self.onWidth = onWidth
         self.onRecognize = onRecognize
         self.onPin = onPin
         self.onCopy = onCopy
@@ -111,7 +103,7 @@ final class EditorToolbarView: NSView {
 
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: Self.height))
 
-        for button in [recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton, optionsButton] {
+        for button in [recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton] {
             button.imagePosition = .imageOnly
             button.isBordered = false
         }
@@ -131,23 +123,21 @@ final class EditorToolbarView: NSView {
         undoButton.toolTip = L10n.tr("Undo (⌘Z)", "撤销 (⌘Z)")
         redoButton.image = EditorToolbarView.icon("redo-2")
         redoButton.toolTip = L10n.tr("Redo (⇧⌘Z)", "重做 (⇧⌘Z)")
-        optionsButton.image = EditorToolbarView.icon("scan") ?? NSImage(
-            systemSymbolName: "plusminus.viewfinder", accessibilityDescription: "Options"
+
+        zoomLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        zoomLabel.textColor = .secondaryLabelColor
+
+        sizeButton.isBordered = false
+        sizeButton.imagePosition = .noImage
+        sizeButton.setButtonType(.momentaryChange)
+        sizeButton.focusRingType = .none
+        sizeButton.attributedTitle = Self.readoutTitle("0×0 px")
+        sizeButton.toolTip = L10n.tr(
+            "Resize image · logical-point readouts",
+            "调整图像大小 · 逻辑点读数"
         )
-        optionsButton.toolTip = L10n.tr("Resize image · logical-point readouts", "调整图像大小 · 逻辑点读数")
 
-        colorWell.toolTip = L10n.tr("Annotation color", "标注颜色")
-        hexLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        hexLabel.textColor = .secondaryLabelColor
-        hexLabel.toolTip = L10n.tr("Press Tab to copy the color", "按 Tab 复制色值")
-        widthSlider.toolTip = L10n.tr("Stroke width — affects the selected annotation, or the next one you draw", "线条粗细 — 作用于选中的标注，或接下来绘制的标注")
-        widthSlider.isContinuous = true
-        for label in [sizeLabel, zoomLabel] {
-            label.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-            label.textColor = .secondaryLabelColor
-        }
-
-        for control in [colorWell, widthSlider, recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton, optionsButton] {
+        for control in [recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton, sizeButton] {
             control.controlSize = .small
         }
         toolButtons = buttons
@@ -156,10 +146,6 @@ final class EditorToolbarView: NSView {
             button.action = #selector(toolButtonPressed(_:))
         }
         toolButtons.first?.showsSelected = true
-        colorWell.target = self
-        colorWell.action = #selector(colorChanged)
-        widthSlider.target = self
-        widthSlider.action = #selector(widthChanged)
         recognizeButton.target = self
         recognizeButton.action = #selector(recognizeAction)
         pinButton.target = self
@@ -172,15 +158,15 @@ final class EditorToolbarView: NSView {
         undoButton.action = #selector(undo)
         redoButton.target = self
         redoButton.action = #selector(redo)
-        optionsButton.target = self
-        optionsButton.action = #selector(showOptions)
+        sizeButton.target = self
+        sizeButton.action = #selector(showOptions)
 
         wantsLayer = true
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
-        // Leading: window actions + tools. Trailing: recognize, undo/redo,
-        // color, width, and the readouts. The spacer stretches so the trailing
-        // group hugs the right edge at any window width.
+        // Leading: window actions + tools. Trailing: recognize, undo/redo, and
+        // the size/zoom readouts. The spacer stretches so the trailing group
+        // hugs the right edge at any window width.
         let leading = NSStackView(views: [
             copyButton, saveButton, pinButton, Self.separator(), toolsStack,
         ])
@@ -188,7 +174,7 @@ final class EditorToolbarView: NSView {
         leading.spacing = 6
         let trailing = NSStackView(views: [
             recognizeButton, undoButton, redoButton, Self.separator(),
-            colorWell, hexLabel, widthSlider, sizeLabel, zoomLabel, optionsButton,
+            sizeButton, zoomLabel,
         ])
         trailing.orientation = .horizontal
         trailing.spacing = 6
@@ -212,8 +198,6 @@ final class EditorToolbarView: NSView {
             spacer.trailingAnchor.constraint(equalTo: trailing.leadingAnchor, constant: -10),
             spacer.centerYAnchor.constraint(equalTo: centerYAnchor),
             spacer.heightAnchor.constraint(equalToConstant: 1),
-            widthSlider.widthAnchor.constraint(equalToConstant: 80),
-            colorWell.widthAnchor.constraint(equalToConstant: 44),
         ])
     }
 
@@ -230,27 +214,20 @@ final class EditorToolbarView: NSView {
     }
 
     func updateReadouts(size: CGSize, zoom: CGFloat) {
-        sizeLabel.stringValue = "\(Int(size.width))×\(Int(size.height)) px"
+        sizeButton.attributedTitle = Self.readoutTitle("\(Int(size.width))×\(Int(size.height)) px")
         zoomLabel.stringValue = "\(Int((zoom * 100).rounded()))%"
     }
 
-    /// Mirrors the style being edited (the selected annotation's, or the
-    /// default for new annotations) into the color well, hex readout, and
-    /// width slider. Programmatic value changes do not fire the control
-    /// actions, so this cannot feed back into the controller.
-    func syncStyleControls(lineWidth: CGFloat, color: RGBA) {
-        widthSlider.doubleValue = lineWidth
-        colorWell.color = NSColor(color)
-        hexLabel.stringValue = String(
-            format: "#%02X%02X%02X",
-            Int((color.red * 255).rounded()),
-            Int((color.green * 255).rounded()),
-            Int((color.blue * 255).rounded())
-        )
-    }
+    /// The size readout, as the resize popover's anchor view.
+    var optionsAnchor: NSView { sizeButton }
 
-    /// The options button, as the popover's anchor view.
-    var optionsAnchor: NSView { optionsButton }
+    /// Matches the readout typography while staying clickable.
+    private static func readoutTitle(_ text: String) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+    }
 
     @objc private func showOptions() { onShowOptions() }
 
@@ -272,8 +249,6 @@ final class EditorToolbarView: NSView {
         onTool(EditorTool.allCases[index])
     }
 
-    @objc private func colorChanged() { onColor(colorWell.color.rgbaValue) }
-    @objc private func widthChanged() { onWidth(widthSlider.doubleValue) }
     @objc private func recognizeAction() { onRecognize() }
     @objc private func pinAction() { onPin() }
     @objc private func copyAction() { onCopy() }
