@@ -6,6 +6,10 @@ import SwiftUI
 /// same window instead of creating a second one.
 @MainActor
 final class SettingsWindowController: NSWindowController {
+    /// Shared with the form so tab state survives view re-initialization;
+    /// internal so probes can drive tab switches.
+    let tabSelection = SettingsTabSelection()
+
     init(model: SettingsModel) {
         // Tab bar (72) + divider (1) + the form's fixed 510 pt frame.
         let window = NSWindow(
@@ -20,7 +24,9 @@ final class SettingsWindowController: NSWindowController {
         // through `contentViewController` lets AppKit adopt the hosting view's
         // own sizing, which either resizes the window on every tab switch or
         // collapses it outright once automatic sizing is disabled.
-        let hostingView = NSHostingView(rootView: SettingsView(model: model))
+        let hostingView = NSHostingView(
+            rootView: SettingsView(model: model, tabSelection: tabSelection)
+        )
         hostingView.frame = NSRect(x: 0, y: 0, width: 560, height: 583)
         hostingView.autoresizingMask = [.width, .height]
         window.contentView?.addSubview(hostingView)
@@ -28,13 +34,17 @@ final class SettingsWindowController: NSWindowController {
         super.init(window: window)
     }
 
+    /// Reopening Settings resets to the General tab instead of reopening on
+    /// whatever tab was last visible days ago.
+    func show() {
+        tabSelection.tab = .general
+        tabSelection.hovered = nil
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
-    }
-
-    func show() {
-        NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
     }
 }

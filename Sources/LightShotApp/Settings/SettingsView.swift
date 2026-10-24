@@ -11,9 +11,14 @@ struct SettingsView: View {
     @ObservedObject var model: SettingsModel
 
     private let labelWidth: CGFloat = 190
-    /// Plain ObservableObject because this toolchain cannot expand SwiftUI's
-    /// `@State` macro (same workaround as the history browser).
-    @ObservedObject private var tabModel = SettingsTabSelection()
+    /// Injected from the window controller so the selection survives view
+    /// struct re-initialization (and so probes can drive tab switches).
+    @ObservedObject private var tabModel: SettingsTabSelection
+
+    init(model: SettingsModel, tabSelection: SettingsTabSelection = SettingsTabSelection()) {
+        self.model = model
+        self.tabModel = tabSelection
+    }
 
     /// Modes that can carry their own chord besides the base region hotkey.
     private var extraHotkeyModes: [(String, String)] {
@@ -61,7 +66,9 @@ struct SettingsView: View {
     }
 
     private func tabButton(_ item: SettingsTab) -> some View {
-        Button {
+        let selected = tabModel.tab == item
+        let hovered = tabModel.hovered == item
+        return Button {
             tabModel.tab = item
         } label: {
             VStack(spacing: 3) {
@@ -74,11 +81,14 @@ struct SettingsView: View {
             .frame(width: 86, height: 48)
             .background(
                 RoundedRectangle(cornerRadius: 9)
-                    .fill(Color.primary.opacity(tabModel.tab == item ? 0.08 : 0))
+                    .fill(Color.primary.opacity(selected ? 0.08 : (hovered ? 0.045 : 0)))
             )
-            .foregroundColor(tabModel.tab == item ? .accentColor : .secondary)
+            .foregroundColor(selected ? .accentColor : .secondary)
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            tabModel.hovered = hovering ? item : nil
+        }
     }
 
     // MARK: - General
@@ -388,10 +398,13 @@ enum SettingsTab: String, CaseIterable {
     }
 }
 
-/// Holds the selected tab; `@State` is unavailable on this toolchain.
+/// Holds the tab selection and hover state; `@State` is unavailable on this
+/// toolchain, and injecting the object keeps the selection across view
+/// struct re-initializations.
 @MainActor
 final class SettingsTabSelection: ObservableObject {
     @Published var tab: SettingsTab = .general
+    @Published var hovered: SettingsTab?
 }
 
 private struct SettingsRow<Content: View>: View {
