@@ -41,6 +41,13 @@ public struct Hotkey: Codable, Equatable, Hashable, Sendable {
         44: "/", 45: "N", 46: "M", 47: ".", 48: "⇥", 49: "Space", 50: "`",
     ]
 
+    /// Single-character glyph suitable for `NSMenuItem.keyEquivalent`, or nil
+    /// when the key has no one-character representation.
+    public static func keyGlyph(for keyCode: UInt32) -> String? {
+        guard let name = keyNames[keyCode], name.count == 1 else { return nil }
+        return name.lowercased()
+    }
+
     private static func keyName(for keyCode: UInt32) -> String {
         keyNames[keyCode] ?? "Key\(keyCode)"
     }

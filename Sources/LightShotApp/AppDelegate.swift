@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onCapture: { command in coordinator.start(command) },
             onSettings: { [weak self] in self?.showSettings() },
             onHistoryBrowser: { [weak self] in self?.showHistoryBrowser() },
+            hotkeyFor: { [weak self] mode in self?.settings.hotkey(for: mode) },
             recentMenu: recentController.menu,
             lastRegionAvailable: { coordinator.canCaptureLastRegion() },
             onQuit: { NSApp.terminate(nil) }
@@ -70,8 +71,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.syncLoginItem(newSettings)
             if newSettings.uiLanguage != self.appliedLanguage {
                 self.appliedLanguage = newSettings.uiLanguage
-                self.statusItemController?.refreshLocalization()
             }
+            // The menu shows item icons, localized titles, and per-mode key
+            // equivalents; rebuild it whenever settings change (cheap).
+            self.statusItemController?.refreshLocalization()
             self.captureCoordinator.updateSettings(newSettings)
             Task {
                 do {

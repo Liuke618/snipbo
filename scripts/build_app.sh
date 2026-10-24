@@ -19,6 +19,9 @@ cp "$ROOT/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
 if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
     cp "$ROOT/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 fi
+if [[ -d "$ROOT/Resources/Icons" ]]; then
+    cp -R "$ROOT/Resources/Icons" "$APP_DIR/Contents/Resources/Icons"
+fi
 
 IDENTITY="${LIGHTSHOT_SIGN_IDENTITY:-}"
 if [ -z "$IDENTITY" ]; then

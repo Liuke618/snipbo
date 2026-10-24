@@ -19,6 +19,16 @@ struct HotkeyTests {
         #expect(hotkey.displayString == "Key200")
     }
 
+    @Test func testKeyGlyphMapsCommonKeys() {
+        // Single-character glyphs are what NSMenuItem.keyEquivalent needs.
+        #expect(Hotkey.keyGlyph(for: 26) == "7")
+        #expect(Hotkey.keyGlyph(for: 0) == "a")
+        #expect(Hotkey.keyGlyph(for: 27) == "-")
+        // Keys without a one-character representation yield nil.
+        #expect(Hotkey.keyGlyph(for: 49) == nil)   // "Space"
+        #expect(Hotkey.keyGlyph(for: 999) == nil)
+    }
+
     @Test func testModeHotkeysFallbackToRegionHotkey() {
         var settings = AppSettings.default
         let region = settings.hotkey
