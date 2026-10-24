@@ -21,33 +21,6 @@ struct SettingsView: View {
         ("scrolling", "Scrolling hotkey"),
     ]
 
-    private func modeHotkeyEnabledBinding(_ mode: String) -> Binding<Bool> {
-        Binding(
-            get: { model.settings.modeHotkeys[mode] != nil },
-            set: { enabled in
-                if enabled {
-                    model.settings.modeHotkeys[mode] = model.settings.modeHotkeys[mode]
-                        ?? model.settings.hotkey
-                } else {
-                    model.settings.modeHotkeys[mode] = nil
-                }
-            }
-        )
-    }
-
-    private func modeHotkeyBinding(_ mode: String) -> Binding<Hotkey> {
-        Binding(
-            get: { model.settings.modeHotkeys[mode] ?? model.settings.hotkey },
-            set: { newValue in
-                // Writes only land while the mode is enabled, so adjusting a
-                // disabled recorder cannot silently enable the chord.
-                if model.settings.modeHotkeys[mode] != nil {
-                    model.settings.modeHotkeys[mode] = newValue
-                }
-            }
-        )
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsRow("Hotkey", labelWidth: labelWidth) {
@@ -57,21 +30,29 @@ struct SettingsView: View {
 
             groupDivider
 
-            VStack(spacing: 8) {
-                ForEach(Self.extraHotkeyModes, id: \.0) { mode, title in
-                    SettingsRow(title, labelWidth: labelWidth) {
-                        HStack(spacing: 10) {
-                            Toggle("On", isOn: modeHotkeyEnabledBinding(mode))
-                                .toggleStyle(.checkbox)
-                                .labelsHidden()
-                            HotkeyRecorderView(hotkey: modeHotkeyBinding(mode))
-                                .frame(width: 180, height: 32)
-                                .opacity(model.settings.modeHotkeys[mode] != nil ? 1 : 0.4)
-                                .disabled(model.settings.modeHotkeys[mode] == nil)
+            DisclosureGroup("Per-mode shortcuts") {
+                VStack(spacing: 8) {
+                    ForEach(Self.extraHotkeyModes, id: \.0) { mode, title in
+                        SettingsRow(title, labelWidth: labelWidth) {
+                            HStack(spacing: 8) {
+                                ModeHotkeyRecorderView(
+                                    hotkey: model.settings.modeHotkeys[mode],
+                                    onChange: { model.settings.modeHotkeys[mode] = $0 }
+                                )
+                                .frame(width: 210, height: 32)
+                                if model.settings.modeHotkeys[mode] != nil {
+                                    Button("Clear") {
+                                        model.settings.modeHotkeys[mode] = nil
+                                    }
+                                    .controlSize(.small)
+                                }
+                            }
                         }
                     }
                 }
+                .padding(.vertical, 4)
             }
+            .padding(.vertical, 4)
 
             groupDivider
 
@@ -125,18 +106,13 @@ struct SettingsView: View {
                         .toggleStyle(.checkbox)
                 }
 
-                SettingsRow("Window capture", labelWidth: labelWidth) {
-                    Toggle("Trim shadow", isOn: $model.settings.windowShadowTrim)
-                        .toggleStyle(.checkbox)
-                }
-
                 SettingsRow("After capture", labelWidth: labelWidth) {
-                    VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 14) {
                         Toggle("Open editor", isOn: $model.settings.openEditorAfterCapture)
                             .toggleStyle(.checkbox)
-                        Toggle("Copy to clipboard", isOn: $model.settings.afterCaptureCopy)
+                        Toggle("Copy", isOn: $model.settings.afterCaptureCopy)
                             .toggleStyle(.checkbox)
-                        Toggle("Save to folder", isOn: $model.settings.afterCaptureSave)
+                        Toggle("Save", isOn: $model.settings.afterCaptureSave)
                             .toggleStyle(.checkbox)
                     }
                 }
@@ -146,15 +122,15 @@ struct SettingsView: View {
                         .toggleStyle(.checkbox)
                 }
 
-            SettingsRow("Export", labelWidth: labelWidth) {
-                Toggle("Downscale retina captures to 1x", isOn: $model.settings.retinaDownscale)
-                    .toggleStyle(.checkbox)
-            }
+                SettingsRow("Export", labelWidth: labelWidth) {
+                    Toggle("Downscale retina captures to 1x", isOn: $model.settings.retinaDownscale)
+                        .toggleStyle(.checkbox)
+                }
 
-            SettingsRow("Esc in editor", labelWidth: labelWidth) {
-                Toggle("Copy image before closing", isOn: $model.settings.copyOnEditorEscape)
-                    .toggleStyle(.checkbox)
-            }
+                SettingsRow("Esc in editor", labelWidth: labelWidth) {
+                    Toggle("Copy image before closing", isOn: $model.settings.copyOnEditorEscape)
+                        .toggleStyle(.checkbox)
+                }
 
                 SettingsRow("Countdown", labelWidth: labelWidth) {
                     Stepper(
@@ -180,6 +156,11 @@ struct SettingsView: View {
                         in: 5...30,
                         step: 1
                     )
+                }
+
+                SettingsRow("Window capture", labelWidth: labelWidth) {
+                    Toggle("Trim shadow", isOn: $model.settings.windowShadowTrim)
+                        .toggleStyle(.checkbox)
                 }
 
             }

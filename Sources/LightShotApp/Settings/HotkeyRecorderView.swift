@@ -20,6 +20,26 @@ struct HotkeyRecorderView: NSViewRepresentable {
     }
 }
 
+/// Recorder for an optional per-mode shortcut: `nil` renders the disabled
+/// state, and recording a chord while disabled enables the mode.
+@MainActor
+struct ModeHotkeyRecorderView: NSViewRepresentable {
+    let hotkey: Hotkey?
+    let onChange: (Hotkey?) -> Void
+
+    func makeNSView(context: Context) -> HotkeyRecorderNSView {
+        let view = HotkeyRecorderNSView()
+        view.hotkey = hotkey
+        view.onChange = { onChange($0) }
+        return view
+    }
+
+    func updateNSView(_ nsView: HotkeyRecorderNSView, context: Context) {
+        nsView.hotkey = hotkey
+        nsView.onChange = { onChange($0) }
+    }
+}
+
 /// Click-to-record control. It draws the current shortcut, and only while
 /// armed by a click it captures the next key combination that includes at
 /// least one of Command/Shift/Option/Control and reports it through `onChange`.
@@ -45,10 +65,21 @@ final class HotkeyRecorderNSView: NSView {
         path.lineWidth = 1
         path.stroke()
 
-        let text = recording ? "Press a shortcut…" : (hotkey?.displayString ?? "Click to record")
+        let text: String
+        let textColor: NSColor
+        if recording {
+            text = "Press a shortcut…"
+            textColor = .labelColor
+        } else if let hotkey {
+            text = hotkey.displayString
+            textColor = .labelColor
+        } else {
+            text = "Off — record to enable"
+            textColor = .secondaryLabelColor
+        }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 13),
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: textColor,
         ]
         let size = (text as NSString).size(withAttributes: attributes)
         (text as NSString).draw(
