@@ -62,35 +62,75 @@ struct ScrollStitcherTests {
 
 @Suite("ScrollAlignmentTests")
 struct ScrollAlignmentTests {
-    @Test func testScrollDownYieldsTopOverlap() {
-        // Empirical Vision convention: scrolling down moves the previous
-        // content toward the frame bottom, giving a negative ty whose
-        // magnitude is the rows of new content.
-        #expect(ScrollAlignment.overlapRows(translationY: -1, frameHeight: 4) == 3)
-        #expect(ScrollAlignment.overlapRows(translationY: -32, frameHeight: 128) == 96)
+    @Test func testFrontierSkipRowsForDownwardScroll() {
+        // Frontier-reference registration: the stitched composite's bottom
+        // strip is the reference, so scrolling down moves the strip's content
+        // UP in the new frame — a POSITIVE ty whose magnitude is the rows of
+        // new content at the frame's bottom.
+        #expect(ScrollAlignment.frontierSkipRows(translationY: 1, stripHeight: 4, frameHeight: 4) == 3)
+        #expect(ScrollAlignment.frontierSkipRows(translationY: 300, stripHeight: 800, frameHeight: 800) == 500)
     }
 
-    @Test func testUpwardScrollNoMovementAndImplausibleJumpsAreSkipped() {
-        #expect(ScrollAlignment.overlapRows(translationY: 1, frameHeight: 4) == nil)
-        #expect(ScrollAlignment.overlapRows(translationY: 0, frameHeight: 4) == nil)
-        #expect(ScrollAlignment.overlapRows(translationY: -4, frameHeight: 4) == nil)
-        #expect(ScrollAlignment.overlapRows(translationY: -5, frameHeight: 4) == nil)
+    @Test func testFrontierRejectsUpwardNoMovementAndJumps() {
+        #expect(ScrollAlignment.frontierSkipRows(translationY: 0, stripHeight: 4, frameHeight: 4) == nil)
+        #expect(ScrollAlignment.frontierSkipRows(translationY: -1, stripHeight: 4, frameHeight: 4) == nil)
+        #expect(ScrollAlignment.frontierSkipRows(translationY: 4, stripHeight: 4, frameHeight: 4) == nil)
+        #expect(ScrollAlignment.frontierSkipRows(translationY: 5, stripHeight: 4, frameHeight: 4) == nil)
     }
 
     @Test func testStitchedScrollProducesContinuousImage() throws {
         // Review Critical #1 regression: a real scroll of one row. The frame's
-        // content is the composite shifted up by one, so the overlap is
-        // H − dy = 3, and appending must add exactly the single new row.
+        // content is the composite shifted up by one, the frontier translation
+        // is +1, and appending must add exactly the single new bottom row.
         let composite = try makeRows([0, 1, 2, 3])
         let frame = try makeRows([1, 2, 3, 4])
-        let overlap = try #require(ScrollAlignment.overlapRows(translationY: -1, frameHeight: 4))
+        let skip = try #require(ScrollAlignment.frontierSkipRows(translationY: 1, stripHeight: 4, frameHeight: 4))
         let result = try #require(ScrollStitcher.append(
             composite: composite,
             frame: frame,
-            offset: overlap,
+            offset: skip,
             maxHeight: 100
         ))
         #expect(try rows(of: result.image) == [0, 1, 2, 3, 4])
+    }
+
+    @Test func testFrontierStitchLoopSurvivesScrollWiggle() throws {
+        // An 8-row document viewed through a 4-row viewport, scrolled down in
+        // one-row steps with an up-down wiggle in the middle. The frontier
+        // reference must keep the stitched image continuous: every document
+        // row exactly once, no duplicates, no gaps. (Adjacent-frame
+        // registration duplicated rows 2–4 after the wiggle.)
+        let doc = try makeRows(Array(0..<8))
+        func frame(top: Int) throws -> CGImage {
+            try #require(doc.cropping(to: CGRect(x: 0, y: top, width: 4, height: 4)))
+        }
+        var composite = try #require(
+            ScrollStitcher.makeInitial(image: try frame(top: 0), maxHeight: 100)
+        ).image
+        for top in [1, 2, 1, 2, 3, 4] {
+            let current = composite
+            let stripHeight = min(4, current.height)
+            let stripTop = current.height - stripHeight
+            let strip = try #require(current.cropping(to: CGRect(
+                x: 0, y: stripTop, width: 4, height: stripHeight
+            )))
+            // Synthetic registration: scrolling down moves the strip content
+            // up, so ty is the frame top minus the strip top.
+            let translationY = top - stripTop
+            if let skip = ScrollAlignment.frontierSkipRows(
+                translationY: translationY,
+                stripHeight: stripHeight,
+                frameHeight: 4
+            ) {
+                composite = try #require(ScrollStitcher.append(
+                    composite: current,
+                    frame: try frame(top: top),
+                    offset: skip,
+                    maxHeight: 100
+                )).image
+            }
+        }
+        #expect(try rows(of: composite) == Array(0..<8))
     }
 
     @Test func testEffectiveMaxHeightIsAreaCapped() {

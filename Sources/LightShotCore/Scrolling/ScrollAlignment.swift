@@ -9,17 +9,22 @@ public enum ScrollAlignment {
     /// height for wide captures.
     public static let maxCompositePixels = 40_000_000
 
-    /// Vision's translational registration works in a bottom-left, y-up pixel
-    /// space. A downward scroll (the page moved up, previous content toward
-    /// the bottom of the current frame) yields a negative `translationY` whose
-    /// magnitude is the rows of new content at the frame's bottom. Returns the
-    /// number of top rows of the current frame that overlap the composite —
-    /// the stitcher's `offset` — or nil when the frame must be skipped:
-    /// no movement, an upward scroll, or a shift of a whole frame or more,
-    /// which cannot be trusted.
-    public static func overlapRows(translationY: Int, frameHeight: Int) -> Int? {
-        guard translationY < 0, translationY > -frameHeight else { return nil }
-        return frameHeight + translationY
+    /// The stitching reference is the composite's bottom strip — the live
+    /// frontier — not the previous frame. Vision registers that strip against
+    /// the new frame; scrolling down moves the strip's content UP in the
+    /// frame, so a downward scroll yields a POSITIVE `translationY` whose
+    /// magnitude is the rows of new content at the frame's bottom. Returns
+    /// the number of top rows of the frame to skip so the append starts
+    /// exactly at the composite's bottom edge, or nil when the frame adds
+    /// nothing and must be skipped: no movement, an upward scroll, or a jump
+    /// of a whole strip or more, which cannot be trusted.
+    public static func frontierSkipRows(
+        translationY: Int,
+        stripHeight: Int,
+        frameHeight: Int
+    ) -> Int? {
+        guard translationY > 0, translationY < stripHeight else { return nil }
+        return stripHeight - translationY
     }
 
     /// Clamps the requested height so `width × height` stays within the

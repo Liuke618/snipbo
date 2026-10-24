@@ -36,38 +36,27 @@ enum ScrollingCaptureError: Error, LocalizedError, Sendable {
     }
 }
 
-/// Captures one display region with ScreenCaptureKit and aligns/stitches
-/// frames. Frames land on `frameQueue` (cheap pixel-buffer conversion only);
-/// `stateQueue` guards the scheduling flags and keeps only the newest pending
-/// frame; Vision registration and stitching run one frame at a time on
-/// `workQueue`. Completion crosses to the main actor exactly once via
-/// `onAutomaticFinish`; `stop()` delivers instead and must not race it.
+/// Thin SCStream lifecycle around `ScrollFrameProcessor`, which owns the
+/// alignment and stitching state. Frames are converted off the main actor on
+/// `frameQueue` and handed to the processor; completion crosses to the main
+/// actor exactly once.
 final class ScrollingCaptureSession: @unchecked Sendable {
     private let displayID: CGDirectDisplayID
     private let rect: CGRect
     private let backingScale: CGFloat
-    private let maxHeight: Int
-    private let onProgress: @MainActor @Sendable (Int) -> Void
     private let onAutomaticFinish: @MainActor @Sendable (Result<ScrollingCaptureResult, Error>) -> Void
 
     private let stateQueue = DispatchQueue(label: "local.lightshot.scrolling.state")
     private let frameQueue = DispatchQueue(label: "local.lightshot.scrolling.frames")
-    private let workQueue = DispatchQueue(label: "local.lightshot.scrolling.work", qos: .userInitiated)
 
     // stateQueue-confined.
     private var stream: SCStream?
     private var delegate: ScrollStreamDelegate?
-    private var finished = false
-    private var latestFrame: CGImage?
-    private var workerActive = false
+    private var started = false
 
-    // workQueue-confined.
-    private var composite: CGImage?
-    private var lastFrame: ImageData?
-    private var appended = false
-    private var effectiveMaxHeight = 0
-    private var reportedHeight = 0
-    private var reason: ScrollingCaptureReason = .stopped
+    // Implicitly optional so phase-1 init completes before the onFinish
+    // closure captures self.
+    private var processor: ScrollFrameProcessor!
 
     init(
         displayID: CGDirectDisplayID,
@@ -80,9 +69,14 @@ final class ScrollingCaptureSession: @unchecked Sendable {
         self.displayID = displayID
         self.rect = rect
         self.backingScale = backingScale
-        self.maxHeight = maxHeight
-        self.onProgress = onProgress
         self.onAutomaticFinish = onAutomaticFinish
+        self.processor = ScrollFrameProcessor(
+            maxHeight: maxHeight,
+            onProgress: onProgress,
+            onFinish: { [weak self] result in
+                self?.finishAutomatically(result)
+            }
+        )
     }
 
     func start() async throws {
@@ -107,16 +101,17 @@ final class ScrollingCaptureSession: @unchecked Sendable {
         let filter = SCContentFilter(display: display, excludingWindows: ownWindows)
         let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
         let output = ScrollStreamOutput { [weak self] image in
-            self?.ingest(image)
+            self?.processor.enqueue(image)
         }
         let delegate = ScrollStreamDelegate { [weak self] message in
-            self?.handleStreamError(message)
+            self?.processor.abort(ScrollingCaptureError.streamError(message))
         }
         // The user may have cancelled while shareable content was loading;
         // never start a stream for an already-finished capture.
         var shouldStart = false
         stateQueue.sync {
-            if !self.finished {
+            if !self.started {
+                self.started = true
                 self.stream = stream
                 self.delegate = delegate
                 shouldStart = true
@@ -135,165 +130,25 @@ final class ScrollingCaptureSession: @unchecked Sendable {
         }
     }
 
-    /// Stops capture and returns the stitched image. A composite that never
-    /// grew reports `.noMovement`; nil means not even a first frame arrived.
+    /// Stops capture and returns the stitched image, waiting out the
+    /// in-flight frame.
     func stop() async -> ScrollingCaptureResult? {
         await stopStream()
-        // Wait out the in-flight frame so the composite is final.
-        return workQueue.sync { () -> ScrollingCaptureResult? in
-            stateQueue.sync {
-                finished = true
-                latestFrame = nil
-            }
-            guard let composite else { return nil }
-            return ScrollingCaptureResult(
-                image: composite,
-                reason: appended ? reason : .noMovement
-            )
-        }
+        return processor.stopAndWait()
     }
 
     func cancel() async {
         await stopStream()
-        stateQueue.sync {
-            finished = true
-            latestFrame = nil
-        }
+        processor.cancel()
     }
 
-    private func ingest(_ image: CGImage) {
-        stateQueue.async { [weak self] in
-            guard let self, !self.finished else { return }
-            self.latestFrame = image
-            // When a worker is draining, it picks up the newest frame; the
-            // intermediate ones are dropped instead of piling up.
-            guard !self.workerActive else { return }
-            self.workerActive = true
-            self.workQueue.async { [weak self] in
-                self?.drain()
-            }
-        }
-    }
-
-    private func drain() {
-        while let frame = takeNextFrame() {
-            process(frame)
-        }
-    }
-
-    /// Returns the newest queued frame, or clears `workerActive` when the
-    /// queue is empty so the next ingest schedules a fresh worker. Both happen
-    /// under one `stateQueue.sync`, so no frame can be lost in between.
-    private func takeNextFrame() -> CGImage? {
-        stateQueue.sync { () -> CGImage? in
-            guard !finished else {
-                workerActive = false
-                latestFrame = nil
-                return nil
-            }
-            if let frame = latestFrame {
-                latestFrame = nil
-                return frame
-            }
-            workerActive = false
-            return nil
-        }
-    }
-
-    private func process(_ image: CGImage) {
-        guard !stateQueue.sync(execute: { finished }), image.width > 0, image.height > 0 else { return }
-        let frame = ImageData(image)
-        if composite == nil {
-            // Pin the height budget once, from the first frame's width.
-            effectiveMaxHeight = ScrollAlignment.effectiveMaxHeight(
-                requested: maxHeight,
-                width: image.width
-            )
-            guard let initial = ScrollStitcher.makeInitial(image: image, maxHeight: effectiveMaxHeight) else {
-                finish(.failure(ScrollingCaptureError.noFrames))
-                return
-            }
-            composite = initial.image
-            lastFrame = frame
-            report(initial.image.height)
-            if initial.reachedLimit {
-                reason = .limitReached
-                finish(.success(ScrollingCaptureResult(image: initial.image, reason: .limitReached)))
-            }
-            return
-        }
-        guard let previous = lastFrame, let current = composite else { return }
-        do {
-            let registration = try ScrollRegistrationService.offset(
-                previous: previous,
-                current: frame
-            )
-            guard registration.confidence >= 0.2 else {
-                reason = .lowConfidence
-                finish(.success(ScrollingCaptureResult(image: current, reason: .lowConfidence)))
-                return
-            }
-            guard let overlap = ScrollAlignment.overlapRows(
-                translationY: registration.translationY,
-                frameHeight: image.height
-            ) else {
-                // No movement, an upward scroll, or an implausible jump: keep
-                // the newest frame as the next reference and wait.
-                lastFrame = frame
-                return
-            }
-            guard let stitched = ScrollStitcher.append(
-                composite: current,
-                frame: image,
-                offset: overlap,
-                maxHeight: effectiveMaxHeight
-            ) else {
-                lastFrame = frame
-                return
-            }
-            composite = stitched.image
-            lastFrame = frame
-            appended = true
-            report(stitched.image.height)
-            if stitched.reachedLimit {
-                reason = .limitReached
-                finish(.success(ScrollingCaptureResult(image: stitched.image, reason: .limitReached)))
-            }
-        } catch {
-            // A single hopeless frame must not abort a long capture; keep the
-            // previous composite and try the next one.
-            lastFrame = frame
-        }
-    }
-
-    private func finish(_ result: Result<ScrollingCaptureResult, Error>) {
-        let shouldDeliver: Bool = stateQueue.sync { () -> Bool in
-            guard !finished else { return false }
-            finished = true
-            latestFrame = nil
-            return true
-        }
-        guard shouldDeliver else { return }
+    private func finishAutomatically(_ result: Result<ScrollingCaptureResult, Error>) {
         Task { [weak self] in
             await self?.stopStream()
             guard let self else { return }
             await MainActor.run {
                 self.onAutomaticFinish(result)
             }
-        }
-    }
-
-    private func handleStreamError(_ message: String) {
-        finish(.failure(ScrollingCaptureError.streamError(message)))
-    }
-
-    private func report(_ height: Int) {
-        // Heights are strictly increasing; the guard keeps a reordered
-        // main-actor hop from moving the label backwards.
-        guard height > reportedHeight else { return }
-        reportedHeight = height
-        Task { @MainActor [onProgress] in
-            onProgress(height)
         }
     }
 
