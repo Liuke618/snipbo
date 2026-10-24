@@ -264,6 +264,14 @@ final class EditorCanvasView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        // Single-key tool switching (Shottr-style): a plain letter picks the
+        // matching tool. Modifier chords and the text overlay are untouched.
+        if event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+           let characters = event.charactersIgnoringModifiers?.lowercased(),
+           let tool = EditorTool.tool(forHotKey: characters) {
+            controller.tool = tool
+            return
+        }
         if event.modifierFlags.contains(.command),
            let key = event.charactersIgnoringModifiers?.lowercased() {
             switch key {

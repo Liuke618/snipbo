@@ -42,4 +42,29 @@ enum EditorTool: String, CaseIterable {
         case .crop: return "crop"
         }
     }
+
+    /// Single-key shortcut shown in the toolbar tooltip ("Arrow (A)") and
+    /// handled by the canvas to switch tools without the mouse.
+    var hotKeyLetter: String? {
+        switch self {
+        case .select: return "v"
+        case .arrow: return "a"
+        case .rectangle: return "r"
+        case .ellipse: return "o"
+        case .line: return "l"
+        case .freehand: return "d"
+        case .highlight: return "h"
+        case .text: return "t"
+        case .pixelate: return "p"
+        case .blur: return "b"
+        case .spotlight: return "f"
+        case .counter: return "c"
+        case .magnifier: return "m"
+        case .crop: return "k"
+        }
+    }
+
+    static func tool(forHotKey letter: String) -> EditorTool? {
+        allCases.first { $0.hotKeyLetter == letter }
+    }
 }

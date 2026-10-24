@@ -63,15 +63,21 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             onRecognize: { [weak self] in self?.recognize() },
             onPin: { [weak self] in self?.pinAction() },
             onCopy: { [weak self] in self?.copyAndClose() },
-            onSave: { [weak self] in self?.saveAndClose(saveAs: false) },
-            onClose: { [weak self] in self?.close() }
+            onSave: { [weak self] in self?.saveAndClose(saveAs: false) }
         )
         self.toolbarView = toolbar
         window.title = "LightShot"
+        // Shottr-style: the toolbar lives in the title bar as accessories, so
+        // the canvas gets the full window body.
+        window.toolbarStyle = .unified
+        window.titleVisibility = .hidden
+        window.addTitlebarAccessoryViewController(toolbar.leadingAccessory)
+        window.addTitlebarAccessoryViewController(toolbar.trailingAccessory)
         window.center()
         window.delegate = self
         controller.canvas = canvas
         controller.onCropChanged = { [weak self] in self?.fitToWindow() }
+        controller.onChange = { [weak self] in self?.refreshReadouts() }
         canvas.onFit = { [weak self] in self?.fitToWindow() }
         canvas.onActualSize = { [weak self] in self?.canvas.setZoom(1) }
 
@@ -94,20 +100,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             scrollTrailingConstraint,
         ])
 
-        let contentView = NSView(frame: .zero)
-        toolbar.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(toolbar)
-        contentView.addSubview(body)
-        window.contentView = contentView
-        NSLayoutConstraint.activate([
-            toolbar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            toolbar.topAnchor.constraint(equalTo: contentView.topAnchor),
-            body.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            body.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            body.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
-            body.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-        ])
+        window.contentView = body
+        refreshReadouts()
         // Cmd+C copies without closing; Enter and the toolbar Copy button copy
         // and close.
         canvas.onCopy = { [weak self] in self?.copyToPasteboard() }
@@ -146,6 +140,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             1
         )
         canvas.setZoom(scale)
+        refreshReadouts()
+    }
+
+    /// Live title-bar readouts: current crop size and zoom level.
+    private func refreshReadouts() {
+        toolbarView?.updateReadouts(size: controller.document.cropRect.size, zoom: canvas.zoom)
     }
 
     // MARK: - Shortcuts while a toolbar control has focus
