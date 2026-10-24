@@ -55,7 +55,7 @@ struct EditorProbe {
             // size label ("2022×5175 px") is much wider than the placeholder.
             let probeToolbar = EditorToolbarView(
                 onTool: { _ in }, onUndo: {}, onRedo: {}, onColor: { _ in }, onWidth: { _ in },
-                onRecognize: {}, onPin: {}, onCopy: {}, onSave: {}
+                onRecognize: {}, onPin: {}, onCopy: {}, onSave: {}, onShowOptions: {}
             )
             probeToolbar.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: fitZoom)
             let toolbarFloor = probeToolbar.fittingSize.width
@@ -197,6 +197,84 @@ struct EditorProbe {
               controller.document.annotations.count == 1
                   && abs(controller.document.annotations[0].style.lineWidth - 9) < 0.001,
               "count \(controller.document.annotations.count), lineWidth \(controller.document.annotations.first?.style.lineWidth ?? -1)")
+
+        // --- Case 4: crop draft commit/cancel (Enter/Escape semantics).
+        let cropEditor = makeEditor(image: makeImage(width: 400, height: 300))
+        cropEditor.show()
+        runTicks(6)
+        let cropController = cropEditor.controller
+        cropController.tool = .crop
+        cropController.begin(at: CGPoint(x: 50, y: 40))
+        cropController.drag(to: CGPoint(x: 250, y: 190))
+        check("crop: draft visible", cropController.cropDraft != nil, "nil draft")
+        if let window = cropEditor.window { render(window, to: "/tmp/lightshot-editor-crop.png") }
+        cropController.cancelCropDraft()
+        check("crop: escape cancels draft", cropController.cropDraft == nil, "draft survived")
+        check("crop: cancel keeps crop rect",
+              cropController.document.cropRect.width == 400 && cropController.document.cropRect.height == 300,
+              "\(cropController.document.cropRect)")
+        cropController.begin(at: CGPoint(x: 50, y: 40))
+        cropController.drag(to: CGPoint(x: 250, y: 190))
+        cropController.commitCropDraft()
+        check("crop: enter commits crop",
+              cropController.document.cropRect == CGRect(x: 50, y: 40, width: 200, height: 150),
+              "\(cropController.document.cropRect)")
+        check("crop: commit cleared draft", cropController.cropDraft == nil, "draft survived")
+        cropController.undo()
+        check("crop: undo restores crop",
+              cropController.document.cropRect.width == 400,
+              "\(cropController.document.cropRect)")
+
+        // --- Case 5: resize resamples the crop and carries annotations.
+        // Current document after undo: full 400x300. Commit a rectangle first
+        // so the resize has something to scale.
+        cropController.tool = .rectangle
+        cropController.begin(at: CGPoint(x: 60, y: 50))
+        cropController.drag(to: CGPoint(x: 140, y: 130))
+        cropController.end(at: CGPoint(x: 140, y: 130))
+        check("resize: rectangle committed", cropController.document.annotations.count == 1,
+              "count \(cropController.document.annotations.count)")
+        let before = cropController.document
+        cropController.resizeImage(toWidth: 200)
+        check("resize: image resampled to half",
+              cropController.document.image.width == 200 && cropController.document.image.height == 150,
+              "\(cropController.document.imagePixelSize)")
+        check("resize: crop reset to full image",
+              cropController.document.cropRect == CGRect(x: 0, y: 0, width: 200, height: 150),
+              "\(cropController.document.cropRect)")
+        check("resize: annotation carried and scaled",
+              cropController.document.annotations.count == 1
+                  && abs(cropController.document.annotations[0].style.lineWidth - 1.5) < 0.01
+                  && abs(cropController.document.annotations[0].bounds.minX - 30) < 0.01,
+              "\(cropController.document.annotations.first.map { "\($0.bounds) w=\($0.style.lineWidth)" } ?? "none") (before \(before.annotations.first.map { "\($0.bounds) w=\($0.style.lineWidth)" } ?? "none"))")
+        check("resize: undo history dropped", cropController.history.undoDepth == 0,
+              "undoDepth \(cropController.history.undoDepth)")
+
+        // --- Case 6: logical-point size formatting.
+        cropController.showsLogicalPoints = false
+        check("sizeText: px by default",
+              cropController.sizeText(for: CGSize(width: 200, height: 150)) == "200×150 px",
+              cropController.sizeText(for: CGSize(width: 200, height: 150)))
+        // A Retina capture (scale 2) shows halved pt values when toggled on.
+        let retinaEditor = makeEditor(image: makeImage(width: 346, height: 172))
+        // Rebuild the document with an explicit scale via the editor's window;
+        // simulate by toggling on a scale-2 document.
+        retinaEditor.controller.document = EditDocument(
+            image: makeImage(width: 346, height: 172),
+            backingScale: 2
+        )
+        retinaEditor.controller.showsLogicalPoints = true
+        check("sizeText: logical points on Retina",
+              retinaEditor.controller.sizeText(for: CGSize(width: 346, height: 172)) == "173×86 pt",
+              retinaEditor.controller.sizeText(for: CGSize(width: 346, height: 172)))
+        retinaEditor.controller.showsLogicalPoints = false
+        check("sizeText: px when toggled off",
+              retinaEditor.controller.sizeText(for: CGSize(width: 346, height: 172)) == "346×172 px",
+              retinaEditor.controller.sizeText(for: CGSize(width: 346, height: 172)))
+
+        cropEditor.close()
+        retinaEditor.close()
+        print("probe done")
     }
 
     @MainActor

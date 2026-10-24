@@ -23,6 +23,7 @@ final class EditorToolbarView: NSView {
     /// label-based fallback (unbundled harness contexts).
     private let segmented: NSSegmentedControl
     private let colorWell = NSColorWell()
+    private let hexLabel = NSTextField(labelWithString: "#FF0000")
     private let widthSlider = NSSlider(value: 3, minValue: 1, maxValue: 24, target: nil, action: nil)
     private let recognizeButton = NSButton()
     private let pinButton = NSButton()
@@ -30,6 +31,7 @@ final class EditorToolbarView: NSView {
     private let saveButton = NSButton()
     private let undoButton = NSButton()
     private let redoButton = NSButton()
+    private let optionsButton = NSButton()
     private let sizeLabel = NSTextField(labelWithString: "0×0 px")
     private let zoomLabel = NSTextField(labelWithString: "100%")
 
@@ -54,6 +56,7 @@ final class EditorToolbarView: NSView {
     private let onPin: () -> Void
     private let onCopy: () -> Void
     private let onSave: () -> Void
+    private let onShowOptions: () -> Void
 
     /// Height of the toolbar strip; the window's content sits below it.
     static let height: CGFloat = 36
@@ -67,7 +70,8 @@ final class EditorToolbarView: NSView {
         onRecognize: @escaping () -> Void,
         onPin: @escaping () -> Void,
         onCopy: @escaping () -> Void,
-        onSave: @escaping () -> Void
+        onSave: @escaping () -> Void,
+        onShowOptions: @escaping () -> Void
     ) {
         self.onTool = onTool
         self.onUndo = onUndo
@@ -78,6 +82,7 @@ final class EditorToolbarView: NSView {
         self.onPin = onPin
         self.onCopy = onCopy
         self.onSave = onSave
+        self.onShowOptions = onShowOptions
 
         // Image-based tool segments with hover tooltips showing the single-key
         // shortcut ("Arrow (A)") when every Lucide icon is bundled; the label
@@ -98,7 +103,7 @@ final class EditorToolbarView: NSView {
 
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: Self.height))
 
-        for button in [recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton] {
+        for button in [recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton, optionsButton] {
             button.imagePosition = .imageOnly
             button.isBordered = false
         }
@@ -118,8 +123,15 @@ final class EditorToolbarView: NSView {
         undoButton.toolTip = L10n.tr("Undo (⌘Z)", "撤销 (⌘Z)")
         redoButton.image = EditorToolbarView.icon("redo-2")
         redoButton.toolTip = L10n.tr("Redo (⇧⌘Z)", "重做 (⇧⌘Z)")
+        optionsButton.image = EditorToolbarView.icon("scan") ?? NSImage(
+            systemSymbolName: "plusminus.viewfinder", accessibilityDescription: "Options"
+        )
+        optionsButton.toolTip = L10n.tr("Resize image · logical-point readouts", "调整图像大小 · 逻辑点读数")
 
         colorWell.toolTip = L10n.tr("Annotation color", "标注颜色")
+        hexLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        hexLabel.textColor = .secondaryLabelColor
+        hexLabel.toolTip = L10n.tr("Press Tab to copy the color", "按 Tab 复制色值")
         widthSlider.toolTip = L10n.tr("Stroke width — affects the selected annotation, or the next one you draw", "线条粗细 — 作用于选中的标注，或接下来绘制的标注")
         widthSlider.isContinuous = true
         for label in [sizeLabel, zoomLabel] {
@@ -127,7 +139,7 @@ final class EditorToolbarView: NSView {
             label.textColor = .secondaryLabelColor
         }
 
-        for control in [segmented, colorWell, widthSlider, recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton] {
+        for control in [segmented, colorWell, widthSlider, recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton, optionsButton] {
             control.controlSize = .small
         }
         segmented.selectedSegment = 0
@@ -149,6 +161,8 @@ final class EditorToolbarView: NSView {
         undoButton.action = #selector(undo)
         redoButton.target = self
         redoButton.action = #selector(redo)
+        optionsButton.target = self
+        optionsButton.action = #selector(showOptions)
 
         wantsLayer = true
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
@@ -163,7 +177,7 @@ final class EditorToolbarView: NSView {
         leading.spacing = 6
         let trailing = NSStackView(views: [
             recognizeButton, undoButton, redoButton, Self.separator(),
-            colorWell, widthSlider, sizeLabel, zoomLabel,
+            colorWell, hexLabel, widthSlider, sizeLabel, zoomLabel, optionsButton,
         ])
         trailing.orientation = .horizontal
         trailing.spacing = 6
@@ -210,13 +224,24 @@ final class EditorToolbarView: NSView {
     }
 
     /// Mirrors the style being edited (the selected annotation's, or the
-    /// default for new annotations) into the color well and width slider.
-    /// Programmatic value changes do not fire the control actions, so this
-    /// cannot feed back into the controller.
+    /// default for new annotations) into the color well, hex readout, and
+    /// width slider. Programmatic value changes do not fire the control
+    /// actions, so this cannot feed back into the controller.
     func syncStyleControls(lineWidth: CGFloat, color: RGBA) {
         widthSlider.doubleValue = lineWidth
         colorWell.color = NSColor(color)
+        hexLabel.stringValue = String(
+            format: "#%02X%02X%02X",
+            Int((color.red * 255).rounded()),
+            Int((color.green * 255).rounded()),
+            Int((color.blue * 255).rounded())
+        )
     }
+
+    /// The options button, as the popover's anchor view.
+    var optionsAnchor: NSView { optionsButton }
+
+    @objc private func showOptions() { onShowOptions() }
 
     func setRecognizing(_ recognizing: Bool) {
         recognizeButton.isEnabled = !recognizing

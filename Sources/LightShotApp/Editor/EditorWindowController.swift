@@ -66,7 +66,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             onRecognize: { [weak self] in self?.recognize() },
             onPin: { [weak self] in self?.pinAction() },
             onCopy: { [weak self] in self?.copyAndClose() },
-            onSave: { [weak self] in self?.saveAndClose(saveAs: false) }
+            onSave: { [weak self] in self?.saveAndClose(saveAs: false) },
+            onShowOptions: { [weak self] in self?.showOptionsPopover() }
         )
         self.toolbarView = toolbar
         window.title = "LightShot"
@@ -134,6 +135,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         canvas.onSave = { [weak self] in self?.saveAndClose(saveAs: false) }
         canvas.onSaveAs = { [weak self] in self?.saveAndClose(saveAs: true) }
         canvas.onEscape = { [weak self] in self?.escapeAction() }
+        canvas.onCopyColor = { [weak self] in self?.copyColorHex() }
         recognitionPanel.onCopy = { [weak self] text in
             self?.copyRecognitionText(text)
         }
@@ -192,13 +194,50 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         refreshReadouts()
     }
 
-    /// Live title-bar readouts: current crop size and zoom level. Also mirrors
-    /// the style being edited — the selected annotation's, or the default for
-    /// new annotations — into the color well and width slider.
+    /// Live title-bar readouts: the crop draft's size while cropping, else the
+    /// current crop size, plus the zoom level. Also mirrors the style being
+    /// edited — the selected annotation's, or the default for new annotations
+    /// — into the color well, hex label, and width slider.
     private func refreshReadouts() {
-        toolbarView?.updateReadouts(size: controller.document.cropRect.size, zoom: canvas.zoom)
+        let size = controller.cropDraft?.size ?? controller.document.cropRect.size
+        toolbarView?.updateReadouts(size: size, zoom: canvas.zoom)
         let editedStyle = controller.selectedStyle ?? controller.style
         toolbarView?.syncStyleControls(lineWidth: editedStyle.lineWidth, color: editedStyle.color)
+    }
+
+    // MARK: - Options popover
+
+    private var optionsPopover: NSPopover?
+    private lazy var optionsPanel = EditorOptionsPanelController(controller: controller)
+
+    private func showOptionsPopover() {
+        let popover: NSPopover
+        if let existing = optionsPopover {
+            popover = existing
+        } else {
+            popover = NSPopover()
+            popover.contentViewController = optionsPanel
+            popover.behavior = .transient
+            optionsPopover = popover
+        }
+        optionsPanel.refreshFromController()
+        if let anchor = toolbarView?.optionsAnchor {
+            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        }
+    }
+
+    /// Tab on the canvas: copies the edited color as "#RRGGBB".
+    private func copyColorHex() {
+        let color = (controller.selectedStyle ?? controller.style).color
+        let hex = String(
+            format: "#%02X%02X%02X",
+            Int((color.red * 255).rounded()),
+            Int((color.green * 255).rounded()),
+            Int((color.blue * 255).rounded())
+        )
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(hex, forType: .string)
     }
 
     // MARK: - Shortcuts while a toolbar control has focus
@@ -238,6 +277,20 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             return false
         }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // An active crop draft owns Enter (commit) and Escape (cancel), even
+        // when a toolbar control has focus.
+        if controller.cropDraft != nil {
+            switch event.keyCode {
+            case 36:
+                controller.commitCropDraft()
+                return true
+            case 53:
+                controller.cancelCropDraft()
+                return true
+            default:
+                break
+            }
+        }
         if modifiers.contains(.command),
            let key = event.charactersIgnoringModifiers?.lowercased() {
             switch key {

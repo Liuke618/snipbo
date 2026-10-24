@@ -80,4 +80,86 @@ public struct Annotation: Identifiable, Codable, Equatable, Sendable {
         self.style = style
         self.zIndex = zIndex
     }
+
+    /// Bounding rect of the geometry in image pixels. Text bounds follow the
+    /// 1.4x line height used when rendering; badges and lenses are circles.
+    public var bounds: CGRect {
+        switch geometry {
+        case .rect(let rect):
+            return rect
+        case .line(let start, let end):
+            return CGRect(
+                x: min(start.x, end.x),
+                y: min(start.y, end.y),
+                width: abs(end.x - start.x),
+                height: abs(end.y - start.y)
+            )
+        case .path(let points):
+            guard let first = points.first else { return .zero }
+            var minX = first.x, minY = first.y, maxX = first.x, maxY = first.y
+            for point in points.dropFirst() {
+                minX = min(minX, point.x)
+                minY = min(minY, point.y)
+                maxX = max(maxX, point.x)
+                maxY = max(maxY, point.y)
+            }
+            return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+        case .text(let origin, let width, _):
+            return CGRect(x: origin.x, y: origin.y, width: width, height: style.fontSize * 1.4)
+        case .badge(let center, _):
+            let diameter = max(24, style.fontSize)
+            return CGRect(
+                x: center.x - diameter / 2,
+                y: center.y - diameter / 2,
+                width: diameter,
+                height: diameter
+            )
+        case .lens(let center, _, let radius):
+            return CGRect(
+                x: center.x - radius,
+                y: center.y - radius,
+                width: radius * 2,
+                height: radius * 2
+            )
+        }
+    }
+}
+
+extension AnnotationStyle {
+    /// Scales the size-carrying style values by a uniform resize factor;
+    /// color and opacity are untouched.
+    public func scaled(by factor: CGFloat) -> AnnotationStyle {
+        var copy = self
+        copy.lineWidth *= factor
+        copy.fontSize *= factor
+        copy.pixelBlockSize *= factor
+        return copy
+    }
+}
+
+extension AnnotationGeometry {
+    /// Scales every coordinate by a uniform resize factor, used when the
+    /// document image is resampled so annotations keep their placement.
+    public func scaled(by factor: CGFloat) -> AnnotationGeometry {
+        func point(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * factor, y: p.y * factor) }
+        switch self {
+        case .rect(let rect):
+            return .rect(CGRect(
+                x: rect.minX * factor,
+                y: rect.minY * factor,
+                width: rect.width * factor,
+                height: rect.height * factor
+            ))
+        case .line(let start, let end):
+            return .line(start: point(start), end: point(end))
+        case .path(let points):
+            return .path(points: points.map(point))
+        case .text(let origin, let width, let value):
+            return .text(origin: point(origin), width: width * factor, value: value)
+        case .badge(let center, let value):
+            return .badge(center: point(center), value: value)
+        case .lens(let center, let source, let radius):
+            return .lens(center: point(center), source: point(source), radius: radius * factor)
+        }
+    }
 }

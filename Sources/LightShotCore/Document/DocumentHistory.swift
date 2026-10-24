@@ -32,4 +32,11 @@ public final class DocumentHistory {
         undoStack.append(current)
         return next
     }
+
+    /// Drops all undo/redo state, used when the document is replaced wholesale
+    /// (image resize) and previous states no longer apply.
+    public func reset() {
+        undoStack.removeAll()
+        redoStack.removeAll()
+    }
 }

@@ -596,6 +596,7 @@ final class CaptureCoordinator {
     /// failure handling cannot drift.
     private func deliver(_ image: CGImage, source: CaptureSource, backingScale: CGFloat = 1) {
         // Optional retina downscale keeps exports at 1x.
+        let effectiveScale: CGFloat = settings.retinaDownscale && backingScale > 1 ? 1 : backingScale
         let image = settings.retinaDownscale && backingScale > 1
             ? ImageExporter.downscaled(image, by: 1 / backingScale)
             : image
@@ -606,7 +607,7 @@ final class CaptureCoordinator {
         if settings.openEditorAfterCapture {
             let identifier = UUID()
             let editor = EditorWindowController(
-                document: EditDocument(image: image),
+                document: EditDocument(image: image, backingScale: effectiveScale),
                 settingsProvider: { [weak self] in self?.settings ?? .default },
                 history: history,
                 identifier: identifier,

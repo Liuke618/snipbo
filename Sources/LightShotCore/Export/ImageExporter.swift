@@ -15,6 +15,16 @@ public enum ImageExporter {
         let width = max(1, Int((CGFloat(image.width) * factor).rounded()))
         let height = max(1, Int((CGFloat(image.height) * factor).rounded()))
         guard width != image.width || height != image.height else { return image }
+        return resampled(image, to: CGSize(width: width, height: height))
+    }
+
+    /// Resamples to an exact pixel size with high-quality interpolation.
+    /// Returns the original image for degenerate targets or when rendering
+    /// fails.
+    public static func resampled(_ image: CGImage, to target: CGSize) -> CGImage {
+        let width = max(1, Int(target.width.rounded()))
+        let height = max(1, Int(target.height.rounded()))
+        guard width != image.width || height != image.height else { return image }
         guard let context = CGContext(
             data: nil,
             width: width,

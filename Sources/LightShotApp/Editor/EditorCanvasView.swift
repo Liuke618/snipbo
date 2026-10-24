@@ -22,6 +22,8 @@ final class EditorCanvasView: NSView {
     var onSave: (() -> Void)?
     var onSaveAs: (() -> Void)?
     var onEscape: (() -> Void)?
+    /// Tab: copy the current annotation color as a hex string.
+    var onCopyColor: (() -> Void)?
     /// Called after the zoom level changes so the toolbar readout can refresh.
     var onZoomChanged: (() -> Void)?
     private var textOverlay: TextEditingOverlay?
@@ -156,7 +158,61 @@ final class EditorCanvasView: NSView {
             let border = NSBezierPath(rect: cropInView)
             border.lineWidth = 1
             border.stroke()
+            drawCropOverlays(crop: crop, inView: cropInView)
         }
+    }
+
+    /// Shottr-style crop affordances: the aspect ratio inside the top edge of
+    /// the draft, the live size badge under it, and the "hit Enter to crop"
+    /// hint below that. All move with the draft.
+    private func drawCropOverlays(crop: CGRect, inView cropInView: CGRect) {
+        if let ratio = aspectText(for: crop.size) {
+            drawBadge(ratio, centeredAt: CGPoint(x: cropInView.midX, y: max(10, cropInView.minY + 12)))
+        }
+        let sizeLine = controller.sizeText(for: crop.size)
+        let hintLine = L10n.tr("Hit Enter to crop", "按 Enter 裁剪")
+        var badgeY = cropInView.maxY + 18
+        if badgeY + 40 > bounds.maxY {
+            // Not enough room below (crop reaches the bottom): stack above.
+            badgeY = cropInView.minY - 40
+        }
+        drawBadge(sizeLine, centeredAt: CGPoint(x: cropInView.midX, y: badgeY))
+        drawBadge(hintLine, centeredAt: CGPoint(x: cropInView.midX, y: badgeY + 22))
+    }
+
+    /// Draws a small rounded label centered on a view point.
+    private func drawBadge(_ text: String, centeredAt center: CGPoint) {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.white,
+        ]
+        let string = NSAttributedString(string: text, attributes: attributes)
+        let textSize = string.size()
+        let pad: CGFloat = 6
+        let rect = CGRect(
+            x: center.x - textSize.width / 2 - pad,
+            y: center.y - textSize.height / 2 - 3,
+            width: textSize.width + pad * 2,
+            height: textSize.height + 6
+        )
+        NSColor.black.withAlphaComponent(0.72).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+        string.draw(at: CGPoint(x: rect.minX + pad, y: rect.minY + 3))
+    }
+
+    /// "W: 2:1" style aspect readout for the crop draft; unusual ratios fall
+    /// back to a decimal.
+    private func aspectText(for size: CGSize) -> String? {
+        let width = Int(size.width.rounded()), height = Int(size.height.rounded())
+        guard width > 0, height > 0 else { return nil }
+        var a = width, b = height
+        while b != 0 { (a, b) = (b, a % b) }
+        let divisor = max(1, a)
+        let rw = width / divisor, rh = height / divisor
+        if rw <= 20, rh <= 20 {
+            return "W: \(rw):\(rh)"
+        }
+        return String(format: "W: %.2f", Double(width) / Double(height))
     }
 
     private var selectedAnnotation: Annotation? {
@@ -342,9 +398,36 @@ final class EditorCanvasView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        // An active crop draft owns Enter (commit) and Escape (cancel).
+        if controller.cropDraft != nil {
+            switch event.keyCode {
+            case 36:
+                controller.commitCropDraft()
+                return
+            case 53:
+                controller.cancelCropDraft()
+                return
+            default:
+                break
+            }
+        }
+        // ⇧P toggles logical-point readouts (Shottr-style).
+        if modifiers == [.shift],
+           event.charactersIgnoringModifiers?.lowercased() == "p" {
+            controller.showsLogicalPoints.toggle()
+            controller.changed()
+            return
+        }
+        // Tab copies the current color as hex; other Tab uses keep their
+        // default focus-navigation behavior.
+        if modifiers.isEmpty, event.keyCode == 48 {
+            onCopyColor?()
+            return
+        }
         // Single-key tool switching (Shottr-style): a plain letter picks the
         // matching tool. Modifier chords and the text overlay are untouched.
-        if event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+        if modifiers.intersection([.command, .option, .control, .shift]).isEmpty,
            let characters = event.charactersIgnoringModifiers?.lowercased(),
            let tool = EditorTool.tool(forHotKey: characters) {
             controller.tool = tool

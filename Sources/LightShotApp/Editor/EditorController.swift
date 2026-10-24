@@ -13,12 +13,23 @@ final class EditorController {
     var onCropChanged: (() -> Void)?
 
     var tool: EditorTool = .select {
-        didSet { changed() }
+        didSet {
+            // Switching tools mid-crop abandons the draft, matching the
+            // single-pending-gesture behavior of the other tools.
+            if cropDraft != nil {
+                cropDraft = nil
+                startPoint = nil
+            }
+            changed()
+        }
     }
     var style = AnnotationStyle()
     private(set) var selectedID: UUID?
     private(set) var draft: Annotation?
     private(set) var cropDraft: CGRect?
+    /// Shows readout sizes in logical points (÷backingScale, "pt") instead of
+    /// physical pixels; toggled with ⇧P or the options popover.
+    var showsLogicalPoints = false
     /// Step number handed to the next counter badge.
     private var counterValue = 0
 
@@ -179,18 +190,7 @@ final class EditorController {
         case .select:
             return
         case .crop:
-            guard let cropDraft, !cropDraft.isNull,
-                  cropDraft.width >= 2, cropDraft.height >= 2 else { return }
-            // A crop is always relative to the currently visible crop, so the
-            // new rect cannot reveal pixels outside it. Both rects are
-            // integral, so the second intersection keeps integral coordinates.
-            let clipped = cropDraft.intersection(document.cropRect)
-            guard !clipped.isNull else { return }
-            let next = clipped.integral.intersection(document.cropRect)
-            guard next.width >= 2, next.height >= 2, next != document.cropRect else { return }
-            recordState(document.state)
-            document.cropRect = next
-            onCropChanged?()
+            commitCropDraft()
         case .text:
             return
         default:
@@ -198,6 +198,77 @@ final class EditorController {
             recordState(document.state)
             document.annotations.append(draft)
         }
+    }
+
+    /// Commits the in-progress crop draft (drag end or Enter). Returns true
+    /// when the crop was applied.
+    @discardableResult
+    func commitCropDraft() -> Bool {
+        defer {
+            cropDraft = nil
+            startPoint = nil
+        }
+        guard let cropDraft, !cropDraft.isNull,
+              cropDraft.width >= 2, cropDraft.height >= 2 else { return false }
+        // A crop is always relative to the currently visible crop, so the
+        // new rect cannot reveal pixels outside it. Both rects are
+        // integral, so the second intersection keeps integral coordinates.
+        let clipped = cropDraft.intersection(document.cropRect)
+        guard !clipped.isNull else { return false }
+        let next = clipped.integral.intersection(document.cropRect)
+        guard next.width >= 2, next.height >= 2, next != document.cropRect else { return false }
+        recordState(document.state)
+        document.cropRect = next
+        onCropChanged?()
+        changed()
+        return true
+    }
+
+    /// Abandons the in-progress crop draft (Escape).
+    func cancelCropDraft() {
+        guard cropDraft != nil else { return }
+        cropDraft = nil
+        startPoint = nil
+        changed()
+    }
+
+    /// Replaces the document with the current crop resampled to `newWidth`
+    /// (height follows the aspect ratio). Annotations inside the crop are
+    /// carried along and scaled; the undo history is dropped because the base
+    /// image itself changed, matching Shottr's "can't be undone" resize.
+    func resizeImage(toWidth newWidth: CGFloat) {
+        let crop = document.cropRect.integral
+        guard newWidth >= 8, newWidth <= 20000,
+              abs(newWidth - crop.width) >= 1 else { return }
+        let factor = newWidth / crop.width
+        let target = CGSize(width: newWidth.rounded(), height: (crop.height * factor).rounded())
+        guard let cropped = document.image.cropping(to: crop) else { return }
+        let resized = ImageExporter.resampled(cropped, to: target)
+        var carried: [Annotation] = []
+        for var annotation in document.annotations where annotation.bounds.intersects(crop) {
+            annotation.geometry = translated(
+                annotation.geometry,
+                by: CGPoint(x: -crop.minX, y: -crop.minY)
+            ).scaled(by: factor)
+            annotation.style = annotation.style.scaled(by: factor)
+            carried.append(annotation)
+        }
+        document = EditDocument(image: resized, backingScale: document.backingScale * factor)
+        document.annotations = carried
+        history.reset()
+        selectedID = nil
+        onCropChanged?()
+        changed()
+    }
+
+    /// Formats a size for the readouts, honoring the logical-points toggle:
+    /// Retina captures then show ÷scale as "pt" instead of physical pixels.
+    func sizeText(for size: CGSize) -> String {
+        let scale = document.backingScale
+        if showsLogicalPoints, scale > 1 {
+            return "\(Int((size.width / scale).rounded()))×\(Int((size.height / scale).rounded())) pt"
+        }
+        return "\(Int(size.width.rounded()))×\(Int(size.height.rounded())) px"
     }
 
     func commitText(_ value: String, at point: CGPoint, width: CGFloat) {
