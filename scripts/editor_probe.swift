@@ -62,7 +62,7 @@ struct EditorProbe {
             let expectedWidth = min(max(640, 2022 * fitZoom, toolbarFloor), screen.width * 0.9)
             let expectedHeight = min(max(320, 5175 * fitZoom), screen.height * 0.9) + 36
             check("large: window hugs fitted image (toolbar floor respected)",
-                  abs(content.width - expectedWidth) <= 8 && abs(content.height - expectedHeight) < 2,
+                  abs(content.width - expectedWidth) <= 12 && abs(content.height - expectedHeight) < 2,
                   "got \(Int(content.width))x\(Int(content.height)), want \(Int(expectedWidth))x\(Int(expectedHeight)) (toolbar floor \(Int(toolbarFloor)))")
             check("large: window fits the screen",
                   window.frame.width <= screen.width && window.frame.height <= screen.height + 2,

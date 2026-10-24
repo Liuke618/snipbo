@@ -201,6 +201,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private func refreshReadouts() {
         let size = controller.cropDraft?.size ?? controller.document.cropRect.size
         toolbarView?.updateReadouts(size: size, zoom: canvas.zoom)
+        toolbarView?.setSelectedTool(controller.tool)
         let editedStyle = controller.selectedStyle ?? controller.style
         toolbarView?.syncStyleControls(lineWidth: editedStyle.lineWidth, color: editedStyle.color)
     }

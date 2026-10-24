@@ -19,9 +19,8 @@ extension NSColor {
 /// below does not.
 @MainActor
 final class EditorToolbarView: NSView {
-    /// Image-based tool segments when all Lucide icons loaded; otherwise the
-    /// label-based fallback (unbundled harness contexts).
-    private let segmented: NSSegmentedControl
+    /// Shottr-style standalone tool buttons, one per `EditorTool`.
+    private var toolButtons: [ToolButton] = []
     private let colorWell = NSColorWell()
     private let hexLabel = NSTextField(labelWithString: "#FF0000")
     private let widthSlider = NSSlider(value: 3, minValue: 1, maxValue: 24, target: nil, action: nil)
@@ -84,22 +83,31 @@ final class EditorToolbarView: NSView {
         self.onSave = onSave
         self.onShowOptions = onShowOptions
 
-        // Image-based tool segments with hover tooltips showing the single-key
-        // shortcut ("Arrow (A)") when every Lucide icon is bundled; the label
-        // fallback keeps unbundled harness contexts usable.
-        let toolImages = EditorTool.allCases.compactMap { EditorToolbarView.icon($0.iconName, size: 15) }
-        let control: NSSegmentedControl
-        if toolImages.count == EditorTool.allCases.count {
-            control = NSSegmentedControl(images: toolImages, trackingMode: .selectOne, target: nil, action: nil)
-            for (index, tool) in EditorTool.allCases.enumerated() {
-                let tooltip = tool.hotKeyLetter.map { "\(tool.title) (\($0.uppercased()))" } ?? tool.title
-                control.setToolTip(tooltip, forSegment: index)
-                control.setWidth(26, forSegment: index)
+        // Shottr-style standalone tool buttons: separate icon buttons that
+        // highlight on hover and mark the active tool with a rounded
+        // background, instead of a connected segmented control. Falls back to
+        // text buttons when Lucide icons are not bundled (harness contexts).
+        // Buttons are fully built before `super.init`; target/action, which
+        // capture self, are attached afterwards.
+        let allIcons = EditorTool.allCases.map { EditorToolbarView.icon($0.iconName, size: 15) }
+        let iconsUsable = allIcons.allSatisfy { $0 != nil }
+        let buttons: [ToolButton] = EditorTool.allCases.enumerated().map { index, tool in
+            let button = ToolButton(frame: .zero)
+            button.tag = index
+            if iconsUsable, let image = allIcons[index] {
+                button.image = image
+                button.widthAnchor.constraint(equalToConstant: 24).isActive = true
+            } else {
+                button.title = tool.title
+                button.font = NSFont.systemFont(ofSize: 10, weight: .medium)
             }
-        } else {
-            control = NSSegmentedControl(labels: EditorTool.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
+            button.heightAnchor.constraint(equalToConstant: 24).isActive = true
+            button.toolTip = tool.hotKeyLetter.map { "\(tool.title) (\($0.uppercased()))" } ?? tool.title
+            return button
         }
-        segmented = control
+        let toolsStack = NSStackView(views: buttons)
+        toolsStack.orientation = .horizontal
+        toolsStack.spacing = 4
 
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: Self.height))
 
@@ -139,12 +147,15 @@ final class EditorToolbarView: NSView {
             label.textColor = .secondaryLabelColor
         }
 
-        for control in [segmented, colorWell, widthSlider, recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton, optionsButton] {
+        for control in [colorWell, widthSlider, recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton, optionsButton] {
             control.controlSize = .small
         }
-        segmented.selectedSegment = 0
-        segmented.target = self
-        segmented.action = #selector(toolChanged)
+        toolButtons = buttons
+        for button in toolButtons {
+            button.target = self
+            button.action = #selector(toolButtonPressed(_:))
+        }
+        toolButtons.first?.showsSelected = true
         colorWell.target = self
         colorWell.action = #selector(colorChanged)
         widthSlider.target = self
@@ -171,7 +182,7 @@ final class EditorToolbarView: NSView {
         // color, width, and the readouts. The spacer stretches so the trailing
         // group hugs the right edge at any window width.
         let leading = NSStackView(views: [
-            copyButton, saveButton, pinButton, Self.separator(), segmented,
+            copyButton, saveButton, pinButton, Self.separator(), toolsStack,
         ])
         leading.orientation = .horizontal
         leading.spacing = 6
@@ -247,8 +258,16 @@ final class EditorToolbarView: NSView {
         recognizeButton.isEnabled = !recognizing
     }
 
-    @objc private func toolChanged() {
-        let index = segmented.selectedSegment
+    /// Marks the active tool's button; called whenever the tool changes from
+    /// any path (clicks, single-key shortcuts) so the bar stays in sync.
+    func setSelectedTool(_ tool: EditorTool) {
+        for (index, button) in toolButtons.enumerated() {
+            button.showsSelected = EditorTool.allCases[index] == tool
+        }
+    }
+
+    @objc private func toolButtonPressed(_ sender: NSButton) {
+        let index = sender.tag
         guard index >= 0, index < EditorTool.allCases.count else { return }
         onTool(EditorTool.allCases[index])
     }
@@ -261,4 +280,59 @@ final class EditorToolbarView: NSView {
     @objc private func saveAction() { onSave() }
     @objc private func undo() { onUndo() }
     @objc private func redo() { onRedo() }
+}
+
+/// Borderless tool button that paints its own rounded background when hovered
+/// or selected — the Shottr toolbar look. The icon stays a template so it
+/// follows the appearance.
+@MainActor
+private final class ToolButton: NSButton {
+    var showsSelected = false {
+        didSet { needsDisplay = true }
+    }
+    private var isHovered = false
+    private var trackingArea: NSTrackingArea?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        isBordered = false
+        imagePosition = .imageOnly
+        setButtonType(.momentaryChange)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if showsSelected || isHovered {
+            NSColor.labelColor.withAlphaComponent(showsSelected ? 0.16 : 0.09).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6).fill()
+        }
+        super.draw(dirtyRect)
+    }
 }
