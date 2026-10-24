@@ -4,6 +4,6 @@ import Testing
 @Suite("VersionTests")
 struct VersionTests {
     @Test func testVersionIsPhaseThree() {
-        #expect(lightShotVersion == "0.3.0")
+        #expect(lightShotVersion == "0.4.0")
     }
 }
