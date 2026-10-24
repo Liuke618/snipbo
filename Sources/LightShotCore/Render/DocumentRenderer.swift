@@ -1,8 +1,13 @@
 import CoreGraphics
+import CoreImage
 import CoreText
 import Foundation
 
 public enum DocumentRenderer {
+    /// Shared CIContext for blur rendering. CIContext creation is expensive
+    /// and the instance is thread-safe.
+    private static let ciContext = CIContext(options: nil)
+
     public static func render(_ document: EditDocument) -> CGImage? {
         let imageBounds = CGRect(x: 0, y: 0, width: document.image.width, height: document.image.height)
         let crop = document.cropRect.intersection(imageBounds).integral
@@ -47,9 +52,24 @@ public enum DocumentRenderer {
         crop: CGRect,
         source: CGImage
     ) {
-        if annotation.kind == .pixelate {
+        switch annotation.kind {
+        case .pixelate:
             drawPixelate(annotation, in: context, canvasHeight: canvasHeight, crop: crop, source: source)
             return
+        case .blur:
+            drawBlur(annotation, in: context, canvasHeight: canvasHeight, crop: crop, source: source)
+            return
+        case .spotlight:
+            drawSpotlight(annotation, in: context, canvasHeight: canvasHeight, crop: crop)
+            return
+        case .counter:
+            drawCounter(annotation, in: context, canvasHeight: canvasHeight, crop: crop)
+            return
+        case .magnifier:
+            drawMagnifier(annotation, in: context, canvasHeight: canvasHeight, crop: crop, source: source)
+            return
+        default:
+            break
         }
 
         switch annotation.geometry {
@@ -92,6 +112,9 @@ public enum DocumentRenderer {
             context.strokePath()
         case .text:
             drawText(annotation, in: context, canvasHeight: canvasHeight, crop: crop)
+        case .badge, .lens:
+            // Handled by the kind switch above; nothing to draw generically.
+            break
         }
     }
 
@@ -155,6 +178,128 @@ public enum DocumentRenderer {
         context.interpolationQuality = .none
         context.draw(smallImage, in: cgRect)
         context.restoreGState()
+    }
+
+    /// Gaussian blur of the region, taken from the base image so the blur
+    /// never samples annotations drawn beneath it in an unexpected state.
+    private static func drawBlur(
+        _ annotation: Annotation,
+        in context: CGContext,
+        canvasHeight: CGFloat,
+        crop: CGRect,
+        source: CGImage
+    ) {
+        guard case .rect(let rect) = annotation.geometry else { return }
+        let imageBounds = CGRect(x: 0, y: 0, width: source.width, height: source.height)
+        let pixelRect = rect.intersection(imageBounds).integral
+        guard pixelRect.width >= 1, pixelRect.height >= 1,
+              let sourceCrop = source.cropping(to: pixelRect) else { return }
+
+        let radius = Double(max(2, annotation.style.pixelBlockSize))
+        guard let filter = CIFilter(name: "CIGaussianBlur") else { return }
+        filter.setValue(CIImage(cgImage: sourceCrop).clampedToExtent(), forKey: kCIInputImageKey)
+        filter.setValue(radius, forKey: kCIInputRadiusKey)
+        guard let output = filter.outputImage,
+              let blurred = ciContext.createCGImage(
+                output,
+                from: CGRect(x: 0, y: 0, width: pixelRect.width, height: pixelRect.height)
+              ) else { return }
+
+        let cgRect = convert(pixelRect, canvasHeight: canvasHeight, crop: crop)
+        context.saveGState()
+        context.interpolationQuality = .high
+        context.draw(blurred, in: cgRect)
+        context.restoreGState()
+    }
+
+    /// Dims the whole canvas except the ellipse inscribed in the rect.
+    private static func drawSpotlight(
+        _ annotation: Annotation,
+        in context: CGContext,
+        canvasHeight: CGFloat,
+        crop: CGRect
+    ) {
+        guard case .rect(let rect) = annotation.geometry else { return }
+        let cgRect = convert(rect, canvasHeight: canvasHeight, crop: crop)
+        let canvas = CGRect(x: 0, y: 0, width: crop.width, height: canvasHeight)
+        let path = CGMutablePath()
+        path.addRect(canvas)
+        path.addEllipse(in: cgRect)
+        context.addPath(path)
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: annotation.style.opacity))
+        context.fillPath(using: .evenOdd)
+    }
+
+    /// Numbered step badge: filled circle with a white digit.
+    private static func drawCounter(
+        _ annotation: Annotation,
+        in context: CGContext,
+        canvasHeight: CGFloat,
+        crop: CGRect
+    ) {
+        guard case .badge(let center, let value) = annotation.geometry else { return }
+        let diameter = max(24, annotation.style.fontSize)
+        let cgCenter = convert(center, canvasHeight: canvasHeight, crop: crop)
+        let circle = CGRect(
+            x: cgCenter.x - diameter / 2,
+            y: cgCenter.y - diameter / 2,
+            width: diameter,
+            height: diameter
+        )
+        context.setFillColor(color(annotation.style.color))
+        context.fillEllipse(in: circle)
+
+        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, diameter * 0.62, nil)
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(red: 1, green: 1, blue: 1, alpha: 1),
+        ]
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: "\(value)", attributes: attributes))
+        var ascent: CGFloat = 0
+        let textWidth = CGFloat(CTLineGetTypographicBounds(line, &ascent, nil, nil))
+        context.textPosition = CGPoint(x: cgCenter.x - textWidth / 2, y: cgCenter.y - ascent / 2)
+        CTLineDraw(line, context)
+    }
+
+    /// Circular callout magnifying the base image around `source`.
+    private static func drawMagnifier(
+        _ annotation: Annotation,
+        in context: CGContext,
+        canvasHeight: CGFloat,
+        crop: CGRect,
+        source: CGImage
+    ) {
+        guard case .lens(let center, let sourcePoint, let radius) = annotation.geometry else { return }
+        let cgCenter = convert(center, canvasHeight: canvasHeight, crop: crop)
+        let cgSource = convert(sourcePoint, canvasHeight: canvasHeight, crop: crop)
+        let circle = CGRect(
+            x: cgCenter.x - radius,
+            y: cgCenter.y - radius,
+            width: radius * 2,
+            height: radius * 2
+        )
+        guard circle.width >= 4 else { return }
+
+        let zoom: CGFloat = 2
+        context.saveGState()
+        context.addEllipse(in: circle)
+        context.clip()
+        context.translateBy(x: cgCenter.x, y: cgCenter.y)
+        context.scaleBy(x: zoom, y: zoom)
+        context.translateBy(x: -cgSource.x, y: -cgSource.y)
+        let imageOrigin = CGPoint(
+            x: -crop.minX,
+            y: crop.maxY - CGFloat(source.height)
+        )
+        context.draw(
+            source,
+            in: CGRect(origin: imageOrigin, size: CGSize(width: source.width, height: source.height))
+        )
+        context.restoreGState()
+
+        context.setStrokeColor(color(annotation.style.color))
+        context.setLineWidth(max(1, annotation.style.lineWidth))
+        context.strokeEllipse(in: circle)
     }
 
     private static func drawArrowHead(

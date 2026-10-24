@@ -19,6 +19,8 @@ final class EditorController {
     private(set) var selectedID: UUID?
     private(set) var draft: Annotation?
     private(set) var cropDraft: CGRect?
+    /// Step number handed to the next counter badge.
+    private var counterValue = 0
 
     private var startPoint: CGPoint?
     private var freehandPoints: [CGPoint] = []
@@ -51,13 +53,36 @@ final class EditorController {
             } else {
                 selectedID = nil
             }
-        case .arrow, .rectangle, .ellipse, .line, .highlight, .pixelate:
+        case .arrow, .rectangle, .ellipse, .line, .highlight, .pixelate, .blur, .spotlight:
             startPoint = point
             draft = makeAnnotation(from: point, to: point)
         case .freehand:
             startPoint = point
             freehandPoints = [point]
             draft = Annotation(kind: .freehand, geometry: .path(points: [point]), style: style, zIndex: nextZIndex)
+        case .counter:
+            // Click places a badge with the next step number; no drag.
+            counterValue += 1
+            history.record(document.state)
+            document.annotations.append(Annotation(
+                kind: .counter,
+                geometry: .badge(center: point, value: counterValue),
+                style: style,
+                zIndex: nextZIndex
+            ))
+            changed()
+            return
+        case .magnifier:
+            // Click places a lens that magnifies the image around itself.
+            history.record(document.state)
+            document.annotations.append(Annotation(
+                kind: .magnifier,
+                geometry: .lens(center: point, source: point, radius: max(40, style.fontSize * 1.6)),
+                style: style,
+                zIndex: nextZIndex
+            ))
+            changed()
+            return
         case .crop:
             startPoint = point
             cropDraft = CGRect(origin: point, size: .zero)
@@ -88,7 +113,7 @@ final class EditorController {
             draft?.geometry = .path(points: freehandPoints)
         case .crop:
             cropDraft = normalizedRect(from: startPoint, to: point)
-        case .arrow, .rectangle, .ellipse, .line, .highlight, .pixelate:
+        case .arrow, .rectangle, .ellipse, .line, .highlight, .pixelate, .blur, .spotlight:
             draft = makeAnnotation(from: startPoint, to: point)
         default:
             break
@@ -183,9 +208,22 @@ final class EditorController {
 
     private func makeAnnotation(from start: CGPoint, to end: CGPoint) -> Annotation {
         switch tool {
-        case .rectangle, .ellipse, .pixelate:
-            let kind: AnnotationKind = tool == .ellipse ? .ellipse : (tool == .pixelate ? .pixelate : .rectangle)
-            return Annotation(kind: kind, geometry: .rect(normalizedRect(from: start, to: end)), style: style, zIndex: nextZIndex)
+        case .rectangle, .ellipse, .pixelate, .blur, .spotlight:
+            let kind: AnnotationKind
+            switch tool {
+            case .ellipse: kind = .ellipse
+            case .pixelate: kind = .pixelate
+            case .blur: kind = .blur
+            case .spotlight: kind = .spotlight
+            default: kind = .rectangle
+            }
+            var effectStyle = style
+            // A full-black spotlight would hide everything; default to a
+            // moderate dim unless the user already lowered the opacity.
+            if tool == .spotlight, effectStyle.opacity >= 1 {
+                effectStyle.opacity = 0.55
+            }
+            return Annotation(kind: kind, geometry: .rect(normalizedRect(from: start, to: end)), style: effectStyle, zIndex: nextZIndex)
         case .arrow:
             return Annotation(kind: .arrow, geometry: .line(start: start, end: end), style: style, zIndex: nextZIndex)
         case .line:
@@ -220,6 +258,9 @@ final class EditorController {
             return points.count >= 2
         case .text(_, _, let value):
             return !value.isEmpty
+        case .badge, .lens:
+            // Committed directly on click; always usable.
+            return true
         }
     }
 
@@ -236,6 +277,16 @@ final class EditorController {
             return .path(points: points.map { CGPoint(x: $0.x + delta.x, y: $0.y + delta.y) })
         case .text(let origin, let width, let value):
             return .text(origin: CGPoint(x: origin.x + delta.x, y: origin.y + delta.y), width: width, value: value)
+        case .badge(let center, let value):
+            return .badge(center: CGPoint(x: center.x + delta.x, y: center.y + delta.y), value: value)
+        case .lens(let center, let source, let radius):
+            // Moving the lens slides the callout; the magnified source point
+            // stays fixed so the lens keeps showing the same content.
+            return .lens(
+                center: CGPoint(x: center.x + delta.x, y: center.y + delta.y),
+                source: source,
+                radius: radius
+            )
         }
     }
 

@@ -139,6 +139,11 @@ final class EditorCanvasView: NSView {
                 width: width,
                 height: annotation.style.fontSize * 1.4
             )
+        case .badge(let center, _):
+            let diameter = max(24, annotation.style.fontSize)
+            geometryBounds = CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter)
+        case .lens(let center, _, let radius):
+            geometryBounds = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
         }
         return geometryBounds
     }

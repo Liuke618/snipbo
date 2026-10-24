@@ -22,6 +22,7 @@ public struct RGBA: Codable, Equatable, Sendable {
 
 public enum AnnotationKind: String, Codable, Sendable {
     case arrow, rectangle, ellipse, line, freehand, highlight, text, pixelate
+    case blur, spotlight, counter, magnifier
 }
 
 public enum AnnotationGeometry: Codable, Equatable, Sendable {
@@ -29,6 +30,12 @@ public enum AnnotationGeometry: Codable, Equatable, Sendable {
     case line(start: CGPoint, end: CGPoint)
     case path(points: [CGPoint])
     case text(origin: CGPoint, width: CGFloat, value: String)
+    /// Step-counter badge: the numbered circle's center. `value` is the step
+    /// number assigned when the badge was placed.
+    case badge(center: CGPoint, value: Int)
+    /// Magnifier callout: the lens is drawn at `center`, magnifying the image
+    /// around `source`.
+    case lens(center: CGPoint, source: CGPoint, radius: CGFloat)
 }
 
 public struct AnnotationStyle: Codable, Equatable, Sendable {

@@ -34,6 +34,16 @@ public enum AnnotationHitTester {
                 height: annotation.style.fontSize * 1.4
             )
             return rect.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
+        case .badge(let center, _):
+            let diameter = max(24, annotation.style.fontSize)
+            return CGRect(
+                x: center.x - diameter / 2 - tolerance,
+                y: center.y - diameter / 2 - tolerance,
+                width: diameter + tolerance * 2,
+                height: diameter + tolerance * 2
+            ).contains(point)
+        case .lens(let center, _, let radius):
+            return hypot(point.x - center.x, point.y - center.y) <= radius + tolerance
         }
     }
 
