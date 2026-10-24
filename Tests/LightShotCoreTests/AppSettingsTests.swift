@@ -94,4 +94,48 @@ struct AppSettingsTests {
         settings.scrollMaxHeight = 999_999
         #expect(settings.normalized().scrollMaxHeight == 100_000)
     }
+
+    @Test func testAfterCaptureDefaults() {
+        let settings = AppSettings.default
+        #expect(settings.afterCaptureCopy)
+        #expect(!settings.afterCaptureSave)
+    }
+
+    @Test func testAfterCaptureRoundTripAndLegacyDecode() throws {
+        var settings = AppSettings.default
+        settings.afterCaptureCopy = false
+        settings.afterCaptureSave = true
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(!decoded.afterCaptureCopy)
+        #expect(decoded.afterCaptureSave)
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        object.removeValue(forKey: "afterCaptureCopy")
+        object.removeValue(forKey: "afterCaptureSave")
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(legacy.afterCaptureCopy == AppSettings.default.afterCaptureCopy)
+        #expect(legacy.afterCaptureSave == AppSettings.default.afterCaptureSave)
+    }
+
+    @Test func testAfterCaptureNormalizationNeverDiscardsDirectCaptures() {
+        // With the editor off, a capture must always go somewhere.
+        var settings = AppSettings.default
+        settings.openEditorAfterCapture = false
+        settings.afterCaptureCopy = false
+        settings.afterCaptureSave = false
+        let normalized = settings.normalized()
+        #expect(normalized.afterCaptureCopy)
+
+        // With the editor on the toggles are inert, so both-off is allowed.
+        settings.openEditorAfterCapture = true
+        let editorOn = settings.normalized()
+        #expect(!editorOn.afterCaptureCopy)
+        #expect(!editorOn.afterCaptureSave)
+    }
 }

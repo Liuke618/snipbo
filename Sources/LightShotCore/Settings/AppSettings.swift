@@ -26,6 +26,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var ocrLanguages: [String]
     /// Height cap in pixels for a stitched scrolling capture.
     public var scrollMaxHeight: Int
+    /// Applied when the editor does not open: copy the capture to the
+    /// clipboard immediately.
+    public var afterCaptureCopy: Bool
+    /// Applied when the editor does not open: save the capture to the save
+    /// directory immediately.
+    public var afterCaptureSave: Bool
 
     private enum CodingKeys: String, CodingKey {
         case hotkey
@@ -40,6 +46,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case captureDelaySeconds
         case ocrLanguages
         case scrollMaxHeight
+        case afterCaptureCopy
+        case afterCaptureSave
     }
 
     public init(
@@ -54,7 +62,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
         captureCursor: Bool,
         captureDelaySeconds: Int = 3,
         ocrLanguages: [String] = AppSettings.defaultOCRLanguages,
-        scrollMaxHeight: Int = 20_000
+        scrollMaxHeight: Int = 20_000,
+        afterCaptureCopy: Bool = true,
+        afterCaptureSave: Bool = false
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -68,6 +78,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.captureDelaySeconds = captureDelaySeconds
         self.ocrLanguages = ocrLanguages
         self.scrollMaxHeight = scrollMaxHeight
+        self.afterCaptureCopy = afterCaptureCopy
+        self.afterCaptureSave = afterCaptureSave
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -88,6 +100,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ocrLanguages = try container.decodeIfPresent([String].self, forKey: .ocrLanguages) ?? fallback.ocrLanguages
         scrollMaxHeight = try container.decodeIfPresent(Int.self, forKey: .scrollMaxHeight)
             ?? fallback.scrollMaxHeight
+        afterCaptureCopy = try container.decodeIfPresent(Bool.self, forKey: .afterCaptureCopy)
+            ?? fallback.afterCaptureCopy
+        afterCaptureSave = try container.decodeIfPresent(Bool.self, forKey: .afterCaptureSave)
+            ?? fallback.afterCaptureSave
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -107,7 +123,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
         captureCursor: false,
         captureDelaySeconds: 3,
         ocrLanguages: AppSettings.defaultOCRLanguages,
-        scrollMaxHeight: 20_000
+        scrollMaxHeight: 20_000,
+        afterCaptureCopy: true,
+        afterCaptureSave: false
     )
 
     public func normalized() -> AppSettings {
@@ -117,6 +135,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         copy.historyMaxBytes = min(10 * 1024 * 1024 * 1024, max(10 * 1024 * 1024, historyMaxBytes))
         copy.captureDelaySeconds = min(30, max(0, captureDelaySeconds))
         copy.scrollMaxHeight = min(100_000, max(1_000, scrollMaxHeight))
+        // A direct capture (editor off) must never be silently discarded.
+        if !copy.openEditorAfterCapture, !copy.afterCaptureCopy, !copy.afterCaptureSave {
+            copy.afterCaptureCopy = true
+        }
         if copy.saveDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             copy.saveDirectory = Self.defaultSaveDirectory
         }

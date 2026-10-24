@@ -599,15 +599,33 @@ final class CaptureCoordinator {
             return
         }
 
-        guard let data = ImageExporter.pngData(from: image) else {
-            NSSound.beep()
-            return
-        }
-        // Encode before touching the pasteboard, then write with rollback so a
-        // rejected write leaves the previous clipboard contents in place and
-        // never records a screenshot that was not copied.
-        guard PasteboardWriter.writePNG(data, to: pasteboardProvider()) else {
-            logger.error("Failed to copy the captured screenshot to the pasteboard")
+        // Direct path: copy and/or save per settings. Normalization guarantees
+        // at least one of the two is enabled when the editor is off.
+        do {
+            if settings.afterCaptureCopy {
+                guard let data = ImageExporter.pngData(from: image) else {
+                    NSSound.beep()
+                    return
+                }
+                // Encode before touching the pasteboard, then write with rollback
+                // so a rejected write leaves the previous clipboard contents in
+                // place and never records a screenshot that was not copied.
+                guard PasteboardWriter.writePNG(data, to: pasteboardProvider()) else {
+                    logger.error("Failed to copy the captured screenshot to the pasteboard")
+                    NSSound.beep()
+                    return
+                }
+            }
+            if settings.afterCaptureSave {
+                try CaptureFileSaver.write(
+                    image,
+                    format: settings.format,
+                    quality: settings.jpegQuality,
+                    directory: settings.saveDirectory
+                )
+            }
+        } catch {
+            logger.error("Failed to save the captured screenshot: \(error.localizedDescription)")
             NSSound.beep()
             return
         }

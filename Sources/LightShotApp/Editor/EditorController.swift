@@ -274,10 +274,6 @@ extension EditorController {
     }
 
     func defaultFileName(format: ImageFormat) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
-        let ext = format == .png ? "png" : "jpg"
-        return "LightShot-\(formatter.string(from: Date())).\(ext)"
+        CaptureFileSaver.defaultFileName(format: format)
     }
 }

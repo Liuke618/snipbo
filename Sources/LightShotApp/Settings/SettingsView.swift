@@ -70,8 +70,14 @@ struct SettingsView: View {
                 }
 
                 SettingsRow("After capture", labelWidth: labelWidth) {
-                    Toggle("Open editor", isOn: $model.settings.openEditorAfterCapture)
-                        .toggleStyle(.checkbox)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("Open editor", isOn: $model.settings.openEditorAfterCapture)
+                            .toggleStyle(.checkbox)
+                        Toggle("Copy to clipboard", isOn: $model.settings.afterCaptureCopy)
+                            .toggleStyle(.checkbox)
+                        Toggle("Save to folder", isOn: $model.settings.afterCaptureSave)
+                            .toggleStyle(.checkbox)
+                    }
                 }
 
                 SettingsRow("Countdown", labelWidth: labelWidth) {
