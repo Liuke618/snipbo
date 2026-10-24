@@ -67,12 +67,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         )
         self.toolbarView = toolbar
         window.title = "LightShot"
-        // Shottr-style: the toolbar lives in the title bar as accessories, so
-        // the canvas gets the full window body.
-        window.toolbarStyle = .unified
-        window.titleVisibility = .hidden
-        window.addTitlebarAccessoryViewController(toolbar.leadingAccessory)
-        window.addTitlebarAccessoryViewController(toolbar.trailingAccessory)
         window.center()
         window.delegate = self
         controller.canvas = canvas
@@ -81,26 +75,40 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         canvas.onFit = { [weak self] in self?.fitToWindow() }
         canvas.onActualSize = { [weak self] in self?.canvas.setZoom(1) }
 
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasHorizontalScroller = true
         scrollView.hasVerticalScroller = true
         scrollView.documentView = canvas
 
         let body = bodyView
-        body.translatesAutoresizingMaskIntoConstraints = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         recognitionPanel.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
         body.addSubview(scrollView)
+        body.addSubview(toolbar)
 
         scrollTrailingConstraint = scrollView.trailingAnchor.constraint(equalTo: body.trailingAnchor)
         NSLayoutConstraint.activate([
+            toolbar.leadingAnchor.constraint(equalTo: body.leadingAnchor),
+            toolbar.trailingAnchor.constraint(equalTo: body.trailingAnchor),
+            toolbar.topAnchor.constraint(equalTo: body.topAnchor),
+            toolbar.heightAnchor.constraint(equalToConstant: EditorToolbarView.height),
             scrollView.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-            scrollView.topAnchor.constraint(equalTo: body.topAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: body.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: body.bottomAnchor),
             scrollTrailingConstraint,
         ])
 
-        window.contentView = body
+        let contentView = NSView(frame: .zero)
+        body.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(body)
+        window.contentView = contentView
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            body.topAnchor.constraint(equalTo: contentView.topAnchor),
+            body.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
         refreshReadouts()
         // Cmd+C copies without closing; Enter and the toolbar Copy button copy
         // and close.

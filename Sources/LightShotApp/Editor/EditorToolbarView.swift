@@ -13,14 +13,12 @@ extension NSColor {
     }
 }
 
-/// Shottr-style editor toolbar that lives in the window's title bar as two
-/// accessories: leading (copy / save / pin + the tool segments) and trailing
-/// (recognize, undo/redo, color, width, and live size/zoom readouts).
+/// Shottr-style editor toolbar pinned to the top of a full-size-content
+/// window: actions and tools on the left, recognize/undo/redo/color and the
+/// live size/zoom readouts on the right. The bar drags the window; the canvas
+/// below does not.
 @MainActor
-final class EditorToolbarView: NSObject {
-    let leadingAccessory: NSTitlebarAccessoryViewController
-    let trailingAccessory: NSTitlebarAccessoryViewController
-
+final class EditorToolbarView: NSView {
     /// Image-based tool segments when all Lucide icons loaded; otherwise the
     /// label-based fallback (unbundled harness contexts).
     private let segmented: NSSegmentedControl
@@ -32,8 +30,8 @@ final class EditorToolbarView: NSObject {
     private let saveButton = NSButton()
     private let undoButton = NSButton()
     private let redoButton = NSButton()
-    private let sizeLabel = NSTextField(labelWithString: "")
-    private let zoomLabel = NSTextField(labelWithString: "")
+    private let sizeLabel = NSTextField(labelWithString: "0×0 px")
+    private let zoomLabel = NSTextField(labelWithString: "100%")
 
     /// Loads a bundled Lucide SVG as a monochrome template image.
     private static func icon(_ name: String, size: CGFloat = 16) -> NSImage? {
@@ -56,6 +54,9 @@ final class EditorToolbarView: NSObject {
     private let onPin: () -> Void
     private let onCopy: () -> Void
     private let onSave: () -> Void
+
+    /// Height of the toolbar strip; the window's content sits below it.
+    static let height: CGFloat = 36
 
     init(
         onTool: @escaping (EditorTool) -> Void,
@@ -95,6 +96,8 @@ final class EditorToolbarView: NSObject {
         }
         segmented = control
 
+        super.init(frame: NSRect(x: 0, y: 0, width: 800, height: Self.height))
+
         for button in [recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton] {
             button.imagePosition = .imageOnly
             button.isBordered = false
@@ -123,32 +126,6 @@ final class EditorToolbarView: NSObject {
             label.textColor = .secondaryLabelColor
         }
 
-        let leading = NSStackView(views: [
-            copyButton, saveButton, pinButton, Self.separator(), segmented,
-        ])
-        leading.orientation = .horizontal
-        leading.spacing = 6
-        leading.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 4)
-
-        let trailing = NSStackView(views: [
-            recognizeButton, undoButton, redoButton, Self.separator(),
-            colorWell, widthSlider, sizeLabel, zoomLabel,
-        ])
-        trailing.orientation = .horizontal
-        trailing.spacing = 6
-        trailing.edgeInsets = NSEdgeInsets(top: 0, left: 4, bottom: 0, right: 8)
-
-        let leadingVC = NSTitlebarAccessoryViewController()
-        leadingVC.view = leading
-        leadingVC.layoutAttribute = .leading
-        let trailingVC = NSTitlebarAccessoryViewController()
-        trailingVC.view = trailing
-        trailingVC.layoutAttribute = .trailing
-        leadingAccessory = leadingVC
-        trailingAccessory = trailingVC
-
-        super.init()
-
         for control in [segmented, colorWell, widthSlider, recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton] {
             control.controlSize = .small
         }
@@ -172,10 +149,51 @@ final class EditorToolbarView: NSObject {
         redoButton.target = self
         redoButton.action = #selector(redo)
 
-        widthSlider.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+        // Leading: window actions + tools. Trailing: recognize, undo/redo,
+        // color, width, and the readouts. The spacer stretches so the trailing
+        // group hugs the right edge at any window width.
+        let leading = NSStackView(views: [
+            copyButton, saveButton, pinButton, Self.separator(), segmented,
+        ])
+        leading.orientation = .horizontal
+        leading.spacing = 6
+        let trailing = NSStackView(views: [
+            recognizeButton, undoButton, redoButton, Self.separator(),
+            colorWell, widthSlider, sizeLabel, zoomLabel,
+        ])
+        trailing.orientation = .horizontal
+        trailing.spacing = 6
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+
+        leading.translatesAutoresizingMaskIntoConstraints = false
+        trailing.translatesAutoresizingMaskIntoConstraints = false
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(leading)
+        addSubview(trailing)
+        addSubview(spacer)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: Self.height),
+            leading.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 76),
+            leading.centerYAnchor.constraint(equalTo: centerYAnchor),
+            trailing.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            trailing.centerYAnchor.constraint(equalTo: centerYAnchor),
+            spacer.leadingAnchor.constraint(equalTo: leading.trailingAnchor, constant: 10),
+            spacer.trailingAnchor.constraint(equalTo: trailing.leadingAnchor, constant: -10),
+            spacer.centerYAnchor.constraint(equalTo: centerYAnchor),
+            spacer.heightAnchor.constraint(equalToConstant: 1),
+            widthSlider.widthAnchor.constraint(equalToConstant: 80),
+        ])
     }
 
-    /// Thin vertical separator for the title-bar stacks.
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// Thin vertical separator for the toolbar groups.
     private static func separator() -> NSView {
         let box = NSBox()
         box.boxType = .separator
