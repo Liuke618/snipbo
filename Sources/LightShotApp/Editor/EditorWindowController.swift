@@ -269,7 +269,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             reportCopyFailure()
             return false
         }
-        HistoryRecorder.record(image, source: .region, settings: settings, history: history)
+        // No history record here: the capture was recorded on delivery, and
+        // re-recording the rendered copy would duplicate the entry.
         return true
     }
 
@@ -309,7 +310,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         }
         do {
             try controller.write(image, to: url, format: settings.format, quality: settings.jpegQuality)
-            HistoryRecorder.record(image, source: .region, settings: settings, history: history)
             close()
         } catch {
             NSAlert(error: error).runModal()

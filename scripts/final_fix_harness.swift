@@ -139,24 +139,33 @@ struct FinalFixHarness {
         let first = coordinator.editors[0]
         let second = coordinator.editors[1]
         reporter.check(first !== second, "capture editors are distinct instances")
+
+        // Delivery-time history (Shottr-style): captures delivered while
+        // history is disabled record nothing.
+        reporter.check(
+            await store.entries().isEmpty,
+            "captures delivered with history off record nothing"
+        )
+
+        // Enabling history applies from the next delivery onward.
         settings.historyEnabled = true
         coordinator.updateSettings(settings)
         reporter.check(
             first.copyToPasteboard(),
             "the first editor still handles actions after the second capture"
         )
-        let copied = await waitUntil { await store.entries().count == 1 }
-        reporter.check(
-            copied,
-            "an open editor records history when it is enabled at action time"
-        )
+        coordinator.complete(capture: capture, rect: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let recorded = await waitUntil { await store.entries().count == 1 }
+        reporter.check(recorded, "enabling history records the next delivered capture")
+
+        // The editor's own copy/save must not duplicate the delivered entry.
         settings.historyEnabled = false
         coordinator.updateSettings(settings)
         _ = first.copyToPasteboard()
         try await Task.sleep(nanoseconds: 200_000_000)
         reporter.check(
             await store.entries().count == 1,
-            "turning history off stops an open editor from recording"
+            "copying with history off adds no second entry"
         )
 
         // The editor must read settings at action time, not from a snapshot.
@@ -168,9 +177,11 @@ struct FinalFixHarness {
         )
 
         first.close()
+        let third = coordinator.editors[1]
+        third.close()
         reporter.check(
             coordinator.editors.count == 1 && coordinator.editors[0] === second,
-            "closing one editor keeps the other retained"
+            "closing two editors keeps the last one retained"
         )
         second.close()
         reporter.check(
@@ -215,15 +226,17 @@ struct FinalFixHarness {
             "a failed direct copy restores the previous clipboard contents"
         )
         try await Task.sleep(nanoseconds: 200_000_000)
+        // The clipboard write failed, but the capture itself still happened
+        // and is recorded (Shottr-style) so it can be re-copied later.
         reporter.check(
-            await store.entries().isEmpty,
-            "a failed direct copy records no history entry"
+            await store.entries().count == 1,
+            "a failed direct copy still records the capture"
         )
 
         pasteboard.setDataSucceeds = true
         coordinator.complete(capture: capture, rect: CGRect(x: 0, y: 0, width: 100, height: 100))
-        let recorded = await waitUntil { await !store.entries().isEmpty }
-        reporter.check(recorded, "a successful direct copy records history")
+        let recorded = await waitUntil { await store.entries().count == 2 }
+        reporter.check(recorded, "the second delivered capture records history too")
     }
 
     // MARK: - Option+arrow boundary resizing

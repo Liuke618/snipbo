@@ -596,6 +596,10 @@ final class CaptureCoordinator {
         let image = settings.retinaDownscale && backingScale > 1
             ? ImageExporter.downscaled(image, by: 1 / backingScale)
             : image
+        // Shottr-style: every capture lands in history as soon as it is
+        // delivered — saving or copying is optional, and the editor's later
+        // copy/save must not duplicate the entry.
+        HistoryRecorder.record(image, source: source, settings: settings, history: history)
         if settings.openEditorAfterCapture {
             let identifier = UUID()
             let editor = EditorWindowController(
@@ -646,7 +650,6 @@ final class CaptureCoordinator {
             NSSound.beep()
             return
         }
-        HistoryRecorder.record(image, source: source, settings: settings, history: history)
     }
 
     private func fail(_ error: Error) {

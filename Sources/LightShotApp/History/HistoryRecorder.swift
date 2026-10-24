@@ -16,7 +16,7 @@ extension Notification.Name {
     static let lightShotHistoryWriteFailed = Notification.Name("lightShotHistoryWriteFailed")
 }
 
-/// Records history entries for images the user just copied or saved.
+/// Records history entries for delivered captures.
 ///
 /// Centralizes the "Keep history" check so every capture path honors the user
 /// setting and no call site has to remember to gate the asynchronous write.
