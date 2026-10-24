@@ -66,4 +66,32 @@ struct AppSettingsTests {
         settings.ocrLanguages = []
         #expect(settings.normalized().ocrLanguages == AppSettings.defaultOCRLanguages)
     }
+
+    @Test func testScrollMaxHeightDefaultAndRoundTrip() throws {
+        #expect(AppSettings.default.scrollMaxHeight == 20_000)
+        var settings = AppSettings.default
+        settings.scrollMaxHeight = 42_000
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(decoded.scrollMaxHeight == 42_000)
+    }
+
+    @Test func testLegacyPayloadWithoutScrollMaxHeightUsesDefault() throws {
+        let current = try JSONEncoder().encode(AppSettings.default)
+        var object = try #require(
+            JSONSerialization.jsonObject(with: current) as? [String: Any]
+        )
+        object.removeValue(forKey: "scrollMaxHeight")
+        let legacy = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: legacy)
+        #expect(decoded.scrollMaxHeight == 20_000)
+    }
+
+    @Test func testScrollMaxHeightNormalizationClamps() {
+        var settings = AppSettings.default
+        settings.scrollMaxHeight = 1
+        #expect(settings.normalized().scrollMaxHeight == 1_000)
+        settings.scrollMaxHeight = 999_999
+        #expect(settings.normalized().scrollMaxHeight == 100_000)
+    }
 }

@@ -82,6 +82,15 @@ struct SettingsView: View {
                     )
                 }
 
+                SettingsRow("Scroll height", labelWidth: labelWidth) {
+                    Stepper(
+                        "\(model.settings.scrollMaxHeight) px",
+                        value: $model.settings.scrollMaxHeight,
+                        in: 1_000...100_000,
+                        step: 1_000
+                    )
+                }
+
             }
 
             groupDivider

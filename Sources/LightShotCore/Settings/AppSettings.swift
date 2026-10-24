@@ -24,6 +24,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var captureDelaySeconds: Int
     /// Ordered languages for `VNRecognizeTextRequest`.
     public var ocrLanguages: [String]
+    /// Height cap in pixels for a stitched scrolling capture.
+    public var scrollMaxHeight: Int
 
     private enum CodingKeys: String, CodingKey {
         case hotkey
@@ -37,6 +39,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case captureCursor
         case captureDelaySeconds
         case ocrLanguages
+        case scrollMaxHeight
     }
 
     public init(
@@ -50,7 +53,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         historyMaxBytes: Int64,
         captureCursor: Bool,
         captureDelaySeconds: Int = 3,
-        ocrLanguages: [String] = AppSettings.defaultOCRLanguages
+        ocrLanguages: [String] = AppSettings.defaultOCRLanguages,
+        scrollMaxHeight: Int = 20_000
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -63,6 +67,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.captureCursor = captureCursor
         self.captureDelaySeconds = captureDelaySeconds
         self.ocrLanguages = ocrLanguages
+        self.scrollMaxHeight = scrollMaxHeight
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -81,6 +86,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         captureCursor = try container.decodeIfPresent(Bool.self, forKey: .captureCursor) ?? fallback.captureCursor
         captureDelaySeconds = try container.decodeIfPresent(Int.self, forKey: .captureDelaySeconds) ?? fallback.captureDelaySeconds
         ocrLanguages = try container.decodeIfPresent([String].self, forKey: .ocrLanguages) ?? fallback.ocrLanguages
+        scrollMaxHeight = try container.decodeIfPresent(Int.self, forKey: .scrollMaxHeight)
+            ?? fallback.scrollMaxHeight
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -99,7 +106,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         historyMaxBytes: 500 * 1024 * 1024,
         captureCursor: false,
         captureDelaySeconds: 3,
-        ocrLanguages: AppSettings.defaultOCRLanguages
+        ocrLanguages: AppSettings.defaultOCRLanguages,
+        scrollMaxHeight: 20_000
     )
 
     public func normalized() -> AppSettings {
@@ -108,6 +116,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         copy.historyMaxItems = min(1000, max(1, historyMaxItems))
         copy.historyMaxBytes = min(10 * 1024 * 1024 * 1024, max(10 * 1024 * 1024, historyMaxBytes))
         copy.captureDelaySeconds = min(30, max(0, captureDelaySeconds))
+        copy.scrollMaxHeight = min(100_000, max(1_000, scrollMaxHeight))
         if copy.saveDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             copy.saveDirectory = Self.defaultSaveDirectory
         }
