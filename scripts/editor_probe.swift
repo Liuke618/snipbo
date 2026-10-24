@@ -46,11 +46,24 @@ struct EditorProbe {
         runTicks(10)
         if let window = editor.window {
             let content = window.contentView!.frame.size
-            let expectedWidth = min(max(480, 2022), screen.width * 0.9)
-            let expectedHeight = min(max(320, 5175), screen.height * 0.9) + 36
-            check("large: content sized to image (capped 90%)",
-                  abs(content.width - expectedWidth) < 2 && abs(content.height - expectedHeight) < 2,
-                  "got \(Int(content.width))x\(Int(content.height)), want \(Int(expectedWidth))x\(Int(expectedHeight))")
+            // The window hugs the image's displayed size: fit into 90% of the
+            // screen first, floored at 640 pt — but never narrower than the
+            // toolbar's intrinsic width, which the probe binary inflates
+            // (labels instead of bundled icons).
+            let fitZoom = min(screen.width * 0.9 / 2022, screen.height * 0.9 / 5175, 1)
+            // Measure the toolbar floor with the real readout strings — the
+            // size label ("2022×5175 px") is much wider than the placeholder.
+            let probeToolbar = EditorToolbarView(
+                onTool: { _ in }, onUndo: {}, onRedo: {}, onColor: { _ in }, onWidth: { _ in },
+                onRecognize: {}, onPin: {}, onCopy: {}, onSave: {}
+            )
+            probeToolbar.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: fitZoom)
+            let toolbarFloor = probeToolbar.fittingSize.width
+            let expectedWidth = min(max(640, 2022 * fitZoom, toolbarFloor), screen.width * 0.9)
+            let expectedHeight = min(max(320, 5175 * fitZoom), screen.height * 0.9) + 36
+            check("large: window hugs fitted image (toolbar floor respected)",
+                  abs(content.width - expectedWidth) <= 8 && abs(content.height - expectedHeight) < 2,
+                  "got \(Int(content.width))x\(Int(content.height)), want \(Int(expectedWidth))x\(Int(expectedHeight)) (toolbar floor \(Int(toolbarFloor)))")
             check("large: window fits the screen",
                   window.frame.width <= screen.width && window.frame.height <= screen.height + 2,
                   "frame \(window.frame), screen \(screen)")

@@ -155,17 +155,26 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         window?.makeFirstResponder(canvas)
     }
 
-    /// Opens the window at the image's size plus the toolbar strip, capped to
-    /// 90% of the screen and centered, so small captures open 1:1 and large
-    /// ones fill most of the screen instead of a fixed 1000×720 frame.
+    /// Opens the window hugging the capture's displayed size: the image is
+    /// first fit into 90% of the screen, then the window takes exactly that
+    /// fitted size (floored at a usable editor width) and centers on screen.
+    /// The screenshot therefore fills the editor instead of floating in a
+    /// large empty mat; small captures still open 1:1.
     private func sizeWindowToFitImage() {
         guard let window else { return }
         let crop = controller.document.cropRect
         guard crop.width > 1, crop.height > 1 else { return }
         let visible = (window.screen ?? NSScreen.main)?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let width = min(max(480, crop.width), visible.width * 0.9)
-        let height = min(max(320, crop.height), visible.height * 0.9) + EditorToolbarView.height
+        let maxContentWidth = visible.width * 0.9
+        let maxScrollHeight = visible.height * 0.9
+        let fitZoom = min(
+            maxContentWidth / crop.width,
+            maxScrollHeight / crop.height,
+            1
+        )
+        let width = min(max(640, crop.width * fitZoom), maxContentWidth)
+        let height = min(max(320, crop.height * fitZoom), maxScrollHeight) + EditorToolbarView.height
         window.setContentSize(NSSize(width: width, height: height))
         window.center()
     }
