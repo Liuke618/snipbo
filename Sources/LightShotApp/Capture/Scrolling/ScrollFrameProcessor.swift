@@ -129,6 +129,7 @@ final class ScrollFrameProcessor: @unchecked Sendable {
                 return
             }
             composite = initial.image
+            ScrollDebugLog.log("first frame composited: \(initial.image.width)x\(initial.image.height), effectiveMax=\(effectiveMaxHeight)")
             report(initial.image.height)
             if initial.reachedLimit {
                 reason = .limitReached
@@ -154,6 +155,7 @@ final class ScrollFrameProcessor: @unchecked Sendable {
                 previous: ImageData(strip),
                 current: frame
             )
+            ScrollDebugLog.log("reg: stripH=\(stripHeight) frameH=\(image.height) ty=\(registration.translationY) conf=\(registration.confidence)")
             guard registration.confidence >= 0.2 else {
                 reason = .lowConfidence
                 finish(.success(ScrollingCaptureResult(image: current, reason: .lowConfidence)))
@@ -169,11 +171,10 @@ final class ScrollFrameProcessor: @unchecked Sendable {
                 offset: skip,
                 maxHeight: effectiveMaxHeight
             ) else {
-                // No movement, an upward scroll, or an implausible jump:
-                // nothing trustworthy to append; the next frame registers
-                // against the same frontier.
+                ScrollDebugLog.log("skip: ty=\(registration.translationY) stripH=\(stripHeight)")
                 return
             }
+            ScrollDebugLog.log("append: skip=\(skip) newH=\(stitched.image.height)")
             composite = stitched.image
             appended = true
             report(stitched.image.height)

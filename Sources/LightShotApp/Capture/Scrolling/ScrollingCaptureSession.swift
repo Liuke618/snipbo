@@ -50,8 +50,10 @@ final class ScrollingCaptureSession: @unchecked Sendable {
     private let stateQueue = DispatchQueue(label: "local.lightshot.scrolling.state")
     private let frameQueue = DispatchQueue(label: "local.lightshot.scrolling.frames")
 
-    // stateQueue-confined.
+    // stateQueue-confined. SCStream does not retain its outputs, so the
+    // output must be stored here or the frame callback deallocates.
     private var stream: SCStream?
+    private var output: ScrollStreamOutput?
     private var delegate: ScrollStreamDelegate?
     private var started = false
 
@@ -116,17 +118,20 @@ final class ScrollingCaptureSession: @unchecked Sendable {
             if !self.started {
                 self.started = true
                 self.stream = stream
+                self.output = output
                 self.delegate = delegate
                 shouldStart = true
             }
         }
         guard shouldStart else { return }
+        ScrollDebugLog.log("stream start: display=\(displayID) rect=\(rect) scale=\(backingScale) fps=\(fps)")
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: frameQueue)
         do {
             try await stream.startCapture()
         } catch {
             stateQueue.sync {
                 self.stream = nil
+                self.output = nil
                 self.delegate = nil
             }
             throw ScrollingCaptureError.streamFailed(error.localizedDescription)
@@ -137,7 +142,9 @@ final class ScrollingCaptureSession: @unchecked Sendable {
     /// in-flight frame.
     func stop() async -> ScrollingCaptureResult? {
         await stopStream()
-        return processor.stopAndWait()
+        let result = processor.stopAndWait()
+        ScrollDebugLog.log("stop: \(result.map { "reason=\($0.reason) height=\($0.image.height)" } ?? "no composite (no frames)")")
+        return result
     }
 
     func cancel() async {
@@ -156,9 +163,10 @@ final class ScrollingCaptureSession: @unchecked Sendable {
     }
 
     private func stopStream() async {
-        let stream = stateQueue.sync { () -> SCStream? in
+        let stream: SCStream? = stateQueue.sync {
             let current = self.stream
             self.stream = nil
+            self.output = nil
             self.delegate = nil
             return current
         }
@@ -170,6 +178,7 @@ final class ScrollingCaptureSession: @unchecked Sendable {
 
 private final class ScrollStreamOutput: NSObject, SCStreamOutput {
     private let onFrame: @Sendable (CGImage) -> Void
+    private var frameCount = 0
 
     init(onFrame: @escaping @Sendable (CGImage) -> Void) {
         self.onFrame = onFrame
@@ -187,7 +196,16 @@ private final class ScrollStreamOutput: NSObject, SCStreamOutput {
             pixelBuffer,
             options: nil,
             imageOut: &image
-        ) == noErr, let image else { return }
+        ) == noErr, let image else {
+            ScrollDebugLog.log("frame convert FAILED")
+            return
+        }
+        frameCount += 1
+        if frameCount == 1 {
+            ScrollDebugLog.log("first frame: \(image.width)x\(image.height)")
+        } else if frameCount % 20 == 0 {
+            ScrollDebugLog.log("frame #\(frameCount): \(image.width)x\(image.height)")
+        }
         onFrame(image)
     }
 }

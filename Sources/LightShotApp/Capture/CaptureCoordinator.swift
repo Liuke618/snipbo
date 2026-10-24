@@ -357,8 +357,11 @@ final class CaptureCoordinator {
                 isCapturing = false
                 NSSound.beep()
                 presentScrollingMessage(
-                    title: L10n.tr("No scrolling detected", "未检测到滚动"),
-                    message: L10n.tr("Scroll the content while the capture is running, then press Stop.", "请在截图进行中滚动内容，然后按停止。")
+                    title: L10n.tr("No frames captured", "未捕获到任何画面"),
+                    message: L10n.tr(
+                        "The capture stream produced no frames. Check Screen Recording permission and try again.",
+                        "截图流没有产生任何画面。请检查屏幕录制权限后重试。"
+                    )
                 )
             }
         }
