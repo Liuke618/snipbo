@@ -61,6 +61,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             onColor: { [weak controller] color in controller?.style.color = color },
             onWidth: { [weak controller] width in controller?.style.lineWidth = width },
             onRecognize: { [weak self] in self?.recognize() },
+            onPin: { [weak self] in self?.pinAction() },
             onCopy: { [weak self] in self?.copyAndClose() },
             onSave: { [weak self] in self?.saveAndClose(saveAs: false) },
             onClose: { [weak self] in self?.close() }
@@ -111,6 +112,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         // and close.
         canvas.onCopy = { [weak self] in self?.copyToPasteboard() }
         canvas.onCopyAndClose = { [weak self] in self?.copyAndClose() }
+        canvas.onPin = { [weak self] in self?.pinAction() }
         canvas.onSave = { [weak self] in self?.saveAndClose(saveAs: false) }
         canvas.onSaveAs = { [weak self] in self?.saveAndClose(saveAs: true) }
         canvas.onEscape = { [weak self] in self?.escapeAction() }
@@ -192,6 +194,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             case "c":
                 copyToPasteboard()
                 return true
+            case "p":
+                pinAction()
+                return true
             case "s":
                 saveAndClose(saveAs: modifiers.contains(.shift))
                 return true
@@ -212,6 +217,15 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     // MARK: - Copy and save
+
+    /// Pins the rendered image as a floating window and closes the editor.
+    /// Pins are not recorded to history.
+    func pinAction() {
+        commitPendingText()
+        guard let image = controller.renderForExport() else { return }
+        PinBoard.shared.pin(image)
+        close()
+    }
 
     /// Esc closes the editor, optionally copying the rendered image first.
     private func escapeAction() {

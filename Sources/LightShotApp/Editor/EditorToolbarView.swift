@@ -26,6 +26,14 @@ final class EditorToolbarView: NSView {
         target: nil,
         action: nil
     )
+    private let pinButton = NSButton(
+        image: NSImage(
+            systemSymbolName: "pin",
+            accessibilityDescription: "Pin"
+        ) ?? NSImage(),
+        target: nil,
+        action: nil
+    )
     private let undoButton = NSButton(title: "Undo", target: nil, action: nil)
     private let redoButton = NSButton(title: "Redo", target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy", target: nil, action: nil)
@@ -38,6 +46,7 @@ final class EditorToolbarView: NSView {
     private let onColor: (RGBA) -> Void
     private let onWidth: (CGFloat) -> Void
     private let onRecognize: () -> Void
+    private let onPin: () -> Void
     private let onCopy: () -> Void
     private let onSave: () -> Void
     private let onClose: () -> Void
@@ -49,6 +58,7 @@ final class EditorToolbarView: NSView {
         onColor: @escaping (RGBA) -> Void,
         onWidth: @escaping (CGFloat) -> Void,
         onRecognize: @escaping () -> Void,
+        onPin: @escaping () -> Void,
         onCopy: @escaping () -> Void,
         onSave: @escaping () -> Void,
         onClose: @escaping () -> Void
@@ -59,6 +69,7 @@ final class EditorToolbarView: NSView {
         self.onColor = onColor
         self.onWidth = onWidth
         self.onRecognize = onRecognize
+        self.onPin = onPin
         self.onCopy = onCopy
         self.onSave = onSave
         self.onClose = onClose
@@ -66,7 +77,7 @@ final class EditorToolbarView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         // Small controls keep every group inside the editor's default
         // 1000-point width instead of forcing the window wider.
-        for control in [segmented, colorWell, widthSlider, recognizeButton, undoButton, redoButton, copyButton, saveButton, closeButton] {
+        for control in [segmented, colorWell, widthSlider, recognizeButton, pinButton, undoButton, redoButton, copyButton, saveButton, closeButton] {
             control.controlSize = .small
         }
         segmented.selectedSegment = 0
@@ -90,9 +101,13 @@ final class EditorToolbarView: NSView {
         recognizeButton.toolTip = "Recognize text and barcodes"
         recognizeButton.target = self
         recognizeButton.action = #selector(recognizeAction)
+        pinButton.imagePosition = .imageOnly
+        pinButton.toolTip = "Pin as floating window (⌘P)"
+        pinButton.target = self
+        pinButton.action = #selector(pinAction)
 
         let stack = NSStackView(views: [
-            segmented, colorWell, widthSlider, recognizeButton, undoButton, redoButton, copyButton, saveButton, closeButton,
+            segmented, colorWell, widthSlider, recognizeButton, pinButton, undoButton, redoButton, copyButton, saveButton, closeButton,
         ])
         stack.orientation = .horizontal
         stack.spacing = 8
@@ -123,6 +138,7 @@ final class EditorToolbarView: NSView {
     @objc private func colorChanged() { onColor(colorWell.color.rgbaValue) }
     @objc private func widthChanged() { onWidth(widthSlider.doubleValue) }
     @objc private func recognizeAction() { onRecognize() }
+    @objc private func pinAction() { onPin() }
     @objc private func undo() { onUndo() }
     @objc private func redo() { onRedo() }
     @objc private func copyAction() { onCopy() }

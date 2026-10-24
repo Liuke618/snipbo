@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItemController = StatusItemController(
             onCapture: { command in coordinator.start(command) },
             onSettings: { [weak self] in self?.showSettings() },
+            onHistoryBrowser: { [weak self] in self?.showHistoryBrowser() },
             recentMenu: recentController.menu,
             lastRegionAvailable: { coordinator.canCaptureLastRegion() },
             onQuit: { NSApp.terminate(nil) }
@@ -181,6 +182,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindowController = SettingsWindowController(model: settingsModel)
         }
         settingsWindowController?.show()
+    }
+
+    private var historyBrowserController: HistoryBrowserWindowController?
+
+    private func showHistoryBrowser() {
+        if historyBrowserController == nil {
+            historyBrowserController = HistoryBrowserWindowController(
+                store: historyStore,
+                openInEditor: { [weak self] entry in self?.openHistoryEntry(entry) }
+            )
+        }
+        historyBrowserController?.show()
     }
 
     /// Opens a stored screenshot in a new editor. The PNG is decoded off the

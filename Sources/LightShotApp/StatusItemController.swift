@@ -5,6 +5,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let onCapture: (CaptureCommand) -> Void
     private let onSettings: () -> Void
+    private let onHistoryBrowser: () -> Void
     private let recentMenu: NSMenu
     private let lastRegionAvailable: () -> Bool
     private let onQuit: () -> Void
@@ -13,12 +14,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     init(
         onCapture: @escaping (CaptureCommand) -> Void,
         onSettings: @escaping () -> Void,
+        onHistoryBrowser: @escaping () -> Void,
         recentMenu: NSMenu,
         lastRegionAvailable: @escaping () -> Bool,
         onQuit: @escaping () -> Void
     ) {
         self.onCapture = onCapture
         self.onSettings = onSettings
+        self.onHistoryBrowser = onHistoryBrowser
         self.recentMenu = recentMenu
         self.lastRegionAvailable = lastRegionAvailable
         self.onQuit = onQuit
@@ -53,6 +56,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let recentItem = NSMenuItem(title: "Recent", action: nil, keyEquivalent: "")
         recentItem.submenu = recentMenu
         menu.addItem(recentItem)
+        menu.addItem(makeItem("History Browser…", action: #selector(openHistoryBrowser)))
 
         menu.addItem(.separator())
         let settingsItem = makeItem("Settings…", action: #selector(openSettings))
@@ -86,5 +90,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func captureScrolling() { onCapture(.scrolling) }
     @objc private func openSettings() { onSettings() }
+    @objc private func openHistoryBrowser() { onHistoryBrowser() }
     @objc private func quit() { onQuit() }
 }

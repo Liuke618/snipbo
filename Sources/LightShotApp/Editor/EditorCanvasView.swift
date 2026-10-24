@@ -17,6 +17,8 @@ final class EditorCanvasView: NSView {
     var onCopy: (() -> Void)?
     /// Enter: copy and close.
     var onCopyAndClose: (() -> Void)?
+    /// Cmd+P: pin the rendered image as a floating window.
+    var onPin: (() -> Void)?
     var onSave: (() -> Void)?
     var onSaveAs: (() -> Void)?
     var onEscape: (() -> Void)?
@@ -273,6 +275,9 @@ final class EditorCanvasView: NSView {
                 return
             case "c":
                 onCopy?()
+                return
+            case "p":
+                onPin?()
                 return
             default:
                 break
