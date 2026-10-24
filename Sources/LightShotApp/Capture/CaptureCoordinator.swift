@@ -55,6 +55,12 @@ final class CaptureCoordinator {
     }
 
     func start(_ command: CaptureCommand) {
+        // Activate synchronously inside the menu action / hotkey handler: this
+        // is the only point where cooperative activation is granted, and the
+        // overlay windows are only composited while the app is active. The
+        // capture itself runs async and presents ~200 ms later, when activation
+        // requests are already refused on recent macOS versions.
+        NSApp.activate(ignoringOtherApps: true)
         switch command {
         case .region:
             startRegionCapture()
