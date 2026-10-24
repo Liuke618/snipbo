@@ -36,6 +36,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var launchAtLogin: Bool
     /// Exports retina captures at 1x by halving the pixel size.
     public var retinaDownscale: Bool
+    /// Joins OCR text blocks into one paragraph without line breaks.
+    public var ocrRemoveLineBreaks: Bool
 
     private enum CodingKeys: String, CodingKey {
         case hotkey
@@ -54,6 +56,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case afterCaptureSave
         case launchAtLogin
         case retinaDownscale
+        case ocrRemoveLineBreaks
     }
 
     public init(
@@ -72,7 +75,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         afterCaptureCopy: Bool = true,
         afterCaptureSave: Bool = false,
         launchAtLogin: Bool = false,
-        retinaDownscale: Bool = false
+        retinaDownscale: Bool = false,
+        ocrRemoveLineBreaks: Bool = false
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -90,6 +94,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.afterCaptureSave = afterCaptureSave
         self.launchAtLogin = launchAtLogin
         self.retinaDownscale = retinaDownscale
+        self.ocrRemoveLineBreaks = ocrRemoveLineBreaks
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -118,6 +123,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.launchAtLogin
         retinaDownscale = try container.decodeIfPresent(Bool.self, forKey: .retinaDownscale)
             ?? fallback.retinaDownscale
+        ocrRemoveLineBreaks = try container.decodeIfPresent(Bool.self, forKey: .ocrRemoveLineBreaks)
+            ?? fallback.ocrRemoveLineBreaks
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -141,7 +148,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         afterCaptureCopy: true,
         afterCaptureSave: false,
         launchAtLogin: false,
-        retinaDownscale: false
+        retinaDownscale: false,
+        ocrRemoveLineBreaks: false
     )
 
     public func normalized() -> AppSettings {

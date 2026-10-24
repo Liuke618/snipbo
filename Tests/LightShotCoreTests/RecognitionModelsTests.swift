@@ -60,4 +60,35 @@ struct RecognitionModelsTests {
         #expect(result.isEmpty)
         #expect(result.plainText.isEmpty)
     }
+
+    @Test func testRemoveLineBreaksJoinsCJKWithoutSpaces() {
+        let result = RecognitionResult(textBlocks: [
+            TextBlock(text: "你好", boundingBox: CGRect(x: 0, y: 0.5, width: 0.4, height: 0.4), confidence: 1),
+            TextBlock(text: "世界", boundingBox: CGRect(x: 0, y: 0, width: 0.4, height: 0.4), confidence: 1),
+        ], barcodes: [])
+        #expect(result.plainText == "你好\n世界")
+        #expect(result.plainText(removeLineBreaks: true) == "你好世界")
+    }
+
+    @Test func testRemoveLineBreaksKeepsSpacesBetweenLatinWords() {
+        let result = RecognitionResult(textBlocks: [
+            TextBlock(text: "Hello", boundingBox: CGRect(x: 0, y: 0.5, width: 0.4, height: 0.4), confidence: 1),
+            TextBlock(text: "world", boundingBox: CGRect(x: 0, y: 0, width: 0.4, height: 0.4), confidence: 1),
+        ], barcodes: [])
+        #expect(result.plainText(removeLineBreaks: true) == "Hello world")
+    }
+
+    @Test func testRemoveLineBreaksKeepsBarcodeSection() throws {
+        let result = RecognitionResult(
+            textBlocks: [
+                TextBlock(text: "Hello", boundingBox: CGRect(x: 0, y: 0.5, width: 0.4, height: 0.4), confidence: 1),
+                TextBlock(text: "world", boundingBox: CGRect(x: 0, y: 0, width: 0.4, height: 0.4), confidence: 1),
+            ],
+            barcodes: [BarcodeResult(payload: "PAYLOAD", symbology: "QR", boundingBox: .zero)]
+        )
+        let text = result.plainText(removeLineBreaks: true)
+        #expect(text.contains("Hello world"))
+        #expect(try #require(text.range(of: "Barcodes:")) != nil)
+        #expect(text.contains("PAYLOAD"))
+    }
 }

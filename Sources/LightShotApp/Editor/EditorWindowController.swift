@@ -328,7 +328,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                     return
                 }
 
-                self.recognitionPanel.show(result)
+                self.recognitionPanel.show(result, removeLineBreaks: settings.ocrRemoveLineBreaks)
                 // Vision boxes are relative to the rendered crop; the canvas
                 // works in original-image coordinates.
                 let origin = self.controller.document.cropRect.origin

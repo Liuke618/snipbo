@@ -90,10 +90,11 @@ final class RecognitionResultsView: NSView {
         copyButton.isEnabled = false
     }
 
-    func show(_ result: RecognitionResult) {
-        textView.string = result.plainText
+    func show(_ result: RecognitionResult, removeLineBreaks: Bool) {
+        let text = result.plainText(removeLineBreaks: removeLineBreaks)
+        textView.string = text
         statusLabel.stringValue = "\(result.textBlocks.count) text blocks · \(result.barcodes.count) barcodes"
-        copyButton.isEnabled = !result.plainText.isEmpty
+        copyButton.isEnabled = !text.isEmpty
     }
 
     @objc private func copyAction() {

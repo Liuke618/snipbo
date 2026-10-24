@@ -120,6 +120,11 @@ struct SettingsView: View {
                 }
             }
 
+            SettingsRow("OCR text", labelWidth: labelWidth) {
+                Toggle("Remove line breaks", isOn: $model.settings.ocrRemoveLineBreaks)
+                    .toggleStyle(.checkbox)
+            }
+
             groupDivider
 
             VStack(spacing: 8) {
