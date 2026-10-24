@@ -89,7 +89,7 @@ final class EditorToolbarView: NSView {
             for (index, tool) in EditorTool.allCases.enumerated() {
                 let tooltip = tool.hotKeyLetter.map { "\(tool.title) (\($0.uppercased()))" } ?? tool.title
                 control.setToolTip(tooltip, forSegment: index)
-                control.setWidth(30, forSegment: index)
+                control.setWidth(26, forSegment: index)
             }
         } else {
             control = NSSegmentedControl(labels: EditorTool.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
@@ -120,7 +120,8 @@ final class EditorToolbarView: NSView {
         redoButton.toolTip = L10n.tr("Redo (⇧⌘Z)", "重做 (⇧⌘Z)")
 
         colorWell.toolTip = L10n.tr("Annotation color", "标注颜色")
-        widthSlider.toolTip = L10n.tr("Stroke width", "线条粗细")
+        widthSlider.toolTip = L10n.tr("Stroke width — affects the selected annotation, or the next one you draw", "线条粗细 — 作用于选中的标注，或接下来绘制的标注")
+        widthSlider.isContinuous = true
         for label in [sizeLabel, zoomLabel] {
             label.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
             label.textColor = .secondaryLabelColor
@@ -178,7 +179,7 @@ final class EditorToolbarView: NSView {
         addSubview(spacer)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: Self.height),
-            leading.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 76),
+            leading.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             leading.centerYAnchor.constraint(equalTo: centerYAnchor),
             trailing.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             trailing.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -187,6 +188,7 @@ final class EditorToolbarView: NSView {
             spacer.centerYAnchor.constraint(equalTo: centerYAnchor),
             spacer.heightAnchor.constraint(equalToConstant: 1),
             widthSlider.widthAnchor.constraint(equalToConstant: 80),
+            colorWell.widthAnchor.constraint(equalToConstant: 44),
         ])
     }
 
@@ -205,6 +207,15 @@ final class EditorToolbarView: NSView {
     func updateReadouts(size: CGSize, zoom: CGFloat) {
         sizeLabel.stringValue = "\(Int(size.width))×\(Int(size.height)) px"
         zoomLabel.stringValue = "\(Int((zoom * 100).rounded()))%"
+    }
+
+    /// Mirrors the style being edited (the selected annotation's, or the
+    /// default for new annotations) into the color well and width slider.
+    /// Programmatic value changes do not fire the control actions, so this
+    /// cannot feed back into the controller.
+    func syncStyleControls(lineWidth: CGFloat, color: RGBA) {
+        widthSlider.doubleValue = lineWidth
+        colorWell.color = NSColor(color)
     }
 
     func setRecognizing(_ recognizing: Bool) {

@@ -58,8 +58,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             onTool: { [weak controller] tool in controller?.tool = tool },
             onUndo: { [weak controller] in controller?.undo() },
             onRedo: { [weak controller] in controller?.redo() },
-            onColor: { [weak controller] color in controller?.style.color = color },
-            onWidth: { [weak controller] width in controller?.style.lineWidth = width },
+            onColor: { [weak controller] color in controller?.setColor(color) },
+            onWidth: { [weak controller] width in controller?.setLineWidth(width) },
             onRecognize: { [weak self] in self?.recognize() },
             onPin: { [weak self] in self?.pinAction() },
             onCopy: { [weak self] in self?.copyAndClose() },
@@ -75,8 +75,17 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         canvas.onFit = { [weak self] in self?.fitToWindow() }
         canvas.onActualSize = { [weak self] in self?.canvas.setZoom(1) }
 
+        // A centered clip view keeps the crop in the middle of the viewport
+        // when it is smaller than the window instead of hugging the top-left
+        // corner of a large empty mat. The canvas posts frame changes so the
+        // clip view re-constrains when a zoom or crop resizes the document.
+        canvas.postsFrameChangedNotifications = true
+        scrollView.contentView = CenteringClipView()
         scrollView.hasHorizontalScroller = true
         scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .windowBackgroundColor
         scrollView.documentView = canvas
 
         let body = bodyView
@@ -130,12 +139,28 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     func show() {
+        sizeWindowToFitImage()
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         window?.layoutIfNeeded()
         fitToWindow()
         installKeyMonitor()
         window?.makeFirstResponder(canvas)
+    }
+
+    /// Opens the window at the image's size plus the toolbar strip, capped to
+    /// 90% of the screen and centered, so small captures open 1:1 and large
+    /// ones fill most of the screen instead of a fixed 1000×720 frame.
+    private func sizeWindowToFitImage() {
+        guard let window else { return }
+        let crop = controller.document.cropRect
+        guard crop.width > 1, crop.height > 1 else { return }
+        let visible = (window.screen ?? NSScreen.main)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+        let width = min(max(480, crop.width), visible.width * 0.9)
+        let height = min(max(320, crop.height), visible.height * 0.9) + EditorToolbarView.height
+        window.setContentSize(NSSize(width: width, height: height))
+        window.center()
     }
 
     func fitToWindow() {
@@ -151,9 +176,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         refreshReadouts()
     }
 
-    /// Live title-bar readouts: current crop size and zoom level.
+    /// Live title-bar readouts: current crop size and zoom level. Also mirrors
+    /// the style being edited — the selected annotation's, or the default for
+    /// new annotations — into the color well and width slider.
     private func refreshReadouts() {
         toolbarView?.updateReadouts(size: controller.document.cropRect.size, zoom: canvas.zoom)
+        let editedStyle = controller.selectedStyle ?? controller.style
+        toolbarView?.syncStyleControls(lineWidth: editedStyle.lineWidth, color: editedStyle.color)
     }
 
     // MARK: - Shortcuts while a toolbar control has focus
@@ -441,5 +470,23 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         cancelRecognition()
         removeKeyMonitor()
         onClose()
+    }
+}
+
+/// Clip view that centers a document view smaller than the viewport by
+/// allowing the visible-rect origin to go negative on the short axes. It reads
+/// the document view's frame rather than `documentRect`, which this macOS
+/// version clamps up to the viewport once layout settles.
+private final class CenteringClipView: NSClipView {
+    override func constrainBoundsRect(_ proposedVisibleRect: NSRect) -> NSRect {
+        var rect = super.constrainBoundsRect(proposedVisibleRect)
+        guard let documentFrame = documentView?.frame else { return rect }
+        if documentFrame.width < bounds.width {
+            rect.origin.x = (documentFrame.width - bounds.width) / 2
+        }
+        if documentFrame.height < bounds.height {
+            rect.origin.y = (documentFrame.height - bounds.height) / 2
+        }
+        return rect
     }
 }

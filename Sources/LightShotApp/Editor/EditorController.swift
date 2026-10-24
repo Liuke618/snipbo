@@ -26,6 +26,10 @@ final class EditorController {
     private var freehandPoints: [CGPoint] = []
     private var moveState: DocumentState?
     private var moveOrigin: CGPoint?
+    /// Identifies the style-edit run whose pre-edit state is already on the
+    /// undo stack, so a slider drag or color-panel scrub records one undo
+    /// entry instead of one per tick.
+    private var styleEditKey: String?
 
     init(document: EditDocument) {
         self.document = document
@@ -37,7 +41,46 @@ final class EditorController {
 
     func setSelected(id: UUID?) {
         selectedID = id
+        styleEditKey = nil
         changed()
+    }
+
+    /// The style of the selected annotation, if any; the toolbar mirrors it.
+    var selectedStyle: AnnotationStyle? {
+        guard let selectedID else { return nil }
+        return document.annotations.first { $0.id == selectedID }?.style
+    }
+
+    /// Applies a style change to the selected annotation and to the default
+    /// style for new annotations; with nothing selected only the default is
+    /// touched. Consecutive changes to the same target share one undo entry.
+    func setLineWidth(_ width: CGFloat) {
+        applyStyleEdit { $0.lineWidth = width }
+    }
+
+    func setColor(_ color: RGBA) {
+        applyStyleEdit { $0.color = color }
+    }
+
+    private func applyStyleEdit(_ mutate: (inout AnnotationStyle) -> Void) {
+        let key = selectedID.map { "annotation:\($0.uuidString)" } ?? "defaults"
+        if styleEditKey != key {
+            recordState(document.state)
+            styleEditKey = key
+        }
+        if let selectedID,
+           let index = document.annotations.firstIndex(where: { $0.id == selectedID }) {
+            mutate(&document.annotations[index].style)
+        }
+        mutate(&style)
+        changed()
+    }
+
+    /// Records a pre-change state for undo. Any structural edit ends the
+    /// current style-edit run so the next style change records its own state.
+    private func recordState(_ state: DocumentState) {
+        history.record(state)
+        styleEditKey = nil
     }
 
     /// Begins a gesture at `point`, expressed in original image coordinates.
@@ -63,7 +106,7 @@ final class EditorController {
         case .counter:
             // Click places a badge with the next step number; no drag.
             counterValue += 1
-            history.record(document.state)
+            recordState(document.state)
             document.annotations.append(Annotation(
                 kind: .counter,
                 geometry: .badge(center: point, value: counterValue),
@@ -74,7 +117,7 @@ final class EditorController {
             return
         case .magnifier:
             // Click places a lens that magnifies the image around itself.
-            history.record(document.state)
+            recordState(document.state)
             document.annotations.append(Annotation(
                 kind: .magnifier,
                 geometry: .lens(center: point, source: point, radius: max(40, style.fontSize * 1.6)),
@@ -96,7 +139,7 @@ final class EditorController {
         if tool == .select, let selectedID, let moveOrigin,
            let index = document.annotations.firstIndex(where: { $0.id == selectedID }) {
             if let moveState {
-                history.record(moveState)
+                recordState(moveState)
                 self.moveState = nil
             }
             let delta = CGPoint(x: point.x - moveOrigin.x, y: point.y - moveOrigin.y)
@@ -145,21 +188,21 @@ final class EditorController {
             guard !clipped.isNull else { return }
             let next = clipped.integral.intersection(document.cropRect)
             guard next.width >= 2, next.height >= 2, next != document.cropRect else { return }
-            history.record(document.state)
+            recordState(document.state)
             document.cropRect = next
             onCropChanged?()
         case .text:
             return
         default:
             guard let draft, isUsable(draft) else { return }
-            history.record(document.state)
+            recordState(document.state)
             document.annotations.append(draft)
         }
     }
 
     func commitText(_ value: String, at point: CGPoint, width: CGFloat) {
         guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        history.record(document.state)
+        recordState(document.state)
         document.annotations.append(Annotation(
             kind: .text,
             geometry: .text(origin: point, width: width, value: value),
@@ -172,7 +215,7 @@ final class EditorController {
     func deleteSelected() {
         guard let selectedID,
               let index = document.annotations.firstIndex(where: { $0.id == selectedID }) else { return }
-        history.record(document.state)
+        recordState(document.state)
         document.annotations.remove(at: index)
         self.selectedID = nil
         changed()
@@ -192,6 +235,7 @@ final class EditorController {
         let previousCrop = document.cropRect
         document.apply(state)
         selectedID = nil
+        styleEditKey = nil
         if document.cropRect != previousCrop {
             onCropChanged?()
         }

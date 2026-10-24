@@ -50,8 +50,30 @@ final class EditorCanvasView: NSView {
     func updateForDocument() {
         let crop = controller.document.cropRect
         let size = CGSize(width: crop.width * zoom, height: crop.height * zoom)
-        if frame.size != size {
+        let resized = frame.size != size
+        if resized {
             setFrameSize(size)
+        }
+        // The clip view re-constrains its bounds origin on scroll and on its
+        // own resize, but not when the document view changes size under it.
+        // Re-apply the same centering so a crop that shrank stays in the
+        // middle of the viewport; a larger document keeps the scroll position,
+        // clamped into range.
+        if resized, let clip = superview as? NSClipView {
+            var origin = clip.bounds.origin
+            if size.width < clip.bounds.width {
+                origin.x = (size.width - clip.bounds.width) / 2
+            } else {
+                origin.x = max(0, min(origin.x, size.width - clip.bounds.width))
+            }
+            if size.height < clip.bounds.height {
+                origin.y = (size.height - clip.bounds.height) / 2
+            } else {
+                origin.y = max(0, min(origin.y, size.height - clip.bounds.height))
+            }
+            if clip.bounds.origin != origin {
+                clip.setBoundsOrigin(origin)
+            }
         }
         needsDisplay = true
     }
