@@ -9,6 +9,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     let identifier: UUID
     let controller: EditorController
     private let canvas: EditorCanvasView
+    /// The canvas the editor draws into; exposed for probes and programmatic
+    /// zoom checks.
+    var canvasView: EditorCanvasView { canvas }
     private let scrollView = NSScrollView()
     /// Read at action time so open editors follow live settings changes
     /// (history toggle, save directory, format, JPEG quality).
@@ -73,7 +76,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         controller.onCropChanged = { [weak self] in self?.fitToWindow() }
         controller.onChange = { [weak self] in self?.refreshReadouts() }
         canvas.onFit = { [weak self] in self?.fitToWindow() }
-        canvas.onActualSize = { [weak self] in self?.canvas.setZoom(1) }
+        canvas.onActualSize = { [weak self] in
+            self?.canvas.setZoom(1)
+            self?.refreshReadouts()
+        }
+        canvas.onZoomChanged = { [weak self] in self?.refreshReadouts() }
 
         // A centered clip view keeps the crop in the middle of the viewport
         // when it is smaller than the window instead of hugging the top-left
@@ -476,7 +483,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 /// Clip view that centers a document view smaller than the viewport by
 /// allowing the visible-rect origin to go negative on the short axes. It reads
 /// the document view's frame rather than `documentRect`, which this macOS
-/// version clamps up to the viewport once layout settles.
+/// version clamps up to the viewport once layout settles. Gestures over the
+/// background mat are forwarded to the canvas so pinch zoom works everywhere.
 private final class CenteringClipView: NSClipView {
     override func constrainBoundsRect(_ proposedVisibleRect: NSRect) -> NSRect {
         var rect = super.constrainBoundsRect(proposedVisibleRect)
@@ -488,5 +496,21 @@ private final class CenteringClipView: NSClipView {
             rect.origin.y = (documentFrame.height - bounds.height) / 2
         }
         return rect
+    }
+
+    override func magnify(with event: NSEvent) {
+        if let canvas = documentView as? EditorCanvasView {
+            canvas.magnify(with: event)
+        } else {
+            super.magnify(with: event)
+        }
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if event.modifierFlags.contains(.command), let canvas = documentView as? EditorCanvasView {
+            canvas.scrollWheel(with: event)
+        } else {
+            super.scrollWheel(with: event)
+        }
     }
 }

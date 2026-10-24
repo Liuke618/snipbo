@@ -22,6 +22,8 @@ final class EditorCanvasView: NSView {
     var onSave: (() -> Void)?
     var onSaveAs: (() -> Void)?
     var onEscape: (() -> Void)?
+    /// Called after the zoom level changes so the toolbar readout can refresh.
+    var onZoomChanged: (() -> Void)?
     private var textOverlay: TextEditingOverlay?
     /// Image-pixel rects returned by the last recognition. They are drawn over
     /// the current crop and are not part of the document or undo history.
@@ -42,6 +44,45 @@ final class EditorCanvasView: NSView {
     func setZoom(_ zoom: CGFloat) {
         self.zoom = min(8, max(0.1, zoom))
         updateForDocument()
+        onZoomChanged?()
+    }
+
+    /// Sets the zoom while keeping the image point under `anchor` (view
+    /// coordinates at the current zoom) at the same viewport position — the
+    /// pinch-center anchoring. An axis where the crop is smaller than the
+    /// viewport cannot scroll, so it falls back to the centered origin.
+    func setZoom(_ newZoom: CGFloat, anchoredAt anchor: CGPoint) {
+        let clamped = min(8, max(0.1, newZoom))
+        guard let clip = superview as? NSClipView else {
+            setZoom(clamped)
+            return
+        }
+        let cropOrigin = controller.document.cropRect.origin
+        let imagePoint = CGPoint(
+            x: anchor.x / zoom + cropOrigin.x,
+            y: anchor.y / zoom + cropOrigin.y
+        )
+        let offset = CGPoint(
+            x: anchor.x - clip.bounds.origin.x,
+            y: anchor.y - clip.bounds.origin.y
+        )
+        setZoom(clamped)
+        let newViewPoint = CGPoint(
+            x: (imagePoint.x - cropOrigin.x) * clamped,
+            y: (imagePoint.y - cropOrigin.y) * clamped
+        )
+        clip.setBoundsOrigin(CGPoint(
+            x: clampedScrollOrigin(newViewPoint.x - offset.x, docSize: frame.width, viewSize: clip.bounds.width),
+            y: clampedScrollOrigin(newViewPoint.y - offset.y, docSize: frame.height, viewSize: clip.bounds.height)
+        ))
+    }
+
+    /// One axis of the scroll-origin clamp: centered when the document is
+    /// smaller than the viewport, else held in [0, docSize − viewSize]. This
+    /// is the same rule the clip view's `constrainBoundsRect` applies, kept in
+    /// one place for the zoom anchoring.
+    private func clampedScrollOrigin(_ value: CGFloat, docSize: CGFloat, viewSize: CGFloat) -> CGFloat {
+        docSize < viewSize ? (docSize - viewSize) / 2 : max(0, min(value, docSize - viewSize))
     }
 
     /// Resizes the canvas to the document's current crop at the current zoom
@@ -60,17 +101,10 @@ final class EditorCanvasView: NSView {
         // middle of the viewport; a larger document keeps the scroll position,
         // clamped into range.
         if resized, let clip = superview as? NSClipView {
-            var origin = clip.bounds.origin
-            if size.width < clip.bounds.width {
-                origin.x = (size.width - clip.bounds.width) / 2
-            } else {
-                origin.x = max(0, min(origin.x, size.width - clip.bounds.width))
-            }
-            if size.height < clip.bounds.height {
-                origin.y = (size.height - clip.bounds.height) / 2
-            } else {
-                origin.y = max(0, min(origin.y, size.height - clip.bounds.height))
-            }
+            let origin = CGPoint(
+                x: clampedScrollOrigin(clip.bounds.origin.x, docSize: size.width, viewSize: clip.bounds.width),
+                y: clampedScrollOrigin(clip.bounds.origin.y, docSize: size.height, viewSize: clip.bounds.height)
+            )
             if clip.bounds.origin != origin {
                 clip.setBoundsOrigin(origin)
             }
@@ -283,6 +317,28 @@ final class EditorCanvasView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         controller.end(at: imagePoint(from: event))
+    }
+
+    /// Two-finger pinch zoom, anchored at the pinch center (Shottr-style).
+    /// Zoom is view state, not part of the document undo history.
+    override func magnify(with event: NSEvent) {
+        setZoom(zoom * (1 + event.magnification), anchoredAt: convert(event.locationInWindow, from: nil))
+    }
+
+    /// ⌘ + two-finger scroll zooms as well, matching other macOS editors and
+    /// giving mouse users the same control; plain scrolling still scrolls.
+    override func scrollWheel(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            // Wheel notches are line-based and jumpier than precise deltas;
+            // scale each event to a gentle percentage step.
+            let step = event.hasPreciseScrollingDeltas
+                ? event.scrollingDeltaY / 600
+                : event.scrollingDeltaY * 0.01
+            let factor = min(2, max(0.2, 1 + step))
+            setZoom(zoom * factor, anchoredAt: convert(event.locationInWindow, from: nil))
+        } else {
+            super.scrollWheel(with: event)
+        }
     }
 
     override func keyDown(with event: NSEvent) {
