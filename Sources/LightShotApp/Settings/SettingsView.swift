@@ -161,20 +161,20 @@ struct SettingsView: View {
 
             VStack(spacing: 8) {
                 SettingsRow(L10n.tr("Scroll height", "滚动高度"), labelWidth: labelWidth) {
-                    Stepper(
-                        "\(model.settings.scrollMaxHeight) px",
+                    SettingsNumberField(
                         value: $model.settings.scrollMaxHeight,
-                        in: 1_000...100_000,
-                        step: 1_000
+                        range: 1_000...100_000,
+                        step: 1_000,
+                        suffix: "px"
                     )
                 }
 
                 SettingsRow(L10n.tr("Scroll speed", "滚动速度"), labelWidth: labelWidth) {
-                    Stepper(
-                        "\(model.settings.scrollCaptureFPS) fps",
+                    SettingsNumberField(
                         value: $model.settings.scrollCaptureFPS,
-                        in: 5...30,
-                        step: 1
+                        range: 5...30,
+                        step: 1,
+                        suffix: "fps"
                     )
                 }
             }
@@ -204,10 +204,11 @@ struct SettingsView: View {
                 }
 
                 SettingsRow(L10n.tr("Countdown", "倒计时"), labelWidth: labelWidth) {
-                    Stepper(
-                        "\(model.settings.captureDelaySeconds) s",
+                    SettingsNumberField(
                         value: $model.settings.captureDelaySeconds,
-                        in: 0...30
+                        range: 0...30,
+                        step: 1,
+                        suffix: "s"
                     )
                 }
 
@@ -311,10 +312,11 @@ struct SettingsView: View {
                 }
 
                 SettingsRow(L10n.tr("Max items", "条数上限"), labelWidth: labelWidth) {
-                    Stepper(
-                        "\(model.settings.historyMaxItems)",
+                    SettingsNumberField(
                         value: $model.settings.historyMaxItems,
-                        in: 1...1000
+                        range: 1...1000,
+                        step: 1,
+                        suffix: nil
                     )
                 }
             }
@@ -529,5 +531,43 @@ private struct SettingsRow<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(minHeight: 26)
+    }
+}
+
+/// An editable number plus stepper arrows for the numeric settings.
+///
+/// Commit happens on Return or focus loss. Clamping lives in the binding so a
+/// typed value outside `range` can never reach `AppSettings`, and the field
+/// redraws with the clamped value. `@State` cannot be expanded on this
+/// toolchain, so no draft string is kept.
+private struct SettingsNumberField: View {
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let step: Int
+    let suffix: String?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TextField(
+                "",
+                value: Binding(
+                    get: { value },
+                    set: { value = min(range.upperBound, max(range.lowerBound, $0)) }
+                ),
+                format: .number
+            )
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(.trailing)
+            .monospacedDigit()
+            .frame(width: 78)
+
+            if let suffix {
+                Text(suffix)
+                    .foregroundStyle(.secondary)
+            }
+
+            Stepper("", value: $value, in: range, step: step)
+                .labelsHidden()
+        }
     }
 }
