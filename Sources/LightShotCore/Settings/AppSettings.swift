@@ -42,6 +42,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var scrollCaptureFPS: Int
     /// Copies the rendered image before an editor Esc closes the window.
     public var copyOnEditorEscape: Bool
+    /// Saves the rendered image to the save directory before an editor Esc
+    /// closes the window (Shottr's "Action when hiding with Esc").
+    public var saveOnEditorEscape: Bool
     /// Crops the transparent shadow padding off window captures.
     public var windowShadowTrim: Bool
     /// Per-mode global shortcuts, keyed by capture mode. Modes without an
@@ -97,6 +100,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case ocrRemoveLineBreaks
         case scrollCaptureFPS
         case copyOnEditorEscape
+        case saveOnEditorEscape
         case windowShadowTrim
         case modeHotkeys
         case uiLanguage
@@ -122,6 +126,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ocrRemoveLineBreaks: Bool = false,
         scrollCaptureFPS: Int = 10,
         copyOnEditorEscape: Bool = false,
+        saveOnEditorEscape: Bool = false,
         windowShadowTrim: Bool = false,
         modeHotkeys: [String: Hotkey] = [:],
         uiLanguage: AppLanguage = .system
@@ -145,6 +150,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.ocrRemoveLineBreaks = ocrRemoveLineBreaks
         self.scrollCaptureFPS = scrollCaptureFPS
         self.copyOnEditorEscape = copyOnEditorEscape
+        self.saveOnEditorEscape = saveOnEditorEscape
         self.windowShadowTrim = windowShadowTrim
         self.modeHotkeys = modeHotkeys
         self.uiLanguage = uiLanguage
@@ -182,6 +188,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.scrollCaptureFPS
         copyOnEditorEscape = try container.decodeIfPresent(Bool.self, forKey: .copyOnEditorEscape)
             ?? fallback.copyOnEditorEscape
+        saveOnEditorEscape = try container.decodeIfPresent(Bool.self, forKey: .saveOnEditorEscape)
+            ?? fallback.saveOnEditorEscape
         windowShadowTrim = try container.decodeIfPresent(Bool.self, forKey: .windowShadowTrim)
             ?? fallback.windowShadowTrim
         modeHotkeys = try container.decodeIfPresent([String: Hotkey].self, forKey: .modeHotkeys)
@@ -214,6 +222,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         retinaDownscale: false,
         ocrRemoveLineBreaks: false,
         copyOnEditorEscape: false,
+        saveOnEditorEscape: false,
         windowShadowTrim: false,
         modeHotkeys: [:],
         uiLanguage: .system

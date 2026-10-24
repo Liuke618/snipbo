@@ -2,13 +2,18 @@ import AppKit
 import LightShotCore
 import SwiftUI
 
-/// The form shown in the Settings window. Every binding writes through
-/// `SettingsModel`, which persists the change and applies it live.
+/// The form shown in the Settings window, organized like Shottr's
+/// Preferences: an icon tab bar (General / Hotkeys / Advanced) over
+/// divider-separated groups of label + control rows. Every binding writes
+/// through `SettingsModel`, which persists the change and applies it live.
 @MainActor
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
 
     private let labelWidth: CGFloat = 190
+    /// Plain ObservableObject because this toolchain cannot expand SwiftUI's
+    /// `@State` macro (same workaround as the history browser).
+    @ObservedObject private var tabModel = SettingsTabSelection()
 
     /// Modes that can carry their own chord besides the base region hotkey.
     private var extraHotkeyModes: [(String, String)] {
@@ -24,12 +29,59 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SettingsRow(L10n.tr("Hotkey", "快捷键"), labelWidth: labelWidth) {
-                HotkeyRecorderView(hotkey: $model.settings.hotkey)
-                    .frame(width: 220, height: 32)
+        VStack(spacing: 0) {
+            tabBar
+            Divider()
+            Group {
+                switch tabModel.tab {
+                case .general: generalTab
+                case .hotkeys: hotkeysTab
+                case .advanced: advancedTab
+                }
             }
+            .padding(20)
+            .frame(width: 560, alignment: .top)
+        }
+        .frame(width: 560)
+    }
 
+    // MARK: - Tab bar
+
+    private var tabBar: some View {
+        HStack(spacing: 6) {
+            ForEach(SettingsTab.allCases, id: \.rawValue) { item in
+                tabButton(item)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+    }
+
+    private func tabButton(_ item: SettingsTab) -> some View {
+        Button {
+            tabModel.tab = item
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: item.icon)
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(height: 20)
+                Text(item.title)
+                    .font(.system(size: 11))
+            }
+            .frame(width: 86, height: 48)
+            .background(
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(Color.primary.opacity(tabModel.tab == item ? 0.08 : 0))
+            )
+            .foregroundColor(tabModel.tab == item ? .accentColor : .secondary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - General
+
+    private var generalTab: some View {
+        VStack(alignment: .leading, spacing: 0) {
             SettingsRow(L10n.tr("Language", "语言"), labelWidth: labelWidth) {
                 Picker("", selection: $model.settings.uiLanguage) {
                     Text(L10n.tr("Follow System", "跟随系统")).tag(AppLanguage.system)
@@ -40,32 +92,6 @@ struct SettingsView: View {
                 .pickerStyle(.menu)
                 .frame(width: 160)
             }
-
-            groupDivider
-
-            DisclosureGroup(L10n.tr("Per-mode shortcuts", "分模式快捷键")) {
-                VStack(spacing: 8) {
-                    ForEach(extraHotkeyModes, id: \.0) { mode, title in
-                        SettingsRow(title, labelWidth: labelWidth) {
-                            HStack(spacing: 8) {
-                                ModeHotkeyRecorderView(
-                                    hotkey: model.settings.modeHotkeys[mode],
-                                    onChange: { model.settings.modeHotkeys[mode] = $0 }
-                                )
-                                .frame(width: 210, height: 32)
-                                if model.settings.modeHotkeys[mode] != nil {
-                                    Button(L10n.tr("Clear", "清除")) {
-                                        model.settings.modeHotkeys[mode] = nil
-                                    }
-                                    .controlSize(.small)
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-            .padding(.vertical, 4)
 
             groupDivider
 
@@ -109,50 +135,16 @@ struct SettingsView: View {
                         }
                     }
                 }
+
+                SettingsRow(L10n.tr("Retina screenshots", "Retina 截图"), labelWidth: labelWidth) {
+                    Toggle(L10n.tr("Downscale to 1x when saving", "保存时缩至 1x"), isOn: $model.settings.retinaDownscale)
+                        .toggleStyle(.checkbox)
+                }
             }
 
             groupDivider
 
             VStack(spacing: 8) {
-                SettingsRow(L10n.tr("Cursor", "光标"), labelWidth: labelWidth) {
-                    Toggle(L10n.tr("Capture cursor", "捕捉鼠标指针"), isOn: $model.settings.captureCursor)
-                        .toggleStyle(.checkbox)
-                }
-
-                SettingsRow(L10n.tr("After capture", "截图后"), labelWidth: labelWidth) {
-                    HStack(spacing: 14) {
-                        Toggle(L10n.tr("Open editor", "打开编辑器"), isOn: $model.settings.openEditorAfterCapture)
-                            .toggleStyle(.checkbox)
-                        Toggle(L10n.tr("Copy", "复制"), isOn: $model.settings.afterCaptureCopy)
-                            .toggleStyle(.checkbox)
-                        Toggle(L10n.tr("Save", "保存"), isOn: $model.settings.afterCaptureSave)
-                            .toggleStyle(.checkbox)
-                    }
-                }
-
-                SettingsRow(L10n.tr("Launch", "启动"), labelWidth: labelWidth) {
-                    Toggle(L10n.tr("Start at login", "登录时启动"), isOn: $model.settings.launchAtLogin)
-                        .toggleStyle(.checkbox)
-                }
-
-                SettingsRow(L10n.tr("Export", "导出"), labelWidth: labelWidth) {
-                    Toggle(L10n.tr("Downscale retina captures to 1x", "Retina 截图缩至 1x"), isOn: $model.settings.retinaDownscale)
-                        .toggleStyle(.checkbox)
-                }
-
-                SettingsRow(L10n.tr("Esc in editor", "编辑器 Esc 键"), labelWidth: labelWidth) {
-                    Toggle(L10n.tr("Copy image before closing", "关闭前复制图像"), isOn: $model.settings.copyOnEditorEscape)
-                        .toggleStyle(.checkbox)
-                }
-
-                SettingsRow(L10n.tr("Countdown", "倒计时"), labelWidth: labelWidth) {
-                    Stepper(
-                        "\(model.settings.captureDelaySeconds) s",
-                        value: $model.settings.captureDelaySeconds,
-                        in: 0...30
-                    )
-                }
-
                 SettingsRow(L10n.tr("Scroll height", "滚动高度"), labelWidth: labelWidth) {
                     Stepper(
                         "\(model.settings.scrollMaxHeight) px",
@@ -170,28 +162,129 @@ struct SettingsView: View {
                         step: 1
                     )
                 }
+            }
+
+            groupDivider
+
+            VStack(spacing: 8) {
+                SettingsRow(L10n.tr("Launch", "启动"), labelWidth: labelWidth) {
+                    Toggle(L10n.tr("Start at login", "登录时启动"), isOn: $model.settings.launchAtLogin)
+                        .toggleStyle(.checkbox)
+                }
+
+                SettingsRow(L10n.tr("After capture", "截图后"), labelWidth: labelWidth) {
+                    HStack(spacing: 14) {
+                        Toggle(L10n.tr("Show editor", "打开编辑器"), isOn: $model.settings.openEditorAfterCapture)
+                            .toggleStyle(.checkbox)
+                        Toggle(L10n.tr("Copy", "复制"), isOn: $model.settings.afterCaptureCopy)
+                            .toggleStyle(.checkbox)
+                        Toggle(L10n.tr("Save", "保存"), isOn: $model.settings.afterCaptureSave)
+                            .toggleStyle(.checkbox)
+                    }
+                }
+
+                SettingsRow(L10n.tr("Cursor", "光标"), labelWidth: labelWidth) {
+                    Toggle(L10n.tr("Capture cursor", "捕捉鼠标指针"), isOn: $model.settings.captureCursor)
+                        .toggleStyle(.checkbox)
+                }
+
+                SettingsRow(L10n.tr("Countdown", "倒计时"), labelWidth: labelWidth) {
+                    Stepper(
+                        "\(model.settings.captureDelaySeconds) s",
+                        value: $model.settings.captureDelaySeconds,
+                        in: 0...30
+                    )
+                }
 
                 SettingsRow(L10n.tr("Window capture", "窗口截图"), labelWidth: labelWidth) {
                     Toggle(L10n.tr("Trim shadow", "裁掉阴影"), isOn: $model.settings.windowShadowTrim)
                         .toggleStyle(.checkbox)
                 }
+            }
+        }
+    }
 
+    // MARK: - Hotkeys
+
+    private var hotkeysTab: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L10n.tr("Shortcut conflicts with the system screenshot keys", "快捷键与系统截图键冲突时"))
+                    .font(.system(size: 13, weight: .semibold))
+                Text(L10n.tr(
+                    "Open System Settings → Keyboard → Keyboard Shortcuts → Screenshots and uncheck the conflicting entries.",
+                    "在 系统设置 → 键盘 → 键盘快捷键 → 截图 里取消勾选冲突的系统快捷键。"
+                ))
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+
+                Button(L10n.tr("Open System Settings", "打开系统设置")) {
+                    openKeyboardShortcuts()
+                }
+                .controlSize(.small)
+            }
+            .padding(.bottom, 4)
+
+            groupDivider
+
+            SettingsRow(L10n.tr("Hotkey", "快捷键"), labelWidth: labelWidth) {
+                HotkeyRecorderView(hotkey: $model.settings.hotkey)
+                    .frame(width: 220, height: 32)
             }
 
             groupDivider
 
-            SettingsRow(L10n.tr("OCR languages", "OCR 语言"), labelWidth: labelWidth) {
-                HStack(spacing: 16) {
-                    Toggle(L10n.tr("Simplified Chinese", "简体中文"), isOn: languageBinding("zh-Hans"))
-                        .toggleStyle(.checkbox)
-                    Toggle(L10n.tr("English", "英语"), isOn: languageBinding("en-US"))
+            VStack(spacing: 8) {
+                ForEach(extraHotkeyModes, id: \.0) { mode, title in
+                    SettingsRow(title, labelWidth: labelWidth) {
+                        HStack(spacing: 8) {
+                            ModeHotkeyRecorderView(
+                                hotkey: model.settings.modeHotkeys[mode],
+                                onChange: { model.settings.modeHotkeys[mode] = $0 }
+                            )
+                            .frame(width: 210, height: 32)
+                            if model.settings.modeHotkeys[mode] != nil {
+                                Button(L10n.tr("Clear", "清除")) {
+                                    model.settings.modeHotkeys[mode] = nil
+                                }
+                                .controlSize(.small)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Advanced
+
+    private var advancedTab: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(spacing: 8) {
+                SettingsRow(L10n.tr("OCR languages", "OCR 语言"), labelWidth: labelWidth) {
+                    HStack(spacing: 16) {
+                        Toggle(L10n.tr("Simplified Chinese", "简体中文"), isOn: languageBinding("zh-Hans"))
+                            .toggleStyle(.checkbox)
+                        Toggle(L10n.tr("English", "英语"), isOn: languageBinding("en-US"))
+                            .toggleStyle(.checkbox)
+                    }
+                }
+
+                SettingsRow(L10n.tr("OCR text", "OCR 文本"), labelWidth: labelWidth) {
+                    Toggle(L10n.tr("Remove line breaks", "去除换行"), isOn: $model.settings.ocrRemoveLineBreaks)
                         .toggleStyle(.checkbox)
                 }
             }
 
-            SettingsRow(L10n.tr("OCR text", "OCR 文本"), labelWidth: labelWidth) {
-                Toggle(L10n.tr("Remove line breaks", "去除换行"), isOn: $model.settings.ocrRemoveLineBreaks)
-                    .toggleStyle(.checkbox)
+            groupDivider
+
+            SettingsRow(L10n.tr("Esc in editor", "编辑器 Esc 键"), labelWidth: labelWidth) {
+                HStack(spacing: 14) {
+                    Toggle(L10n.tr("Copy image", "复制图像"), isOn: $model.settings.copyOnEditorEscape)
+                        .toggleStyle(.checkbox)
+                    Toggle(L10n.tr("Save image", "保存图像"), isOn: $model.settings.saveOnEditorEscape)
+                        .toggleStyle(.checkbox)
+                }
             }
 
             groupDivider
@@ -211,13 +304,21 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(20)
-        .frame(width: 560)
     }
+
+    // MARK: - Helpers
 
     private var groupDivider: some View {
         Divider()
             .padding(.vertical, 10)
+    }
+
+    private func openKeyboardShortcuts() {
+        if let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts"
+        ) {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     /// Refuses to turn off the last enabled language; OCR needs at least one.
@@ -257,6 +358,37 @@ struct SettingsView: View {
             model.settings.saveDirectory = url.path
         }
     }
+}
+
+/// The Settings window's tabs. Uploading/License-style tabs are intentionally
+/// absent: the app makes no network requests and has no licensing.
+@MainActor
+enum SettingsTab: String, CaseIterable {
+    case general, hotkeys, advanced
+
+    var title: String {
+        switch self {
+        case .general: return L10n.tr("General", "通用")
+        case .hotkeys: return L10n.tr("Hotkeys", "快捷键")
+        case .advanced: return L10n.tr("Advanced", "高级")
+        }
+    }
+
+    /// SF Symbols keep the tab bar consistent on every macOS version without
+    /// extra assets.
+    var icon: String {
+        switch self {
+        case .general: return "gearshape"
+        case .hotkeys: return "keyboard"
+        case .advanced: return "slider.horizontal.3"
+        }
+    }
+}
+
+/// Holds the selected tab; `@State` is unavailable on this toolchain.
+@MainActor
+final class SettingsTabSelection: ObservableObject {
+    @Published var tab: SettingsTab = .general
 }
 
 private struct SettingsRow<Content: View>: View {

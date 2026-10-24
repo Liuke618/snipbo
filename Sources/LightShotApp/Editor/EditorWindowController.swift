@@ -334,12 +334,32 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         close()
     }
 
-    /// Esc closes the editor, optionally copying the rendered image first.
+    /// Esc closes the editor, optionally copying and/or saving the rendered
+    /// image first (Shottr's "Action when hiding with Esc").
     private func escapeAction() {
+        commitPendingText()
         if settings.copyOnEditorEscape {
             copyToPasteboard()
         }
+        if settings.saveOnEditorEscape {
+            saveSilently()
+        }
         close()
+    }
+
+    /// Writes the rendered document to the configured save directory without
+    /// any panel or close side effect; used by the Esc-save option.
+    private func saveSilently() {
+        let settings = self.settings
+        guard let image = controller.renderForExport() else { return }
+        let url = URL(fileURLWithPath: settings.saveDirectory)
+            .appendingPathComponent(controller.defaultFileName(format: settings.format))
+        do {
+            try controller.write(image, to: url, format: settings.format, quality: settings.jpegQuality)
+        } catch {
+            NSSound.beep()
+            NSLog("LightShot: Esc-save failed: \(error.localizedDescription)")
+        }
     }
 
     /// Commits a pending text overlay before an action reads the document, so
