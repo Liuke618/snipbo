@@ -11,19 +11,29 @@ final class HotkeyService {
     typealias Registrar = (Hotkey, EventHotKeyID) -> (status: OSStatus, ref: EventHotKeyRef?)
     typealias Unregistrar = (EventHotKeyRef) -> Void
 
-    private var hotKeyRef: EventHotKeyRef?
+    /// Routes a fired chord to its mode. The single-hotkey initializer wraps a
+    /// no-argument handler under id 1.
+    private var registrations: [UInt32: EventHotKeyRef] = [:]
+    private var handlers: [UInt32: @MainActor () -> Void] = [:]
     private var eventHandlerRef: EventHandlerRef?
-    private let handler: @MainActor () -> Void
     private let registrar: Registrar
     private let unregistrar: Unregistrar
     private var eventHandlerInstalled = false
     private let logger = Logger(subsystem: "local.lightshot.app", category: "Hotkey")
 
     init(handler: @escaping @MainActor () -> Void) {
-        self.handler = handler
         self.registrar = Self.registerWithCarbon
         self.unregistrar = Self.unregisterWithCarbon
         installEventHandler()
+        handlers[1] = handler
+    }
+
+    /// Per-mode handler keyed by the same id passed to `register(_:id:)`.
+    init(handlers: [UInt32: @MainActor () -> Void]) {
+        self.registrar = Self.registerWithCarbon
+        self.unregistrar = Self.unregisterWithCarbon
+        installEventHandler()
+        self.handlers = handlers
     }
 
     /// Test seam: lets the harness inject a failing registrar and, optionally,
@@ -34,19 +44,19 @@ final class HotkeyService {
         unregistrar: @escaping Unregistrar,
         eventHandlerInstallSucceeded: Bool? = nil
     ) {
-        self.handler = handler
         self.registrar = registrar
         self.unregistrar = unregistrar
         installEventHandler()
+        self.handlers[1] = handler
         if let eventHandlerInstallSucceeded {
             self.eventHandlerInstalled = eventHandlerInstallSucceeded
         }
     }
 
-    /// True while a chord is registered. Used by the harness to verify that a
-    /// failed registration leaves no stale reference behind.
+    /// True while any chord is registered. Used by the harness to verify that
+    /// a failed registration leaves no stale reference behind.
     var isRegistered: Bool {
-        hotKeyRef != nil
+        !registrations.isEmpty
     }
 
     private func installEventHandler() {
@@ -57,11 +67,21 @@ final class HotkeyService {
         var handlerRef: EventHandlerRef?
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
-            { _, _, userData in
-                guard let userData else { return noErr }
+            { _, event, userData in
+                guard let userData, let event else { return noErr }
+                var hotKeyID = EventHotKeyID()
+                GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
                 let service = Unmanaged<HotkeyService>.fromOpaque(userData).takeUnretainedValue()
                 MainActor.assumeIsolated {
-                    service.handler()
+                    service.dispatch(hotKeyID.id)
                 }
                 return noErr
             },
@@ -79,21 +99,26 @@ final class HotkeyService {
         }
     }
 
-    /// Registers `hotkey`, replacing any previous registration.
+    private func dispatch(_ id: UInt32) {
+        handlers[id]?()
+    }
+
+    /// Registers `hotkey` under `id`, replacing any previous registration for
+    /// that id.
     ///
     /// Returns false when the Carbon event handler is missing or the chord was
-    /// rejected. On failure `hotKeyRef` is left nil, so the caller can decide
-    /// whether to restore the previous chord.
+    /// rejected. On failure no reference is kept for `id`, so the caller can
+    /// decide whether to restore the previous chord.
     @discardableResult
-    func register(_ hotkey: Hotkey) -> Bool {
+    func register(_ hotkey: Hotkey, id: UInt32 = 1) -> Bool {
         guard eventHandlerInstalled else {
             logger.error(
                 "Cannot register \(hotkey.displayString, privacy: .public): the event handler is not installed"
             )
             return false
         }
-        unregister()
-        let hotKeyID = EventHotKeyID(signature: OSType(0x4C534854), id: 1)
+        unregister(id: id)
+        let hotKeyID = EventHotKeyID(signature: OSType(0x4C534854), id: id)
         let (status, ref) = registrar(hotkey, hotKeyID)
         guard status == noErr, let ref else {
             if let ref {
@@ -101,25 +126,24 @@ final class HotkeyService {
                 // reference must not leak it.
                 unregistrar(ref)
             }
-            hotKeyRef = nil
+            registrations[id] = nil
             logger.error(
                 "RegisterEventHotKey failed for \(hotkey.displayString, privacy: .public): OSStatus \(status, privacy: .public)"
             )
             return false
         }
-        hotKeyRef = ref
+        registrations[id] = ref
         logger.info("Registered global hotkey \(hotkey.displayString, privacy: .public)")
         return true
     }
 
-    func unregister() {
-        if let hotKeyRef {
-            unregistrar(hotKeyRef)
-            self.hotKeyRef = nil
+    func unregister(id: UInt32 = 1) {
+        if let ref = registrations.removeValue(forKey: id) {
+            unregistrar(ref)
         }
     }
 
-    /// Tears down everything installed in `init`: the hotkey registration and
+    /// Tears down everything installed in `init`: the hotkey registrations and
     /// the Carbon event handler.
     ///
     /// The installed handler holds an unretained pointer to `self`, so it must
@@ -130,7 +154,8 @@ final class HotkeyService {
     /// the isolated teardown below cannot be expressed there; the explicit
     /// shutdown is the contract for the app-lifetime owner.
     func shutdown() {
-        unregister()
+        registrations.removeAll()
+        handlers.removeAll()
         eventHandlerInstalled = false
         if let eventHandlerRef {
             RemoveEventHandler(eventHandlerRef)

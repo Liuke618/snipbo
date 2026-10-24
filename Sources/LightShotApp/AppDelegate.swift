@@ -9,7 +9,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settingsModel = SettingsModel()
     private var settings: AppSettings { settingsModel.settings }
     private var settingsWindowController: SettingsWindowController?
-    private var registeredHotkey: Hotkey?
     private let captureService = ScreenCaptureService()
     /// Every open history editor, retained until its own close callback runs.
     /// The close callback removes exactly the editor that closed, so one
@@ -42,14 +41,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastRegionAvailable: { coordinator.canCaptureLastRegion() },
             onQuit: { NSApp.terminate(nil) }
         )
-        let service = HotkeyService { coordinator.startRegionCapture() }
-        hotkeyService = service
-        if service.register(settings.hotkey) {
-            registeredHotkey = settings.hotkey
-        } else {
-            registeredHotkey = nil
-            showHotkeyFailure(for: settings.hotkey, previous: nil, restored: false)
+        var handlers: [UInt32: @MainActor () -> Void] = [:]
+        for mode in AppSettings.hotkeyModeIDs {
+            guard let carbonID = AppSettings.hotkeyModeIDsToCarbonID[mode],
+                  let command = Self.command(for: mode) else { continue }
+            handlers[carbonID] = { coordinator.start(command) }
         }
+        let service = HotkeyService(handlers: handlers)
+        hotkeyService = service
+        applyModeHotkeys(settings)
 
         NotificationCenter.default.addObserver(
             self,
@@ -61,9 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncLoginItem(settings)
         settingsModel.onChange = { [weak self] newSettings in
             guard let self else { return }
-            if newSettings.hotkey != self.registeredHotkey {
-                self.applyHotkey(newSettings.hotkey)
-            }
+            self.applyModeHotkeys(newSettings)
             self.syncLoginItem(newSettings)
             self.captureCoordinator.updateSettings(newSettings)
             Task {
@@ -84,26 +82,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Applies a hotkey change transactionally: only a successful registration
-    /// replaces the active chord. If the new chord is rejected, the previous
-    /// chord is registered again and the user is told what is still active.
-    private func applyHotkey(_ hotkey: Hotkey) {
-        let previous = registeredHotkey
-        if hotkeyService?.register(hotkey) == true {
-            registeredHotkey = hotkey
-            return
+    private var registeredModeHotkeys: [String: Hotkey] = [:]
+
+    private static func command(for mode: String) -> CaptureCommand? {
+        switch mode {
+        case "region": return .region
+        case "window": return .window
+        case "screen": return .screen
+        case "allScreens": return .allScreens
+        case "timedRegion": return .timedRegion
+        case "timedScreen": return .timedScreen
+        case "lastRegion": return .lastRegion
+        case "scrolling": return .scrolling
+        default: return nil
         }
-        var restored = false
-        if let previous, hotkeyService?.register(previous) == true {
-            registeredHotkey = previous
-            restored = true
-        } else {
-            registeredHotkey = nil
+    }
+
+    /// Registers every mode chord transactionally: a mode whose new chord is
+    /// rejected keeps its previous chord, removed chords are unregistered, and
+    /// the user is alerted when anything could not be applied.
+    private func applyModeHotkeys(_ settings: AppSettings) {
+        guard let hotkeyService else { return }
+        var failures: [String] = []
+        var applied: [String: Hotkey] = [:]
+        for mode in AppSettings.hotkeyModeIDs {
+            let desired = settings.hotkey(for: mode)
+            let registered = registeredModeHotkeys[mode]
+            if desired == registered {
+                if let desired { applied[mode] = desired }
+                continue
+            }
+            let id = AppSettings.hotkeyModeIDsToCarbonID[mode] ?? 0
+            if let desired {
+                if hotkeyService.register(desired, id: id) {
+                    applied[mode] = desired
+                } else {
+                    // register(id:) unregisters before trying, so restore the
+                    // previous chord when there was one.
+                    if let registered, hotkeyService.register(registered, id: id) {
+                        applied[mode] = registered
+                    }
+                    failures.append("\(mode) \(desired.displayString)")
+                }
+            } else {
+                hotkeyService.unregister(id: id)
+            }
         }
+        registeredModeHotkeys = applied
+        guard !failures.isEmpty else { return }
         HistoryRecorder.logger.error(
-            "Could not register \(hotkey.displayString, privacy: .public); previous hotkey restored: \(restored, privacy: .public)"
+            "Hotkey registration failed for: \(failures.joined(separator: ", "), privacy: .public)"
         )
-        showHotkeyFailure(for: hotkey, previous: previous, restored: restored)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Global shortcut not registered"
+        alert.informativeText = "LightShot could not register: \(failures.joined(separator: ", ")). Other shortcuts remain active; choose different chords in Settings."
+        alert.runModal()
     }
 
     private var appliedLoginItem: Bool?
@@ -114,20 +148,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard appliedLoginItem != settings.launchAtLogin else { return }
         appliedLoginItem = settings.launchAtLogin
         LoginItemService.sync(enabled: settings.launchAtLogin)
-    }
-
-    private func showHotkeyFailure(for hotkey: Hotkey, previous: Hotkey?, restored: Bool) {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Global shortcut not registered"
-        if restored, let previous {
-            alert.informativeText = "LightShot could not register \(hotkey.displayString). The previous shortcut \(previous.displayString) is still active."
-        } else if previous != nil {
-            alert.informativeText = "LightShot could not register \(hotkey.displayString), and restoring the previous shortcut also failed. No global shortcut is active; choose another shortcut in Settings."
-        } else {
-            alert.informativeText = "LightShot could not register \(hotkey.displayString). No global shortcut is active; choose another shortcut in Settings."
-        }
-        alert.runModal()
     }
 
     /// Shows a history failure without interrupting the copy or save that has

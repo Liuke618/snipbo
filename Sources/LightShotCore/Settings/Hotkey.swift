@@ -1,6 +1,6 @@
 import Foundation
 
-public struct HotkeyModifiers: OptionSet, Codable, Equatable, Sendable {
+public struct HotkeyModifiers: OptionSet, Codable, Equatable, Hashable, Sendable {
     public let rawValue: UInt32
 
     public init(rawValue: UInt32) {
@@ -13,7 +13,7 @@ public struct HotkeyModifiers: OptionSet, Codable, Equatable, Sendable {
     public static let control = HotkeyModifiers(rawValue: 1 << 12)
 }
 
-public struct Hotkey: Codable, Equatable, Sendable {
+public struct Hotkey: Codable, Equatable, Hashable, Sendable {
     public var keyCode: UInt32
     public var modifiers: HotkeyModifiers
 

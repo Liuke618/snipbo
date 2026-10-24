@@ -10,11 +10,67 @@ struct SettingsView: View {
 
     private let labelWidth: CGFloat = 190
 
+    /// Modes that can carry their own chord besides the base region hotkey.
+    private static let extraHotkeyModes: [(String, String)] = [
+        ("window", "Window hotkey"),
+        ("screen", "Screen hotkey"),
+        ("allScreens", "All screens hotkey"),
+        ("timedRegion", "Timed region hotkey"),
+        ("timedScreen", "Timed screen hotkey"),
+        ("lastRegion", "Last region hotkey"),
+        ("scrolling", "Scrolling hotkey"),
+    ]
+
+    private func modeHotkeyEnabledBinding(_ mode: String) -> Binding<Bool> {
+        Binding(
+            get: { model.settings.modeHotkeys[mode] != nil },
+            set: { enabled in
+                if enabled {
+                    model.settings.modeHotkeys[mode] = model.settings.modeHotkeys[mode]
+                        ?? model.settings.hotkey
+                } else {
+                    model.settings.modeHotkeys[mode] = nil
+                }
+            }
+        )
+    }
+
+    private func modeHotkeyBinding(_ mode: String) -> Binding<Hotkey> {
+        Binding(
+            get: { model.settings.modeHotkeys[mode] ?? model.settings.hotkey },
+            set: { newValue in
+                // Writes only land while the mode is enabled, so adjusting a
+                // disabled recorder cannot silently enable the chord.
+                if model.settings.modeHotkeys[mode] != nil {
+                    model.settings.modeHotkeys[mode] = newValue
+                }
+            }
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsRow("Hotkey", labelWidth: labelWidth) {
                 HotkeyRecorderView(hotkey: $model.settings.hotkey)
                     .frame(width: 220, height: 32)
+            }
+
+            groupDivider
+
+            VStack(spacing: 8) {
+                ForEach(Self.extraHotkeyModes, id: \.0) { mode, title in
+                    SettingsRow(title, labelWidth: labelWidth) {
+                        HStack(spacing: 10) {
+                            Toggle("On", isOn: modeHotkeyEnabledBinding(mode))
+                                .toggleStyle(.checkbox)
+                                .labelsHidden()
+                            HotkeyRecorderView(hotkey: modeHotkeyBinding(mode))
+                                .frame(width: 180, height: 32)
+                                .opacity(model.settings.modeHotkeys[mode] != nil ? 1 : 0.4)
+                                .disabled(model.settings.modeHotkeys[mode] == nil)
+                        }
+                    }
+                }
             }
 
             groupDivider

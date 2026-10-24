@@ -44,6 +44,36 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var copyOnEditorEscape: Bool
     /// Crops the transparent shadow padding off window captures.
     public var windowShadowTrim: Bool
+    /// Per-mode global shortcuts, keyed by capture mode. Modes without an
+    /// entry fall back to `hotkey` for the region mode and have no chord
+    /// otherwise.
+    public var modeHotkeys: [String: Hotkey]
+
+    /// Capture modes that can carry their own global shortcut, in the order
+    /// used to resolve chord conflicts.
+    public static let hotkeyModeIDs = [
+        "region", "window", "screen", "allScreens",
+        "timedRegion", "timedScreen", "lastRegion", "scrolling",
+    ]
+
+    /// Stable Carbon hotkey identifiers, one per mode.
+    public static let hotkeyModeIDsToCarbonID: [String: UInt32] = [
+        "region": 1,
+        "window": 2,
+        "screen": 3,
+        "allScreens": 4,
+        "timedRegion": 5,
+        "timedScreen": 6,
+        "lastRegion": 7,
+        "scrolling": 8,
+    ]
+
+    /// The effective chord for a mode: the explicit entry, or the base hotkey
+    /// for the region mode.
+    public func hotkey(for mode: String) -> Hotkey? {
+        if let configured = modeHotkeys[mode] { return configured }
+        return mode == "region" ? hotkey : nil
+    }
 
     private enum CodingKeys: String, CodingKey {
         case hotkey
@@ -66,6 +96,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case scrollCaptureFPS
         case copyOnEditorEscape
         case windowShadowTrim
+        case modeHotkeys
     }
 
     public init(
@@ -88,7 +119,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ocrRemoveLineBreaks: Bool = false,
         scrollCaptureFPS: Int = 10,
         copyOnEditorEscape: Bool = false,
-        windowShadowTrim: Bool = false
+        windowShadowTrim: Bool = false,
+        modeHotkeys: [String: Hotkey] = [:]
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -110,6 +142,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.scrollCaptureFPS = scrollCaptureFPS
         self.copyOnEditorEscape = copyOnEditorEscape
         self.windowShadowTrim = windowShadowTrim
+        self.modeHotkeys = modeHotkeys
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -146,6 +179,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.copyOnEditorEscape
         windowShadowTrim = try container.decodeIfPresent(Bool.self, forKey: .windowShadowTrim)
             ?? fallback.windowShadowTrim
+        modeHotkeys = try container.decodeIfPresent([String: Hotkey].self, forKey: .modeHotkeys)
+            ?? fallback.modeHotkeys
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -171,9 +206,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
         launchAtLogin: false,
         retinaDownscale: false,
         ocrRemoveLineBreaks: false,
-        scrollCaptureFPS: 10,
         copyOnEditorEscape: false,
-        windowShadowTrim: false
+        windowShadowTrim: false,
+        modeHotkeys: [:]
     )
 
     public func normalized() -> AppSettings {
@@ -188,6 +223,23 @@ public struct AppSettings: Codable, Equatable, Sendable {
         if !copy.openEditorAfterCapture, !copy.afterCaptureCopy, !copy.afterCaptureSave {
             copy.afterCaptureCopy = true
         }
+        // Drop unknown modes and chords that collide (the region fallback
+        // occupies its chord first), so Carbon never registers one chord twice.
+        var effective: [String: Hotkey] = [:]
+        var used = Set<Hotkey>()
+        for mode in Self.hotkeyModeIDs {
+            let chord: Hotkey?
+            if let configured = copy.modeHotkeys[mode] {
+                chord = configured
+            } else if mode == "region" {
+                chord = copy.hotkey
+            } else {
+                chord = nil
+            }
+            guard let chord, used.insert(chord).inserted else { continue }
+            effective[mode] = chord
+        }
+        copy.modeHotkeys = copy.modeHotkeys.filter { effective[$0.key] == $0.value }
         if copy.saveDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             copy.saveDirectory = Self.defaultSaveDirectory
         }
