@@ -180,4 +180,22 @@ struct AppSettingsTests {
         )
         #expect(legacy.scrollCaptureFPS == 10)
     }
+
+    @Test func testCopyOnEditorEscapeRoundTripAndLegacyDecode() throws {
+        #expect(!AppSettings.default.copyOnEditorEscape)
+        var settings = AppSettings.default
+        settings.copyOnEditorEscape = true
+        let data = try JSONEncoder().encode(settings)
+        #expect(try JSONDecoder().decode(AppSettings.self, from: data).copyOnEditorEscape)
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        object.removeValue(forKey: "copyOnEditorEscape")
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(!legacy.copyOnEditorEscape)
+    }
 }

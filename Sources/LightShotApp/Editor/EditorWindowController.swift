@@ -113,7 +113,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         canvas.onCopyAndClose = { [weak self] in self?.copyAndClose() }
         canvas.onSave = { [weak self] in self?.saveAndClose(saveAs: false) }
         canvas.onSaveAs = { [weak self] in self?.saveAndClose(saveAs: true) }
-        canvas.onEscape = { [weak self] in self?.close() }
+        canvas.onEscape = { [weak self] in self?.escapeAction() }
         recognitionPanel.onCopy = { [weak self] text in
             self?.copyRecognitionText(text)
         }
@@ -204,7 +204,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             copyAndClose()
             return true
         case 53:
-            close()
+            escapeAction()
             return true
         default:
             return false
@@ -212,6 +212,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     // MARK: - Copy and save
+
+    /// Esc closes the editor, optionally copying the rendered image first.
+    private func escapeAction() {
+        if settings.copyOnEditorEscape {
+            copyToPasteboard()
+        }
+        close()
+    }
 
     /// Commits a pending text overlay before an action reads the document, so
     /// text still being edited is included in the export and is not lost when

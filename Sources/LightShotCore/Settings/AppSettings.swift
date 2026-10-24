@@ -40,6 +40,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var ocrRemoveLineBreaks: Bool
     /// Frame rate target for scrolling capture, in frames per second.
     public var scrollCaptureFPS: Int
+    /// Copies the rendered image before an editor Esc closes the window.
+    public var copyOnEditorEscape: Bool
 
     private enum CodingKeys: String, CodingKey {
         case hotkey
@@ -60,6 +62,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case retinaDownscale
         case ocrRemoveLineBreaks
         case scrollCaptureFPS
+        case copyOnEditorEscape
     }
 
     public init(
@@ -80,7 +83,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         launchAtLogin: Bool = false,
         retinaDownscale: Bool = false,
         ocrRemoveLineBreaks: Bool = false,
-        scrollCaptureFPS: Int = 10
+        scrollCaptureFPS: Int = 10,
+        copyOnEditorEscape: Bool = false
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -100,6 +104,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.retinaDownscale = retinaDownscale
         self.ocrRemoveLineBreaks = ocrRemoveLineBreaks
         self.scrollCaptureFPS = scrollCaptureFPS
+        self.copyOnEditorEscape = copyOnEditorEscape
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -132,6 +137,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.ocrRemoveLineBreaks
         scrollCaptureFPS = try container.decodeIfPresent(Int.self, forKey: .scrollCaptureFPS)
             ?? fallback.scrollCaptureFPS
+        copyOnEditorEscape = try container.decodeIfPresent(Bool.self, forKey: .copyOnEditorEscape)
+            ?? fallback.copyOnEditorEscape
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -157,7 +164,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         launchAtLogin: false,
         retinaDownscale: false,
         ocrRemoveLineBreaks: false,
-        scrollCaptureFPS: 10
+        scrollCaptureFPS: 10,
+        copyOnEditorEscape: false
     )
 
     public func normalized() -> AppSettings {

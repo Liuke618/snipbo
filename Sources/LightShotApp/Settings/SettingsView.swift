@@ -85,10 +85,15 @@ struct SettingsView: View {
                         .toggleStyle(.checkbox)
                 }
 
-                SettingsRow("Export", labelWidth: labelWidth) {
-                    Toggle("Downscale retina captures to 1x", isOn: $model.settings.retinaDownscale)
-                        .toggleStyle(.checkbox)
-                }
+            SettingsRow("Export", labelWidth: labelWidth) {
+                Toggle("Downscale retina captures to 1x", isOn: $model.settings.retinaDownscale)
+                    .toggleStyle(.checkbox)
+            }
+
+            SettingsRow("Esc in editor", labelWidth: labelWidth) {
+                Toggle("Copy image before closing", isOn: $model.settings.copyOnEditorEscape)
+                    .toggleStyle(.checkbox)
+            }
 
                 SettingsRow("Countdown", labelWidth: labelWidth) {
                     Stepper(
