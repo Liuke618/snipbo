@@ -138,15 +138,6 @@ open /Applications/Snipbo.app
 
 首次截图时 macOS 会请求“屏幕录制”权限，请在 系统设置 → 隐私与安全性 → 屏幕录制 中允许 Snipbo。授权需要重启应用才生效；权限引导页提供了“重启 Snipbo”按钮。每次启动最多只会自动请求一次权限，之后未授权时显示引导页。
 
-ad-hoc 签名每次重建都会改变 CDHash，权限可能反复失效。建议先创建一次本机自签名证书：
-
-```bash
-./scripts/create_signing_cert.sh
-./scripts/build_app.sh
-```
-
-`build_app.sh` 会自动使用名为 `Snipbo Local Signing` 的证书。之后在系统设置里移除旧的 Snipbo 条目并重新添加，权限即可在后续重建中保持。
-
 ## 数据与隐私
 
 - **设置**：`UserDefaults`，bundle id 为 `local.snipbo.app`。
