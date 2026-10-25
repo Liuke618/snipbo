@@ -3,9 +3,10 @@ import SnipboCore
 import Vision
 
 struct ScrollRegistration: Sendable {
-    /// Raw Vision `alignmentTransform.ty` in pixels. Vision's space is
-    /// bottom-left, y-up: a downward scroll yields a negative value.
-    /// Interpret through `ScrollAlignment.overlapRows`, never directly.
+    /// Raw Vision `alignmentTransform.ty` in pixels. For text-bearing
+    /// content a downward scroll yields a positive value whose magnitude is
+    /// the rows the content moved up. Interpret through `ScrollAlignment`,
+    /// never directly.
     let translationY: Int
     let confidence: Float
 }

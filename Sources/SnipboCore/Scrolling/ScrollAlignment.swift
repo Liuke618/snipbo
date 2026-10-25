@@ -27,6 +27,22 @@ public enum ScrollAlignment {
         return stripHeight - translationY
     }
 
+    /// The leading rows a frame contributes above the composite, from a
+    /// registration against the composite's TOP strip. Scrolling up moves the
+    /// strip's content DOWN in the new frame, so `translationY` is negative and
+    /// its magnitude is the rows of new content at the frame's top. Returns nil
+    /// for no movement, a downward scroll, or a jump of a whole strip or more.
+    public static func leadingRows(
+        translationY: Int,
+        stripHeight: Int,
+        frameHeight: Int
+    ) -> Int? {
+        guard translationY < 0 else { return nil }
+        let rows = -translationY
+        guard rows > 0, rows < stripHeight else { return nil }
+        return rows
+    }
+
     /// Clamps the requested height so `width × height` stays within the
     /// composite pixel budget.
     public static func effectiveMaxHeight(requested: Int, width: Int) -> Int {

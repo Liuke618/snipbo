@@ -9,11 +9,14 @@ import SnipboCore
 /// Scheduling: `enqueue` runs on `stateQueue`, which keeps only the newest
 /// pending frame; Vision registration and stitching run one frame at a time
 /// on `workQueue`. Frames register against the composite's bottom strip (the
-/// live frontier), so skipped upward-scroll frames can never desynchronize
-/// the append point from the composite — the stitched image stays continuous
-/// through scroll wiggles. `onFinish` fires exactly once, either from an
-/// automatic stop (limit reached, low confidence, stream error) or never —
-/// a manual `stop()` delivers through its return value instead.
+/// live frontier) to append downward, or its top strip to prepend upward, so
+/// the stitched image stays continuous through scroll wiggles and a capture
+/// started mid-document still ends up whole. Every registration is verified
+/// against the actual overlap before anything is stitched, because Vision
+/// reports confident matches for content that is not there. `onFinish` fires
+/// exactly once, either from an automatic stop (limit reached, low
+/// confidence, stream error) or never — a manual `stop()` delivers through
+/// its return value instead.
 final class ScrollFrameProcessor: @unchecked Sendable {
     private let maxHeight: Int
     private let onProgress: @MainActor @Sendable (Int) -> Void
@@ -117,7 +120,6 @@ final class ScrollFrameProcessor: @unchecked Sendable {
 
     private func process(_ image: CGImage) {
         guard !stateQueue.sync(execute: { finished }), image.width > 0, image.height > 0 else { return }
-        let frame = ImageData(image)
         if composite == nil {
             // Pin the height budget once, from the first frame's width.
             effectiveMaxHeight = ScrollAlignment.effectiveMaxHeight(
@@ -138,54 +140,139 @@ final class ScrollFrameProcessor: @unchecked Sendable {
             return
         }
         guard let current = composite else { return }
-        // Register the frame against the composite's bottom strip: the live
-        // capture frontier.
+        // The strip is one viewport tall, bounded by the composite for short
+        // captures. Below the minimum verifiable overlap nothing is appended.
         let stripHeight = min(image.height, current.height)
-        guard stripHeight > 0,
-              let strip = current.cropping(to: CGRect(
-                  x: 0,
-                  y: current.height - stripHeight,
-                  width: current.width,
-                  height: stripHeight
-              )) else {
-            return
+        guard stripHeight >= ScrollOverlap.minimumRows else { return }
+
+        var stitched: ScrollStitchResult?
+        // Downward scrolls extend the composite below its bottom frontier.
+        if let result = appendFrame(image, composite: current, stripHeight: stripHeight) {
+            stitched = result
+        } else {
+            guard !stateQueue.sync(execute: { finished }) else { return }
+            // Upward scrolls extend it above the top frontier, so a capture
+            // started mid-document still ends up whole.
+            stitched = prependFrame(image, composite: current, stripHeight: stripHeight)
         }
+        guard let stitched else { return }
+        composite = stitched.image
+        appended = true
+        report(stitched.image.height)
+        if stitched.reachedLimit {
+            reason = .limitReached
+            finish(.success(ScrollingCaptureResult(image: stitched.image, reason: .limitReached)))
+        }
+    }
+
+    /// Registers against the composite's bottom strip and appends only when
+    /// the implied overlap is structurally verified. Vision reports a
+    /// confident match even when the strip is absent (repeated chat layouts),
+    /// which used to append unrelated rows and duplicate content.
+    private func appendFrame(
+        _ image: CGImage,
+        composite current: CGImage,
+        stripHeight: Int
+    ) -> ScrollStitchResult? {
+        guard let strip = current.cropping(to: CGRect(
+            x: 0,
+            y: current.height - stripHeight,
+            width: current.width,
+            height: stripHeight
+        )) else { return nil }
         do {
             let registration = try ScrollRegistrationService.offset(
                 previous: ImageData(strip),
-                current: frame
+                current: ImageData(image)
             )
-            ScrollDebugLog.log("reg: stripH=\(stripHeight) frameH=\(image.height) ty=\(registration.translationY) conf=\(registration.confidence)")
+            ScrollDebugLog.log("reg bottom: stripH=\(stripHeight) frameH=\(image.height) ty=\(registration.translationY) conf=\(registration.confidence)")
             guard registration.confidence >= 0.2 else {
                 reason = .lowConfidence
                 finish(.success(ScrollingCaptureResult(image: current, reason: .lowConfidence)))
-                return
+                return nil
             }
             guard let skip = ScrollAlignment.frontierSkipRows(
                 translationY: registration.translationY,
                 stripHeight: stripHeight,
                 frameHeight: image.height
-            ), let stitched = ScrollStitcher.append(
+            ) else { return nil }
+            let overlapRows = stripHeight - skip
+            guard ScrollOverlap.confidentlyOverlaps(
+                composite: current,
+                frame: image,
+                compositeRowOffset: current.height - stripHeight + registration.translationY,
+                frameRowOffset: 0,
+                rows: overlapRows
+            ) else {
+                ScrollDebugLog.log("reject append: ty=\(registration.translationY) overlap=\(overlapRows) (unverified)")
+                return nil
+            }
+            guard let stitched = ScrollStitcher.append(
                 composite: current,
                 frame: image,
                 offset: skip,
                 maxHeight: effectiveMaxHeight
             ) else {
                 ScrollDebugLog.log("skip: ty=\(registration.translationY) stripH=\(stripHeight)")
-                return
+                return nil
             }
             ScrollDebugLog.log("append: skip=\(skip) newH=\(stitched.image.height)")
-            composite = stitched.image
-            appended = true
-            report(stitched.image.height)
-            if stitched.reachedLimit {
-                reason = .limitReached
-                finish(.success(ScrollingCaptureResult(image: stitched.image, reason: .limitReached)))
-            }
+            return stitched
         } catch {
-            // A single hopeless frame must not abort a long capture; the next
-            // frame registers against the same frontier.
-            return
+            // A single hopeless frame must not abort a long capture.
+            return nil
+        }
+    }
+
+    /// Registers against the composite's top strip and prepends the rows a
+    /// frame contributes above it, with the same overlap verification.
+    private func prependFrame(
+        _ image: CGImage,
+        composite current: CGImage,
+        stripHeight: Int
+    ) -> ScrollStitchResult? {
+        guard let strip = current.cropping(to: CGRect(
+            x: 0,
+            y: 0,
+            width: current.width,
+            height: stripHeight
+        )) else { return nil }
+        do {
+            let registration = try ScrollRegistrationService.offset(
+                previous: ImageData(strip),
+                current: ImageData(image)
+            )
+            ScrollDebugLog.log("reg top: stripH=\(stripHeight) frameH=\(image.height) ty=\(registration.translationY) conf=\(registration.confidence)")
+            guard registration.confidence >= 0.2 else { return nil }
+            guard let rows = ScrollAlignment.leadingRows(
+                translationY: registration.translationY,
+                stripHeight: stripHeight,
+                frameHeight: image.height
+            ) else { return nil }
+            let overlapRows = stripHeight - rows
+            guard ScrollOverlap.confidentlyOverlaps(
+                composite: current,
+                frame: image,
+                compositeRowOffset: 0,
+                frameRowOffset: rows,
+                rows: overlapRows
+            ) else {
+                ScrollDebugLog.log("reject prepend: ty=\(registration.translationY) overlap=\(overlapRows) (unverified)")
+                return nil
+            }
+            guard let stitched = ScrollStitcher.prepend(
+                composite: current,
+                frame: image,
+                rows: rows,
+                maxHeight: effectiveMaxHeight
+            ) else {
+                ScrollDebugLog.log("skip prepend: ty=\(registration.translationY) stripH=\(stripHeight)")
+                return nil
+            }
+            ScrollDebugLog.log("prepend: rows=\(rows) newH=\(stitched.image.height)")
+            return stitched
+        } catch {
+            return nil
         }
     }
 

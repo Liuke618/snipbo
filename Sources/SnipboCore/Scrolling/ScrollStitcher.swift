@@ -85,4 +85,58 @@ public enum ScrollStitcher {
             reachedLimit: height >= maxHeight
         )
     }
+
+    /// Prepends the new top part of `frame` above `composite`. `rows` is the
+    /// number of new rows at the frame's top. When the height budget cannot
+    /// fit them all, the rows adjacent to the composite are kept so the
+    /// stitched image stays continuous.
+    public static func prepend(
+        composite: CGImage,
+        frame: CGImage,
+        rows: Int,
+        maxHeight: Int
+    ) -> ScrollStitchResult? {
+        guard composite.width == frame.width,
+              composite.width > 0,
+              rows > 0,
+              rows < frame.height,
+              maxHeight > composite.height else {
+            return nil
+        }
+        let prependRows = min(rows, maxHeight - composite.height)
+        guard prependRows > 0,
+              let slice = frame.cropping(to: CGRect(
+                  x: 0,
+                  y: rows - prependRows,
+                  width: frame.width,
+                  height: prependRows
+              )) else { return nil }
+
+        let width = composite.width
+        let height = composite.height + prependRows
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: composite.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        context.interpolationQuality = .high
+        context.draw(slice, in: CGRect(x: 0, y: composite.height, width: width, height: prependRows))
+        context.draw(composite, in: CGRect(
+            x: 0,
+            y: 0,
+            width: width,
+            height: composite.height
+        ))
+        guard let image = context.makeImage() else { return nil }
+        return ScrollStitchResult(
+            image: image,
+            appendedRows: prependRows,
+            reachedLimit: height >= maxHeight
+        )
+    }
 }

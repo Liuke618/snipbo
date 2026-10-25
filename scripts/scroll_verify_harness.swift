@@ -19,8 +19,9 @@ import UniformTypeIdentifiers
 /// unique red-channel identity, so any duplicated, missing, or out-of-order
 /// band in the stitched output is caught.
 ///
-/// Scenarios: monotonic scroll with an up/down wiggle, no movement, height
-/// limit, and an upward scroll that must append nothing.
+/// Scenarios: monotonic scroll with an up/down wiggle, a capture started
+/// mid-document that scrolls up and then down, no movement, height limit, and
+/// an upward scroll back to the start that must add nothing.
 ///
 /// Run with `scripts/run_scroll_verify_harness.sh`. The stitched image is
 /// written to /tmp/snipbo-scroll-verify.png for eyeballing.
@@ -32,6 +33,7 @@ struct ScrollVerifyHarness {
 
         do {
             try await scenarioMainScroll(reporter: reporter)
+            try await scenarioUpThenDown(reporter: reporter)
             try await scenarioNoMovement(reporter: reporter)
             try await scenarioHeightLimit(reporter: reporter)
             try await scenarioUpwardScrollAppendsNothing(reporter: reporter)
@@ -79,6 +81,43 @@ struct ScrollVerifyHarness {
         if let image = result?.image {
             savePNG(image, to: "/tmp/snipbo-scroll-verify.png")
         }
+    }
+
+    /// Starting mid-document and scrolling up to the top before scrolling down
+    /// past the start must still produce the whole document: upward frames are
+    /// prepended, downward frames appended, with no duplicates or gaps.
+    private static func scenarioUpThenDown(reporter: Reporter) async throws {
+        let run = ProcessorRun(maxHeight: 100_000)
+        var tops = stride(from: 1200.0, through: 0.0, by: -150.0).map { $0 }
+        tops += stride(from: 150.0, through: 3600.0, by: 150.0).map { $0 }
+        for top in tops {
+            run.processor.enqueue(try renderFrame(topPt: top))
+            try await Task.sleep(nanoseconds: 350_000_000)
+        }
+        let result = try await drain(run: run, expectAutomatic: false)
+        reporter.check(result?.reason == .stopped, "up-then-down finishes as .stopped")
+        guard let image = result?.image else {
+            reporter.fail("up-then-down produced no image")
+            return
+        }
+        let bands = bandScan(image)
+        reporter.check(
+            bands.first == 0,
+            "up-then-down starts at band 0 (got \(bands.first.map(String.init) ?? "nil"))"
+        )
+        reporter.check(
+            bands.last == 99,
+            "up-then-down ends at band 99 (got \(bands.last.map(String.init) ?? "nil"))"
+        )
+        reporter.check(
+            Set(bands).count == 100,
+            "up-then-down keeps every band (got \(Set(bands).count))"
+        )
+        reporter.check(
+            bandsIsMonotonic(bands),
+            "up-then-down bands are ordered with no duplicates"
+        )
+        savePNG(image, to: "/tmp/snipbo-scroll-updown.png")
     }
 
     private static func scenarioNoMovement(reporter: Reporter) async throws {

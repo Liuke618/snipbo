@@ -49,6 +49,45 @@ struct ScrollStitcherTests {
         #expect(try rows(of: result.image) == [0, 1, 2, 3, 5, 6])
     }
 
+    @Test func testPrependAddsRowsAboveComposite() throws {
+        let composite = try makeRows([2, 3])
+        let frame = try makeRows([0, 1, 2, 3])
+        let result = try #require(ScrollStitcher.prepend(
+            composite: composite,
+            frame: frame,
+            rows: 2,
+            maxHeight: 100
+        ))
+        #expect(result.image.height == 4)
+        #expect(result.appendedRows == 2)
+        #expect(!result.reachedLimit)
+        #expect(try rows(of: result.image) == [0, 1, 2, 3])
+    }
+
+    @Test func testPrependStopsAtMaximumHeightKeepingRowsAdjacentToComposite() throws {
+        let composite = try makeRows([2, 3])
+        let frame = try makeRows([0, 1, 2, 3])
+        let result = try #require(ScrollStitcher.prepend(
+            composite: composite,
+            frame: frame,
+            rows: 2,
+            maxHeight: 3
+        ))
+        #expect(result.image.height == 3)
+        #expect(result.appendedRows == 1)
+        #expect(result.reachedLimit)
+        #expect(try rows(of: result.image) == [1, 2, 3])
+    }
+
+    @Test func testInvalidPrependRowsAndWidthsAreIgnored() throws {
+        let composite = try makeRows([2, 3])
+        let frame = try makeRows([0, 1, 2, 3])
+        #expect(ScrollStitcher.prepend(composite: composite, frame: frame, rows: 0, maxHeight: 100) == nil)
+        #expect(ScrollStitcher.prepend(composite: composite, frame: frame, rows: 4, maxHeight: 100) == nil)
+        let narrow = try makeRows([8, 9], width: 2)
+        #expect(ScrollStitcher.prepend(composite: composite, frame: narrow, rows: 1, maxHeight: 100) == nil)
+    }
+
     @Test func testInvalidOffsetsAndWidthsAreIgnored() throws {
         let initial = try makeRows([0, 1, 2, 3])
         let frame = try makeRows([4, 5, 6, 7])
@@ -69,6 +108,16 @@ struct ScrollAlignmentTests {
         // new content at the frame's bottom.
         #expect(ScrollAlignment.frontierSkipRows(translationY: 1, stripHeight: 4, frameHeight: 4) == 3)
         #expect(ScrollAlignment.frontierSkipRows(translationY: 300, stripHeight: 800, frameHeight: 800) == 500)
+    }
+
+    @Test func testLeadingRowsForUpwardScroll() {
+        // Registration against the top strip: scrolling up yields a negative
+        // ty whose magnitude is the new rows at the frame's top.
+        #expect(ScrollAlignment.leadingRows(translationY: -1, stripHeight: 4, frameHeight: 4) == 1)
+        #expect(ScrollAlignment.leadingRows(translationY: -300, stripHeight: 800, frameHeight: 800) == 300)
+        #expect(ScrollAlignment.leadingRows(translationY: 0, stripHeight: 800, frameHeight: 800) == nil)
+        #expect(ScrollAlignment.leadingRows(translationY: 1, stripHeight: 800, frameHeight: 800) == nil)
+        #expect(ScrollAlignment.leadingRows(translationY: -800, stripHeight: 800, frameHeight: 800) == nil)
     }
 
     @Test func testFrontierRejectsUpwardNoMovementAndJumps() {
@@ -143,6 +192,81 @@ struct ScrollAlignmentTests {
     }
 }
 
+@Suite("ScrollOverlapTests")
+struct ScrollOverlapTests {
+    @Test func testIdenticalOverlapIsTrusted() throws {
+        let doc = try makeChatBlocks()
+        let frame = try #require(doc.cropping(to: CGRect(
+            x: 0, y: 100, width: doc.width, height: 500
+        )))
+        // Composite rows 200…600 and frame rows 100…500 are the same content.
+        #expect(ScrollOverlap.confidentlyOverlaps(
+            composite: doc,
+            frame: frame,
+            compositeRowOffset: 200,
+            frameRowOffset: 100,
+            rows: 400
+        ))
+    }
+
+    @Test func testRepeatedLayoutWithDifferentContentIsRejected() throws {
+        let doc = try makeChatBlocks()
+        let frame = try #require(doc.cropping(to: CGRect(
+            x: 0, y: 100, width: doc.width, height: 500
+        )))
+        // Offset by exactly one block: layout edges align but the unique
+        // markers do not — the false-positive Vision reports on chat layouts.
+        #expect(!ScrollOverlap.confidentlyOverlaps(
+            composite: doc,
+            frame: frame,
+            compositeRowOffset: 200,
+            frameRowOffset: 20,
+            rows: 400
+        ))
+    }
+
+    @Test func testBlankAndTinyOverlapsAreRejected() throws {
+        let doc = try makeChatBlocks()
+        let frame = try #require(doc.cropping(to: CGRect(
+            x: 0, y: 100, width: doc.width, height: 500
+        )))
+        #expect(!ScrollOverlap.confidentlyOverlaps(
+            composite: doc,
+            frame: frame,
+            compositeRowOffset: 0,
+            frameRowOffset: 0,
+            rows: ScrollOverlap.minimumRows - 1
+        ))
+        // Uniform content has no edges, so an overlap cannot be verified.
+        let blank = try makeRows(Array(repeating: 128, count: 200), width: 64)
+        #expect(!ScrollOverlap.confidentlyOverlaps(
+            composite: blank,
+            frame: blank,
+            compositeRowOffset: 0,
+            frameRowOffset: 0,
+            rows: 100
+        ))
+    }
+
+    @Test func testOutOfBoundsOverlapIsRejected() throws {
+        let doc = try makeChatBlocks()
+        #expect(!ScrollOverlap.confidentlyOverlaps(
+            composite: doc,
+            frame: doc,
+            compositeRowOffset: doc.height - 100,
+            frameRowOffset: 0,
+            rows: 200
+        ))
+        #expect(!ScrollOverlap.confidentlyOverlaps(
+            composite: doc,
+            frame: doc,
+            compositeRowOffset: 0,
+            frameRowOffset: -1,
+            rows: 200
+        ))
+    }
+}
+
 // sRGB everywhere: a DeviceRGB fill→makeImage→draw round-trip perturbs low
 // byte values by ~1 (color matching), which would break exact row assertions.
 private let rowColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
@@ -166,6 +290,41 @@ private func makeRows(_ values: [UInt8], width: Int = 4) throws -> CGImage {
         // CGContext is bottom-left oriented; row 0 of the resulting CGImage is
         // the top row, so draw the first value at the top.
         context.fill(CGRect(x: 0, y: height - row - 1, width: width, height: 1))
+    }
+    return try #require(context.makeImage())
+}
+
+/// A chat-like document: repeated layout bands with a unique marker per
+/// block, so a whole-block offset keeps layout edges aligned while the marker
+/// edges stop matching.
+private func makeChatBlocks(
+    blocks: Int = 10,
+    width: Int = 240,
+    blockHeight: Int = 80
+) throws -> CGImage {
+    let height = blocks * blockHeight
+    let context = try #require(CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: rowColorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ))
+    context.setFillColor(CGColor(colorSpace: rowColorSpace, components: [1, 1, 1, 1])!)
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    for block in 0..<blocks {
+        // CGContext is bottom-left oriented; block 0 is the top block.
+        let y = height - (block + 1) * blockHeight
+        context.setFillColor(CGColor(
+            colorSpace: rowColorSpace,
+            components: [0.88, 0.88, 0.88, 1]
+        )!)
+        context.fill(CGRect(x: 8, y: y + 10, width: width - 16, height: blockHeight - 20))
+        let markerX = 16 + (block * 37) % (width - 80)
+        context.setFillColor(CGColor(colorSpace: rowColorSpace, components: [0, 0, 0, 1])!)
+        context.fill(CGRect(x: markerX, y: y + 30, width: 48, height: 8))
     }
     return try #require(context.makeImage())
 }
