@@ -1,14 +1,37 @@
-# Snipbo
+<div align="center">
+  <img src="docs/images/icon.png" width="116" height="116" alt="Snipbo 应用图标">
+  <h1>Snipbo</h1>
+  <p><strong>截完就能发。</strong> 一个常驻菜单栏的 macOS 截图与标注工具，截图、标注、OCR、贴图全部在本机完成。</p>
+  <p>
+    <img alt="版本 0.4.0" src="https://img.shields.io/badge/version-0.4.0-35C3F2?style=flat-square">
+    <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14.0%2B-000000?style=flat-square&logo=apple&logoColor=white">
+    <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat-square&logo=swift&logoColor=white">
+    <img alt="不联网" src="https://img.shields.io/badge/network-none-17915D?style=flat-square">
+  </p>
+</div>
 
-A fast, local-first screenshot and annotation tool for macOS. 截图、标注、OCR、贴图，全部在本机完成。
+Snipbo 把「截图 → 标注 → 复制」压缩成一次快捷键：按下默认的 `⌘⇧7` 冻结画面、拖拽框选，在编辑器里直接标好，按 `Enter` 复制，或 `⌘S` 保存。OCR、滚动长截图、贴图都用 Apple 系统框架在本机完成；应用不发起任何网络请求，不上传、不统计、不需要账户。
 
-Snipbo 是一个常驻菜单栏的截图工具：按下一个全局快捷键进入选区，标注后回车复制或保存。应用不发起任何网络请求，不上传、不统计、不需要账户。
+![Snipbo 编辑器](docs/images/editor.png)
 
-当前版本：**0.4.0**
+<p align="center"><sub>14 种标注工具、浮动样式面板、像素化与 OCR 都在同一个编辑器里。截图中「Pulse」为演示内容。</sub></p>
+
+## 界面
+
+| 框选 | OCR 与条码 |
+| :---: | :---: |
+| <img src="docs/images/capture.png" width="100%" alt="区域截图选区"> | <img src="docs/images/recognition.png" width="100%" alt="OCR 识别结果面板"> |
+| 冻结画面、八向手柄、实时尺寸，方向键可微调 | 识别块在画布上高亮，右侧面板展示并复制文本 |
+
+<p align="center">
+  <img src="docs/images/settings.png" width="360" alt="Snipbo 设置">
+  <br>
+  <sub>通用 / 快捷键 / 高级 / 更新 / 关于，支持中英文界面与每个截图模式独立热键</sub>
+</p>
 
 ## 功能
 
-### 截图模式
+### 截图
 
 | 模式 | 说明 | 默认快捷键 |
 | --- | --- | --- |
