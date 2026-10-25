@@ -33,6 +33,6 @@ fi
 codesign --force --sign "$IDENTITY" --identifier "local.snipbo.app" "$APP_DIR"
 if [[ "$IDENTITY" == "-" ]]; then
     echo "warning: ad-hoc signed; Screen Recording permission can reset after every rebuild."
-    echo "         Run scripts/create_signing_cert.sh once, or set SNIPBO_SIGN_IDENTITY."
+    echo "         Set SNIPBO_SIGN_IDENTITY to a stable code-signing identity to keep it."
 fi
 echo "Built $APP_DIR (signed with: $IDENTITY)"
