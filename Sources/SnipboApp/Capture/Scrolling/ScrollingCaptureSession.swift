@@ -1,7 +1,7 @@
 import AppKit
 import CoreMedia
 import SnipboCore
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 import VideoToolbox
 
 enum ScrollingCaptureReason: Equatable, Sendable {

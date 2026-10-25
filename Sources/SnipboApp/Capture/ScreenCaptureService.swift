@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 import SnipboCore
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 
 enum CaptureError: Error, LocalizedError {
     case noDisplays
