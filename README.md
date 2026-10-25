@@ -112,7 +112,7 @@ Snipbo 把「截图 → 标注 → 复制」压缩成一次快捷键：按下默
 
 ### 下载
 
-从 [GitHub Releases](https://github.com/Liuke618/snipbo/releases) 下载最新的 `Snipbo.app`，拖入 `/Applications`；如果没有现成构建，按下面的步骤从源码构建。
+从 [GitHub Releases](https://github.com/Liuke618/snipbo/releases) 下载最新的 `Snipbo-<版本>-arm64.zip`，解压后把 `Snipbo.app` 拖入 `/Applications`；如果没有现成构建，按下面的步骤从源码构建。
 
 应用未做公证，首次打开若被 Gatekeeper 拦截，请在 Finder 中右键应用选择“打开”。
 
