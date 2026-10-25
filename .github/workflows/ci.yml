@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test (arm64)
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          uname -m
+          sw_vers
+          swift --version
+          xcodebuild -version
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            .swiftpm
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-swift-
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build app bundle
+        run: ./scripts/build_app.sh
+
+      - name: Show app signature
+        run: codesign -dv --verbose=2 dist/Snipbo.app
+
+      - name: Package app
+        run: |
+          ditto -c -k --keepParent dist/Snipbo.app Snipbo-arm64.zip
+          shasum -a 256 Snipbo-arm64.zip | tee Snipbo-arm64.zip.sha256
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Snipbo-arm64
+          path: |
+            Snipbo-arm64.zip
+            Snipbo-arm64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
