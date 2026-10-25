@@ -59,6 +59,15 @@ struct EditorProbe {
             )
             probeToolbar.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: fitZoom)
             let toolbarFloor = probeToolbar.fittingSize.width
+            // Zoom digits change constantly while pinching; the toolbar must
+            // not resize (and shift its icons) between "10%" and "800%".
+            probeToolbar.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: 0.1)
+            let narrowZoomWidth = probeToolbar.fittingSize.width
+            probeToolbar.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: 8)
+            let wideZoomWidth = probeToolbar.fittingSize.width
+            check("toolbar: width independent of zoom digits",
+                  abs(narrowZoomWidth - wideZoomWidth) < 0.5,
+                  "\(Int(narrowZoomWidth)) vs \(Int(wideZoomWidth))")
             let expectedWidth = min(max(640, 2022 * fitZoom, toolbarFloor), screen.width * 0.9)
             let expectedHeight = min(max(320, 5175 * fitZoom), screen.height * 0.9) + 36
             check("large: window hugs fitted image (toolbar floor respected)",

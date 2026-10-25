@@ -126,6 +126,10 @@ final class EditorToolbarView: NSView {
 
         zoomLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         zoomLabel.textColor = .secondaryLabelColor
+        // Fixed width: the zoom digits change on every pinch tick, and letting
+        // the label resize would shift the icons beside it.
+        zoomLabel.alignment = .right
+        zoomLabel.widthAnchor.constraint(equalToConstant: 40).isActive = true
 
         sizeButton.isBordered = false
         sizeButton.imagePosition = .noImage
