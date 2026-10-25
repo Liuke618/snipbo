@@ -117,7 +117,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             toolbar.topAnchor.constraint(equalTo: body.topAnchor),
             toolbar.heightAnchor.constraint(equalToConstant: EditorToolbarView.height),
             scrollView.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: body.trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: body.bottomAnchor),
             scrollTrailingConstraint,
@@ -532,7 +531,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             recognitionPanelConstraints = [
                 recognitionPanel.leadingAnchor.constraint(equalTo: scrollView.trailingAnchor),
                 recognitionPanel.trailingAnchor.constraint(equalTo: bodyView.trailingAnchor),
-                recognitionPanel.topAnchor.constraint(equalTo: bodyView.topAnchor),
+                recognitionPanel.topAnchor.constraint(equalTo: scrollView.topAnchor),
                 recognitionPanel.bottomAnchor.constraint(equalTo: bodyView.bottomAnchor),
                 recognitionPanel.widthAnchor.constraint(equalToConstant: 300),
             ]
