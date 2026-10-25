@@ -6,7 +6,7 @@ import Foundation
 public enum DocumentRenderer {
     /// Shared CIContext for blur rendering. CIContext creation is expensive
     /// and the instance is thread-safe.
-    private static let ciContext = CIContext(options: nil)
+    nonisolated(unsafe) private static let ciContext = CIContext(options: nil)
 
     public static func render(_ document: EditDocument) -> CGImage? {
         let imageBounds = CGRect(x: 0, y: 0, width: document.image.width, height: document.image.height)
