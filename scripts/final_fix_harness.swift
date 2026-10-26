@@ -131,11 +131,12 @@ struct FinalFixHarness {
         coordinator.complete(capture: capture, rect: CGRect(x: 0, y: 0, width: 100, height: 100))
         coordinator.complete(capture: capture, rect: CGRect(x: 0, y: 0, width: 100, height: 100))
 
+        let editorsReady = await waitUntil { coordinator.editors.count == 2 }
         reporter.check(
-            coordinator.editors.count == 2,
+            editorsReady,
             "a second capture retains both capture editors"
         )
-        guard coordinator.editors.count == 2 else { return }
+        guard editorsReady else { return }
         let first = coordinator.editors[0]
         let second = coordinator.editors[1]
         reporter.check(first !== second, "capture editors are distinct instances")
@@ -151,7 +152,7 @@ struct FinalFixHarness {
         settings.historyEnabled = true
         coordinator.updateSettings(settings)
         reporter.check(
-            first.copyToPasteboard(),
+            await first.copyToPasteboard(),
             "the first editor still handles actions after the second capture"
         )
         coordinator.complete(capture: capture, rect: CGRect(x: 0, y: 0, width: 100, height: 100))
@@ -161,7 +162,7 @@ struct FinalFixHarness {
         // The editor's own copy/save must not duplicate the delivered entry.
         settings.historyEnabled = false
         coordinator.updateSettings(settings)
-        _ = first.copyToPasteboard()
+        _ = await first.copyToPasteboard()
         try await Task.sleep(nanoseconds: 200_000_000)
         reporter.check(
             await store.entries().count == 1,
@@ -218,18 +219,19 @@ struct FinalFixHarness {
         let capture = try makeCapture()
 
         coordinator.complete(capture: capture, rect: CGRect(x: 0, y: 0, width: 100, height: 100))
-        reporter.check(pasteboard.setDataCalls == 1, "direct copy attempts the pasteboard write")
+        let copied = await waitUntil { pasteboard.setDataCalls == 1 }
+        reporter.check(copied, "direct copy attempts the pasteboard write")
         reporter.check(
             pasteboard.writeObjectsCalls == 1
                 && pasteboard.lastWrittenItems.first?.data(forType: .string)
                     == Data("previous clipboard".utf8),
             "a failed direct copy restores the previous clipboard contents"
         )
-        try await Task.sleep(nanoseconds: 200_000_000)
         // The clipboard write failed, but the capture itself still happened
         // and is recorded (Shottr-style) so it can be re-copied later.
+        let failedCopyRecorded = await waitUntil { await store.entries().count == 1 }
         reporter.check(
-            await store.entries().count == 1,
+            failedCopyRecorded,
             "a failed direct copy still records the capture"
         )
 

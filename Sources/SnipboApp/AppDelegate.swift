@@ -33,9 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        L10n.languageProvider = { [weak self] in
-            self?.settingsModel.settings.uiLanguage ?? .system
-        }
+        L10n.setLanguage(settings.uiLanguage)
         let coordinator = captureCoordinator
         let recentController = recentMenuController
         statusItemController = StatusItemController(
@@ -77,18 +75,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         syncLoginItem(settings)
         appliedLanguage = settings.uiLanguage
+        appliedHistoryMaxItems = settings.historyMaxItems
+        appliedHistoryMaxBytes = settings.historyMaxBytes
         settingsModel.onChange = { [weak self] newSettings in
             guard let self else { return }
             self.applyModeHotkeys(newSettings)
             self.syncLoginItem(newSettings)
+            L10n.setLanguage(newSettings.uiLanguage)
             if newSettings.uiLanguage != self.appliedLanguage {
                 self.appliedLanguage = newSettings.uiLanguage
+                // The menu shows localized titles and per-mode key equivalents;
+                // rebuild it only when the language actually changed.
+                self.statusItemController?.refreshLocalization()
             }
-            // The menu shows item icons, localized titles, and per-mode key
-            // equivalents; rebuild it whenever settings change (cheap).
-            self.statusItemController?.refreshLocalization()
             self.statusItemController?.setIconHidden(newSettings.hideMenuBarIcon)
             self.captureCoordinator.updateSettings(newSettings)
+
+            let limitsChanged = self.appliedHistoryMaxItems != newSettings.historyMaxItems
+                || self.appliedHistoryMaxBytes != newSettings.historyMaxBytes
+            guard limitsChanged else { return }
+            self.appliedHistoryMaxItems = newSettings.historyMaxItems
+            self.appliedHistoryMaxBytes = newSettings.historyMaxBytes
             Task {
                 do {
                     try await self.historyStore.updateLimits(
@@ -99,15 +106,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // cached; tell it to reconcile with the store.
                     NotificationCenter.default.post(name: .snipboHistoryDidChange, object: nil)
                 } catch {
-                    let message = "The history limits could not be applied: \(error.localizedDescription)"
-                    HistoryRecorder.logger.error("\(message, privacy: .public)")
-                    NotificationCenter.default.post(name: .snipboHistoryWriteFailed, object: message)
+                    HistoryRecorder.logger.error(
+                        "The history limits could not be applied: \(error.localizedDescription, privacy: .public)"
+                    )
+                    NotificationCenter.default.post(
+                        name: .snipboHistoryWriteFailed,
+                        object: L10n.tr(
+                            "The history limits could not be applied.",
+                            "历史记录上限未能应用。"
+                        )
+                    )
                 }
             }
         }
     }
 
     private var registeredModeHotkeys: [String: Hotkey] = [:]
+
+    private static func localizedModeName(_ mode: String) -> String {
+        switch mode {
+        case "region": return L10n.tr("Region", "区域")
+        case "window": return L10n.tr("Window", "窗口")
+        case "screen": return L10n.tr("Screen", "屏幕")
+        case "allScreens": return L10n.tr("All screens", "全部屏幕")
+        case "timedRegion": return L10n.tr("Timed region", "延时区域")
+        case "timedScreen": return L10n.tr("Timed screen", "延时屏幕")
+        case "lastRegion": return L10n.tr("Last region", "上次区域")
+        case "scrolling": return L10n.tr("Scrolling", "滚动")
+        default: return mode
+        }
+    }
 
     private static func command(for mode: String) -> CaptureCommand? {
         switch mode {
@@ -147,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if let registered, hotkeyService.register(registered, id: id) {
                         applied[mode] = registered
                     }
-                    failures.append("\(mode) \(desired.displayString)")
+                    failures.append("\(Self.localizedModeName(mode)) \(desired.displayString)")
                 }
             } else {
                 hotkeyService.unregister(id: id)
@@ -160,13 +188,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Global shortcut not registered"
-        alert.informativeText = "Snipbo could not register: \(failures.joined(separator: ", ")). Other shortcuts remain active; choose different chords in Settings."
+        alert.messageText = L10n.tr("Global shortcut not registered", "全局快捷键未注册")
+        alert.informativeText = L10n.tr(
+            "Snipbo could not register: \(failures.joined(separator: ", ")). Other shortcuts remain active; choose different chords in Settings.",
+            "Snipbo 无法注册：\(failures.joined(separator: "，"))。其他快捷键仍然有效，请在设置中更换组合。"
+        )
         alert.runModal()
     }
 
     private var appliedLoginItem: Bool?
     private var appliedLanguage: AppLanguage?
+    private var appliedHistoryMaxItems: Int?
+    private var appliedHistoryMaxBytes: Int64?
 
     /// Applies launch-at-login only when the desired state changes, so a
     /// Settings window left open cannot re-register on every keystroke.
@@ -182,10 +215,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// is waiting on the main thread.
     @objc private func historyWriteFailed(_ notification: Notification) {
         let detail = (notification.object as? String)
-            ?? "The last screenshot could not be added to history."
+            ?? L10n.tr(
+                "The last screenshot could not be added to history.",
+                "上一张截图未能加入历史。"
+            )
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Screenshot not added to history"
+        alert.messageText = L10n.tr("Screenshot not added to history", "截图未加入历史")
         alert.informativeText = detail
         if let window = NSApp.keyWindow ?? NSApp.mainWindow {
             alert.beginSheetModal(for: window)
@@ -195,6 +231,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if settings.clearHistoryOnQuit {
+            // Termination is synchronous; give the actor a bounded window to
+            // delete the files before the process exits.
+            let store = historyStore
+            let semaphore = DispatchSemaphore(value: 0)
+            Task.detached(priority: .userInitiated) {
+                try? await store.clear()
+                semaphore.signal()
+            }
+            _ = semaphore.wait(timeout: .now() + 2)
+        }
         if let localShortcutMonitor {
             NSEvent.removeMonitor(localShortcutMonitor)
             self.localShortcutMonitor = nil
@@ -270,14 +317,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { [weak self] in
             guard let self else { return }
             let url = await self.historyStore.imageURL(for: entry)
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            let payload = await Task.detached(priority: .userInitiated) {
+                guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                      let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+                    return nil as ImageData?
+                }
+                return ImageData(image)
+            }.value
+            guard let payload else {
                 NSLog("Snipbo: could not open the recent screenshot at %@", url.path)
                 return
             }
             let identifier = UUID()
             let editor = EditorWindowController(
-                document: EditDocument(image: image),
+                document: EditDocument(image: payload.cgImage),
                 settingsProvider: { [weak self] in self?.settings ?? .default },
                 history: self.historyStore,
                 identifier: identifier,

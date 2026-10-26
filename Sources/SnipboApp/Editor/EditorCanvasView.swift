@@ -30,6 +30,11 @@ final class EditorCanvasView: NSView {
     /// Image-pixel rects returned by the last recognition. They are drawn over
     /// the current crop and are not part of the document or undo history.
     private(set) var recognitionHighlights: [CGRect] = []
+    private var cachedImage: CGImage?
+    private var cachedState: DocumentState?
+    private var cachedDraft: Annotation?
+    private var cachedScale: CGFloat = 0
+    private var cachedImageID: ObjectIdentifier?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -119,8 +124,48 @@ final class EditorCanvasView: NSView {
         needsDisplay = true
     }
 
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        needsDisplay = true
+    }
+
+    /// Render at the display's pixel density, capped at the image's native
+    /// resolution. A fit-to-window 6K screenshot then renders at roughly
+    /// view size instead of full 6K on every drag.
+    private var displayRenderScale: CGFloat {
+        let backing = window?.backingScaleFactor
+            ?? NSScreen.main?.backingScaleFactor
+            ?? 2
+        return min(1, max(0.05, zoom * backing))
+    }
+
+    /// Reuses the last render unless the document, draft, source image, or
+    /// display scale changed. Selection changes and recognition highlights are
+    /// drawn on top and do not invalidate it.
+    private func imageToDraw() -> CGImage? {
+        let document = controller.document
+        let state = document.state
+        let draft = controller.draft
+        let scale = displayRenderScale
+        let imageID = ObjectIdentifier(document.image)
+        if let cachedImage,
+           cachedState == state,
+           cachedDraft == draft,
+           cachedScale == scale,
+           cachedImageID == imageID {
+            return cachedImage
+        }
+        let image = controller.render(includeDraft: true, scale: scale)
+        cachedImage = image
+        cachedState = state
+        cachedDraft = draft
+        cachedScale = scale
+        cachedImageID = imageID
+        return image
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        guard let image = controller.render(includeDraft: true) else { return }
+        guard let image = imageToDraw() else { return }
         NSImage(cgImage: image, size: bounds.size).draw(
             in: bounds,
             from: .zero,

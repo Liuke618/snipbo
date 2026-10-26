@@ -139,6 +139,26 @@ struct AppSettingsTests {
         #expect(!editorOn.afterCaptureSave)
     }
 
+    @Test func testClearHistoryOnQuitDefaultsFalseAndRoundTrips() throws {
+        #expect(!AppSettings.default.clearHistoryOnQuit)
+
+        var settings = AppSettings.default
+        settings.clearHistoryOnQuit = true
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(decoded.clearHistoryOnQuit)
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        object.removeValue(forKey: "clearHistoryOnQuit")
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(!legacy.clearHistoryOnQuit)
+    }
+
     @Test func testLaunchAtLoginRoundTripAndLegacyDecode() throws {
         var settings = AppSettings.default
         #expect(!settings.launchAtLogin)
@@ -197,24 +217,6 @@ struct AppSettingsTests {
             from: JSONSerialization.data(withJSONObject: object)
         )
         #expect(!legacy.copyOnEditorEscape)
-    }
-
-    @Test func testWindowShadowTrimRoundTripAndLegacyDecode() throws {
-        #expect(!AppSettings.default.windowShadowTrim)
-        var settings = AppSettings.default
-        settings.windowShadowTrim = true
-        let data = try JSONEncoder().encode(settings)
-        #expect(try JSONDecoder().decode(AppSettings.self, from: data).windowShadowTrim)
-
-        var object = try #require(
-            JSONSerialization.jsonObject(with: data) as? [String: Any]
-        )
-        object.removeValue(forKey: "windowShadowTrim")
-        let legacy = try JSONDecoder().decode(
-            AppSettings.self,
-            from: JSONSerialization.data(withJSONObject: object)
-        )
-        #expect(!legacy.windowShadowTrim)
     }
 
     @Test func testHideMenuBarIconDefaultsRoundTripAndLegacyDecode() throws {

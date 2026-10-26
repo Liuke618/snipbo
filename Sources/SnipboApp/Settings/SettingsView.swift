@@ -152,7 +152,7 @@ struct SettingsView: View {
                 }
 
                 SettingsRow(L10n.tr("Retina screenshots", "Retina 截图"), labelWidth: labelWidth) {
-                    Toggle(L10n.tr("Downscale to 1x when saving", "保存时缩至 1x"), isOn: $model.settings.retinaDownscale)
+                    Toggle(L10n.tr("Downscale captures to 1x", "截图缩至 1x"), isOn: $model.settings.retinaDownscale)
                         .toggleStyle(.checkbox)
                 }
             }
@@ -229,10 +229,6 @@ struct SettingsView: View {
                     )
                 }
 
-                SettingsRow(L10n.tr("Window capture", "窗口截图"), labelWidth: labelWidth) {
-                    Toggle(L10n.tr("Trim shadow", "裁掉阴影"), isOn: $model.settings.windowShadowTrim)
-                        .toggleStyle(.checkbox)
-                }
             }
         }
     }
@@ -336,6 +332,11 @@ struct SettingsView: View {
                         suffix: nil
                     )
                 }
+
+                SettingsRow(L10n.tr("On quit", "退出时"), labelWidth: labelWidth) {
+                    Toggle(L10n.tr("Clear history", "清空历史"), isOn: $model.settings.clearHistoryOnQuit)
+                        .toggleStyle(.checkbox)
+                }
             }
         }
     }
@@ -397,6 +398,12 @@ struct SettingsView: View {
                 Text(L10n.tr(
                     "Privacy: the app makes no network requests at all — no uploads, no telemetry, no crash reporting. Screenshots never leave your computer.",
                     "隐私：本应用不发起任何网络请求 —— 无上传、无遥测、无崩溃上报。截图永远留在你的电脑上。"
+                ))
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                Text(L10n.tr(
+                    "History stores original captures locally as plain PNG files; enable Clear history on quit or delete them in the History browser.",
+                    "历史记录以明文 PNG 保存在本地；可在设置中开启退出时清空，或在历史浏览中删除。"
                 ))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)

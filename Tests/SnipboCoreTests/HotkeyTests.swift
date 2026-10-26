@@ -43,6 +43,29 @@ struct HotkeyTests {
         #expect(!QuitShortcut.matches(keyCode: 13, modifiers: [.command]))
     }
 
+    @Test func testGlobalShortcutRequiresCommandOptionOrControl() {
+        #expect(Hotkey(keyCode: 0, modifiers: [.command]).isGlobalShortcut)
+        #expect(Hotkey(keyCode: 0, modifiers: [.option]).isGlobalShortcut)
+        #expect(Hotkey(keyCode: 0, modifiers: [.control]).isGlobalShortcut)
+        #expect(!Hotkey(keyCode: 0, modifiers: [.shift]).isGlobalShortcut)
+        #expect(!Hotkey(keyCode: 0, modifiers: []).isGlobalShortcut)
+    }
+
+    @Test func testNormalizationDropsShiftOnlyModeHotkeys() {
+        var settings = AppSettings.default
+        settings.modeHotkeys["window"] = Hotkey(keyCode: 13, modifiers: [.shift])
+        settings.modeHotkeys["screen"] = Hotkey(keyCode: 12, modifiers: [.command])
+        let normalized = settings.normalized()
+        #expect(normalized.modeHotkeys["window"] == nil)
+        #expect(normalized.modeHotkeys["screen"] == Hotkey(keyCode: 12, modifiers: [.command]))
+    }
+
+    @Test func testNormalizationReplacesInvalidBaseHotkey() {
+        var settings = AppSettings.default
+        settings.hotkey = Hotkey(keyCode: 0, modifiers: [.shift])
+        #expect(settings.normalized().hotkey == AppSettings.default.hotkey)
+    }
+
     @Test func testModeHotkeysFallbackToRegionHotkey() {
         var settings = AppSettings.default
         let region = settings.hotkey
@@ -82,7 +105,7 @@ struct HotkeyTests {
             "bogus": Hotkey(keyCode: 12, modifiers: []),
             // Same chord as region: duplicate, dropped.
             "window": Hotkey(keyCode: 7, modifiers: [.command, .shift]),
-            "screen": Hotkey(keyCode: 12, modifiers: []),
+            "screen": Hotkey(keyCode: 12, modifiers: [.command]),
         ]
         let normalized = settings.normalized()
         #expect(normalized.modeHotkeys["region"]?.keyCode == 7)

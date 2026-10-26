@@ -160,7 +160,7 @@ struct ScrollAlignmentTests {
             let current = composite
             let stripHeight = min(4, current.height)
             let stripTop = current.height - stripHeight
-            let strip = try #require(current.cropping(to: CGRect(
+            _ = try #require(current.cropping(to: CGRect(
                 x: 0, y: stripTop, width: 4, height: stripHeight
             )))
             // Synthetic registration: scrolling down moves the strip content
@@ -345,4 +345,76 @@ private func rows(of image: CGImage) throws -> [UInt8] {
     let data = try #require(context.data)
     let bytes = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
     return (0..<height).map { bytes[$0 * width * 4] }
+}
+
+@Suite("ScrollCompositeTests")
+struct ScrollCompositeTests {
+    @Test func testAppendMatchesStitcherRows() throws {
+        let composite = try #require(ScrollComposite(image: makeRows([0, 1, 2, 3]), maxHeight: 100))
+        #expect(composite.append(frame: try makeRows([4, 5, 6, 7]), offset: 2))
+        #expect(composite.height == 6)
+        #expect(composite.appendedRows == 2)
+        #expect(!composite.reachedLimit)
+        let image = try #require(composite.makeImage())
+        #expect(try rows(of: image) == [0, 1, 2, 3, 6, 7])
+    }
+
+    @Test func testAppendStopsAtMaximumHeight() throws {
+        let composite = try #require(ScrollComposite(image: makeRows([0, 1, 2, 3]), maxHeight: 6))
+        #expect(composite.append(frame: try makeRows([4, 5, 6, 7]), offset: 1))
+        #expect(composite.height == 6)
+        #expect(composite.appendedRows == 2)
+        #expect(composite.reachedLimit)
+        let image = try #require(composite.makeImage())
+        #expect(try rows(of: image) == [0, 1, 2, 3, 5, 6])
+    }
+
+    @Test func testPrependAddsRowsAboveComposite() throws {
+        let composite = try #require(ScrollComposite(image: makeRows([2, 3]), maxHeight: 100))
+        #expect(composite.prepend(frame: try makeRows([0, 1, 2, 3]), rows: 2))
+        #expect(composite.height == 4)
+        #expect(composite.appendedRows == 2)
+        #expect(!composite.reachedLimit)
+        let image = try #require(composite.makeImage())
+        #expect(try rows(of: image) == [0, 1, 2, 3])
+    }
+
+    @Test func testPrependStopsAtMaximumHeightKeepingRowsAdjacentToComposite() throws {
+        let composite = try #require(ScrollComposite(image: makeRows([2, 3]), maxHeight: 3))
+        #expect(composite.prepend(frame: try makeRows([0, 1, 2, 3]), rows: 2))
+        #expect(composite.height == 3)
+        #expect(composite.appendedRows == 1)
+        #expect(composite.reachedLimit)
+        let image = try #require(composite.makeImage())
+        #expect(try rows(of: image) == [1, 2, 3])
+    }
+
+    @Test func testTopAndBottomStripsSpanPrependAndMainContent() throws {
+        let composite = try #require(ScrollComposite(image: makeRows([2, 3]), maxHeight: 100))
+        #expect(composite.prepend(frame: try makeRows([0, 1, 2, 3]), rows: 2))
+
+        let topTwo = try #require(composite.topStrip(rows: 2))
+        #expect(try rows(of: topTwo) == [0, 1])
+        let bottomTwo = try #require(composite.bottomStrip(rows: 2))
+        #expect(try rows(of: bottomTwo) == [2, 3])
+        let topThree = try #require(composite.topStrip(rows: 3))
+        #expect(try rows(of: topThree) == [0, 1, 2])
+        let bottomThree = try #require(composite.bottomStrip(rows: 3))
+        #expect(try rows(of: bottomThree) == [1, 2, 3])
+    }
+
+    @Test func testInvalidOperationsAreRejected() throws {
+        let composite = try #require(ScrollComposite(image: makeRows([0, 1, 2, 3]), maxHeight: 100))
+        let narrow = try makeRows([8, 9], width: 2)
+        #expect(!composite.append(frame: try makeRows([4, 5, 6, 7]), offset: 0))
+        #expect(!composite.append(frame: try makeRows([4, 5, 6, 7]), offset: -1))
+        #expect(!composite.append(frame: try makeRows([4, 5, 6, 7]), offset: 4))
+        #expect(!composite.append(frame: narrow, offset: 1))
+        #expect(!composite.prepend(frame: try makeRows([0, 1, 2, 3]), rows: 0))
+        #expect(!composite.prepend(frame: try makeRows([0, 1, 2, 3]), rows: 4))
+        #expect(!composite.prepend(frame: narrow, rows: 1))
+        #expect(composite.topStrip(rows: 0) == nil)
+        #expect(composite.bottomStrip(rows: 0) == nil)
+        #expect(composite.height == 4)
+    }
 }

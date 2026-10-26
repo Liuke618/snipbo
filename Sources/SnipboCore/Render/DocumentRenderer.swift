@@ -8,13 +8,14 @@ public enum DocumentRenderer {
     /// and the instance is thread-safe.
     nonisolated(unsafe) private static let ciContext = CIContext(options: nil)
 
-    public static func render(_ document: EditDocument) -> CGImage? {
+    public static func render(_ document: EditDocument, scale: CGFloat = 1) -> CGImage? {
         let imageBounds = CGRect(x: 0, y: 0, width: document.image.width, height: document.image.height)
         let crop = document.cropRect.intersection(imageBounds).integral
         guard crop.width >= 1, crop.height >= 1 else { return nil }
 
-        let width = Int(crop.width)
-        let height = Int(crop.height)
+        let renderScale = max(0.01, scale)
+        let width = max(1, Int((crop.width * renderScale).rounded()))
+        let height = max(1, Int((crop.height * renderScale).rounded()))
         let colorSpace = document.image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
             data: nil,
@@ -27,6 +28,7 @@ public enum DocumentRenderer {
         ) else { return nil }
 
         context.interpolationQuality = .high
+        context.scaleBy(x: renderScale, y: renderScale)
         let imageOrigin = CGPoint(
             x: -crop.minX,
             y: crop.maxY - CGFloat(document.image.height)
@@ -36,7 +38,9 @@ public enum DocumentRenderer {
             in: CGRect(origin: imageOrigin, size: CGSize(width: document.image.width, height: document.image.height))
         )
 
-        let canvasHeight = CGFloat(height)
+        // Annotation drawing works in image-pixel coordinates; the context
+        // scale maps those to the output resolution.
+        let canvasHeight = CGFloat(crop.height)
         for annotation in document.annotations.sorted(by: { $0.zIndex < $1.zIndex }) {
             context.saveGState()
             draw(annotation, in: context, canvasHeight: canvasHeight, crop: crop, source: document.image)

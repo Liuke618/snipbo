@@ -10,7 +10,17 @@ import SnipboCore
 @MainActor
 final class SettingsModel: ObservableObject {
     @Published var settings: AppSettings {
-        didSet { persist() }
+        didSet {
+            // Normalize on every mutation, not just at load. Otherwise turning
+            // the editor off after disabling both copy and save reaches the
+            // delivery path with no destination.
+            let normalized = settings.normalized()
+            if normalized != settings {
+                settings = normalized
+            } else {
+                persist()
+            }
+        }
     }
 
     /// Called after every persisted change. Not called during initialization.

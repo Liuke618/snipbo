@@ -313,12 +313,12 @@ final class EditorController {
         changed()
     }
 
-    func render(includeDraft: Bool = false) -> CGImage? {
+    func render(includeDraft: Bool = false, scale: CGFloat = 1) -> CGImage? {
         var copy = document
         if includeDraft, let draft {
             copy.annotations.append(draft)
         }
-        return DocumentRenderer.render(copy)
+        return DocumentRenderer.render(copy, scale: scale)
     }
 
     private func makeAnnotation(from start: CGPoint, to end: CGPoint) -> Annotation {
@@ -411,34 +411,18 @@ final class EditorController {
     }
 }
 
-enum EditorError: Error {
-    case renderFailed
+enum EditorError: LocalizedError {
     case encodeFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .encodeFailed:
+            return L10n.tr("The image could not be encoded.", "图像编码失败。")
+        }
+    }
 }
 
 extension EditorController {
-    /// Renders the document for copy/save. Excludes any in-progress drag draft;
-    /// callers commit pending text before calling this.
-    func renderForExport() -> CGImage? {
-        render()
-    }
-
-    func write(_ image: CGImage, to url: URL, format: ImageFormat, quality: Double) throws {
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let data: Data?
-        switch format {
-        case .png:
-            data = ImageExporter.pngData(from: image)
-        case .jpeg:
-            data = ImageExporter.jpegData(from: image, quality: quality)
-        }
-        guard let data else { throw EditorError.encodeFailed }
-        try data.write(to: url, options: .atomic)
-    }
-
     func defaultFileName(format: ImageFormat) -> String {
         CaptureFileSaver.defaultFileName(format: format)
     }

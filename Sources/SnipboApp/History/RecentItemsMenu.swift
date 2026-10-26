@@ -18,7 +18,7 @@ final class RecentMenuController: NSObject, NSMenuDelegate {
     /// The number of recent screenshots the menu offers.
     static let maximumItemCount = 10
 
-    let menu = NSMenu(title: "Recent")
+    let menu = NSMenu(title: L10n.tr("Recent", "最近截图"))
     private let history: HistoryStore
     private let openEntry: (HistoryEntry) -> Void
     private var entries: [HistoryEntry] = []
@@ -136,7 +136,11 @@ final class RecentMenuController: NSObject, NSMenuDelegate {
     private func rebuild() {
         menu.removeAllItems()
         guard !entries.isEmpty else {
-            let item = NSMenuItem(title: "No recent screenshots", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(
+                title: L10n.tr("No recent screenshots", "暂无最近截图"),
+                action: nil,
+                keyEquivalent: ""
+            )
             item.isEnabled = false
             menu.addItem(item)
             return
@@ -146,12 +150,20 @@ final class RecentMenuController: NSObject, NSMenuDelegate {
             let parent = NSMenuItem(title: title(for: entry), action: nil, keyEquivalent: "")
             let submenu = NSMenu()
 
-            let open = NSMenuItem(title: "Open in Editor", action: #selector(openAction(_:)), keyEquivalent: "")
+            let open = NSMenuItem(
+                title: L10n.tr("Open in Editor", "在编辑器中打开"),
+                action: #selector(openAction(_:)),
+                keyEquivalent: ""
+            )
             open.target = self
             open.representedObject = entry
             submenu.addItem(open)
 
-            let copy = NSMenuItem(title: "Copy Image", action: #selector(copyAction(_:)), keyEquivalent: "")
+            let copy = NSMenuItem(
+                title: L10n.tr("Copy Image", "复制图像"),
+                action: #selector(copyAction(_:)),
+                keyEquivalent: ""
+            )
             copy.target = self
             copy.representedObject = entry
             submenu.addItem(copy)
@@ -170,13 +182,14 @@ final class RecentMenuController: NSObject, NSMenuDelegate {
         guard let entry = sender.representedObject as? HistoryEntry else { return }
         Task {
             let url = await history.imageURL(for: entry)
-            guard let data = try? Data(contentsOf: url), !data.isEmpty else {
+            let data = await Task.detached(priority: .userInitiated) {
+                try? Data(contentsOf: url)
+            }.value
+            guard let data, !data.isEmpty else {
                 NSLog("Snipbo: could not read the recent screenshot at %@", url.path)
                 return
             }
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setData(data, forType: .png)
+            _ = PasteboardWriter.writePNG(data, to: NSPasteboard.general)
         }
     }
 

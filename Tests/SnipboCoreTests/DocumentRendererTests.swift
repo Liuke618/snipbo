@@ -18,6 +18,30 @@ struct DocumentRendererTests {
         #expect(nonWhitePixelCount(rendered) > 0)
     }
 
+    @Test func testRenderScaleChangesOutputSize() throws {
+        var document = EditDocument(image: try makeWhiteImage(width: 100, height: 80))
+        document.cropRect = CGRect(x: 10, y: 10, width: 40, height: 20)
+        let rendered = try #require(DocumentRenderer.render(document, scale: 0.5))
+        #expect(rendered.width == 20)
+        #expect(rendered.height == 10)
+    }
+
+    @Test func testRenderScaleStillDrawsAnnotations() throws {
+        var document = EditDocument(image: try makeWhiteImage(width: 100, height: 100))
+        document.annotations = [
+            Annotation(
+                kind: .rectangle,
+                geometry: .rect(CGRect(x: 10, y: 10, width: 60, height: 60)),
+                style: AnnotationStyle(color: .red, lineWidth: 8),
+                zIndex: 1
+            ),
+        ]
+        let rendered = try #require(DocumentRenderer.render(document, scale: 0.5))
+        #expect(rendered.width == 50)
+        #expect(rendered.height == 50)
+        #expect(nonWhitePixelCount(rendered) > 0)
+    }
+
     @Test func testCropChangesOutputSize() throws {
         var document = EditDocument(image: try makeWhiteImage(width: 100, height: 80))
         document.cropRect = CGRect(x: 10, y: 10, width: 30, height: 20)

@@ -61,7 +61,7 @@ struct HistoryStoreTests {
         let entries = await store.entries()
         #expect(entries.isEmpty)
         let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
-        #expect(files.isEmpty)
+        #expect(files == ["index.json"])
     }
 
     @Test func testRemoveDeletesEntryAndFiles() async throws {
@@ -143,20 +143,23 @@ struct HistoryStoreTests {
         #expect(Set(files) == ["index.json"])
     }
 
-    @Test func testInitRemovesOrphanFiles() async throws {
+    @Test func testInitRemovesOnlyAppGeneratedOrphanFiles() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
         let entry = try await store.record(image: ImageData(try makeImage()), source: .region)
         let imageURL = await store.imageURL(for: entry)
-        let orphanURL = directory.appendingPathComponent("orphan.png")
+        let orphanURL = directory.appendingPathComponent("\(UUID().uuidString).png")
         try Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).write(to: orphanURL)
+        let unrelatedURL = directory.appendingPathComponent("notes.txt")
+        try Data("keep me".utf8).write(to: unrelatedURL)
 
         let reloaded = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
         let entries = await reloaded.entries()
         #expect(entries.map(\.id) == [entry.id])
         #expect(!FileManager.default.fileExists(atPath: orphanURL.path))
+        #expect(FileManager.default.fileExists(atPath: unrelatedURL.path))
         #expect(FileManager.default.fileExists(atPath: imageURL.path))
     }
 
@@ -212,7 +215,7 @@ struct HistoryStoreTests {
         #expect(!FileManager.default.fileExists(atPath: secondThumbnailURL.path))
     }
 
-    @Test func testCorruptIndexPreservesFilesAndQuarantinesIndex() async throws {
+    @Test func testCorruptIndexRecoversEntriesAndQuarantinesIndex() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -226,24 +229,25 @@ struct HistoryStoreTests {
         let reloaded = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
         let entries = await reloaded.entries()
 
-        #expect(entries.isEmpty)
+        #expect(entries.map(\.id) == [entry.id])
+        #expect(entries.first?.source == .unknown)
+        #expect(entries.first?.pixelWidth == 4)
+        #expect(entries.first?.pixelHeight == 4)
         #expect(FileManager.default.fileExists(atPath: imageURL.path))
         #expect(FileManager.default.fileExists(atPath: thumbnailURL.path))
-        // No replacement index may be written: an empty index would let the
-        // next launch sweep the preserved files as orphans.
-        #expect(!FileManager.default.fileExists(atPath: indexPath.path))
+        // Recovery writes a new index that references the preserved files, so
+        // the next launch cannot sweep them as orphans.
+        #expect(FileManager.default.fileExists(atPath: indexPath.path))
         let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
         #expect(files.contains { $0.hasPrefix("index.corrupt-") && $0.hasSuffix(".json") })
 
-        // A later limit update must not sneak in the empty index that the
-        // corrupt load deliberately avoided writing.
         try await reloaded.updateLimits(maxItems: 10, maxBytes: 10 * 1024 * 1024)
-        #expect(!FileManager.default.fileExists(atPath: indexPath.path))
+        #expect(FileManager.default.fileExists(atPath: indexPath.path))
         #expect(FileManager.default.fileExists(atPath: imageURL.path))
         #expect(FileManager.default.fileExists(atPath: thumbnailURL.path))
     }
 
-    @Test func testMissingIndexPreservesFilesWithoutSweeping() async throws {
+    @Test func testMissingIndexRecoversEntriesAndWritesIndex() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -257,10 +261,171 @@ struct HistoryStoreTests {
         let reloaded = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
         let entries = await reloaded.entries()
 
-        #expect(entries.isEmpty)
+        #expect(entries.map(\.id) == [entry.id])
+        #expect(entries.first?.source == .unknown)
         #expect(FileManager.default.fileExists(atPath: imageURL.path))
         #expect(FileManager.default.fileExists(atPath: thumbnailURL.path))
-        #expect(!FileManager.default.fileExists(atPath: indexPath.path))
+        #expect(FileManager.default.fileExists(atPath: indexPath.path))
+    }
+
+    @Test func testRecoveredEntriesSurviveTheNextRecord() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let old = try await store.record(image: ImageData(try makeImage()), source: .region)
+        let indexPath = directory.appendingPathComponent("index.json")
+        try FileManager.default.removeItem(at: indexPath)
+
+        let recovered = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        _ = await recovered.entries()
+        let new = try await recovered.record(image: ImageData(try makeImage(variant: 1)), source: .window)
+
+        let reloaded = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entries = await reloaded.entries()
+        #expect(entries.map(\.id) == [new.id, old.id])
+        let oldImageURL = await reloaded.imageURL(for: old)
+        #expect(FileManager.default.fileExists(atPath: oldImageURL.path))
+    }
+
+    @Test func testRecoveryRegeneratesMissingThumbnail() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entry = try await store.record(image: ImageData(try makeImage()), source: .region)
+        let thumbnailURL = await store.thumbnailURL(for: entry)
+        try FileManager.default.removeItem(at: thumbnailURL)
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("index.json"))
+
+        let reloaded = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entries = await reloaded.entries()
+        #expect(entries.map(\.id) == [entry.id])
+        #expect(FileManager.default.fileExists(atPath: thumbnailURL.path))
+    }
+
+    @Test func testEmptyIndexWithRecoveryAllowedStillAdoptsImages() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entry = try await store.record(image: ImageData(try makeImage()), source: .region)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let emptyIndex = HistoryIndex(
+            version: HistoryIndex.currentVersion,
+            entries: [],
+            allowRecovery: true
+        )
+        try encoder.encode(emptyIndex).write(
+            to: directory.appendingPathComponent("index.json")
+        )
+
+        let reloaded = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entries = await reloaded.entries()
+        #expect(entries.map(\.id) == [entry.id])
+    }
+
+    @Test func testRemovingLastEntryDoesNotRecoverLeftoverImage() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entry = try await store.record(image: ImageData(try makeImage()), source: .region)
+        try await store.remove(id: entry.id)
+
+        let leftoverURL = directory.appendingPathComponent("\(UUID().uuidString).png")
+        let png = try #require(ImageExporter.pngData(from: try makeImage()))
+        try png.write(to: leftoverURL)
+
+        let reloaded = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entries = await reloaded.entries()
+        #expect(entries.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: leftoverURL.path))
+    }
+
+    @Test func testClearTombstoneSweepsLeftoverImagesInsteadOfRecovering() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        _ = try await store.record(image: ImageData(try makeImage()), source: .region)
+        try await store.clear()
+
+        // Simulate an image that clear could not delete.
+        let leftoverURL = directory.appendingPathComponent("\(UUID().uuidString).png")
+        let png = try #require(ImageExporter.pngData(from: try makeImage()))
+        try png.write(to: leftoverURL)
+
+        let reloaded = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entries = await reloaded.entries()
+        #expect(entries.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: leftoverURL.path))
+        let data = try Data(contentsOf: directory.appendingPathComponent("index.json"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let index = try decoder.decode(HistoryIndex.self, from: data)
+        #expect(index.allowRecovery == false)
+    }
+
+    @Test func testNewIndexHasSchemaVersion() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        _ = try await store.record(image: ImageData(try makeImage()), source: .region)
+
+        let data = try Data(contentsOf: directory.appendingPathComponent("index.json"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let index = try decoder.decode(HistoryIndex.self, from: data)
+        #expect(index.version == HistoryIndex.currentVersion)
+        #expect(index.entries.count == 1)
+    }
+
+    @Test func testLegacyArrayIndexStillLoads() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entry = try await store.record(image: ImageData(try makeImage()), source: .region)
+        let entries = await store.entries()
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let legacy = try encoder.encode(entries)
+        try legacy.write(to: directory.appendingPathComponent("index.json"))
+
+        let reloaded = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let loaded = await reloaded.entries()
+        #expect(loaded.map(\.id) == [entry.id])
+    }
+
+    @Test func testUnsafeIndexFilenamesAreDroppedAndCannotDeleteOutsideFiles() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outsideURL = directory.deletingLastPathComponent()
+            .appendingPathComponent("snipbo-outside-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: outsideURL) }
+        try Data([0]).write(to: outsideURL)
+
+        let unsafe = HistoryEntry(
+            id: UUID(),
+            createdAt: Date(),
+            pixelWidth: 1,
+            pixelHeight: 1,
+            source: .region,
+            imageFileName: "../\(outsideURL.lastPathComponent)",
+            thumbnailFileName: "../\(outsideURL.lastPathComponent)"
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode([unsafe]).write(to: directory.appendingPathComponent("index.json"))
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entries = await store.entries()
+        #expect(entries.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: outsideURL.path))
     }
 
     private func fileBytes(for entry: HistoryEntry, in directory: URL) -> Int64 {

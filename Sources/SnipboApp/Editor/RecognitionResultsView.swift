@@ -74,7 +74,10 @@ final class RecognitionResultsView: NSView {
             copyButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
         ])
 
-        showMessage("Click Recognize to read text and barcodes from the current image.")
+        showMessage(L10n.tr(
+            "Click Recognize to read text and barcodes from the current image.",
+            "点击“识别”读取当前图像中的文字和条码。"
+        ))
     }
 
     @available(*, unavailable)

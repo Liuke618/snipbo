@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import ImageIO
 import os
 
 public enum HistoryError: Error, LocalizedError {
@@ -13,17 +14,35 @@ public enum HistoryError: Error, LocalizedError {
     }
 }
 
+/// Versioned on-disk index. Older builds wrote a bare `[HistoryEntry]` array;
+/// `loadState` still accepts that shape so upgrades do not lose history.
+struct HistoryIndex: Codable {
+    static let currentVersion = 1
+    var version: Int
+    var entries: [HistoryEntry]
+    /// False after an explicit clear: leftover image files are swept instead
+    /// of being adopted as recovered entries on the next launch.
+    var allowRecovery: Bool? = nil
+}
+
 public actor HistoryStore {
     private static let logger = Logger(subsystem: "local.snipbo.app", category: "History")
     private let baseDirectory: URL
     private let minimumBytes: Int64
     private var maxItems: Int
     private var maxBytes: Int64
-    private var entriesValue: [HistoryEntry]
+    private var entriesValue: [HistoryEntry] = []
     /// False until a valid index has been loaded or written in this process.
     /// While false, an empty list must not be persisted: an empty index would
     /// tell the next launch that every preserved image is an orphan.
     private var hasTrustworthyIndex = false
+    /// False after an explicit clear, so an empty tombstone index does not
+    /// resurrect files that could not be deleted.
+    private var allowRecovery = true
+    /// Loading touches the index and every image file; it runs on the actor's
+    /// executor the first time the store is used instead of on the caller
+    /// (which used to be the main thread at app launch).
+    private var loaded = false
     private let fileManager = FileManager.default
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -48,10 +67,8 @@ public actor HistoryStore {
     init(baseDirectory: URL, maxItems: Int, maxBytes: Int64, minimumBytes: Int64 = 10 * 1024 * 1024) {
         self.baseDirectory = baseDirectory
         self.minimumBytes = max(0, minimumBytes)
-        let clampedMaxItems = max(1, maxItems)
-        let clampedMaxBytes = max(max(0, minimumBytes), maxBytes)
-        self.maxItems = clampedMaxItems
-        self.maxBytes = clampedMaxBytes
+        self.maxItems = max(1, maxItems)
+        self.maxBytes = max(max(0, minimumBytes), maxBytes)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -59,35 +76,12 @@ public actor HistoryStore {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         self.decoder = decoder
-        let fileManager = FileManager.default
-        try? fileManager.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
-        let loaded = Self.loadState(
-            baseDirectory: baseDirectory,
-            maxItems: clampedMaxItems,
-            maxBytes: clampedMaxBytes,
-            decoder: decoder,
-            fileManager: fileManager
-        )
-        self.entriesValue = loaded.entries
-        self.hasTrustworthyIndex = loaded.indexIsTrustworthy
-        if loaded.indexNeedsRewrite {
-            do {
-                let data = try encoder.encode(loaded.entries)
-                try data.write(
-                    to: baseDirectory.appendingPathComponent(Self.indexFileName),
-                    options: .atomic
-                )
-                self.hasTrustworthyIndex = true
-            } catch {
-                Self.logger.error(
-                    "Failed to rewrite the history index: \(String(describing: error), privacy: .public)"
-                )
-            }
-        }
+        try? FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
     }
 
     public func entries() -> [HistoryEntry] {
-        entriesValue
+        ensureLoaded()
+        return entriesValue
     }
 
     /// The store's private directory. Immutable, so UI code can resolve cached
@@ -97,20 +91,23 @@ public actor HistoryStore {
     }
 
     public func imageURL(for entry: HistoryEntry) -> URL {
-        baseDirectory.appendingPathComponent(entry.imageFileName)
+        safeURL(for: entry.imageFileName)
     }
 
     public func thumbnailURL(for entry: HistoryEntry) -> URL {
-        baseDirectory.appendingPathComponent(entry.thumbnailFileName)
+        safeURL(for: entry.thumbnailFileName)
     }
 
     public func updateLimits(maxItems: Int, maxBytes: Int64) throws {
+        ensureLoaded()
         self.maxItems = max(1, maxItems)
         self.maxBytes = max(minimumBytes, maxBytes)
-        try prune()
+        try prune(forceSave: false)
     }
 
     public func record(image: ImageData, source: CaptureSource) throws -> HistoryEntry {
+        ensureLoaded()
+        allowRecovery = true
         let id = UUID()
         let imageFileName = "\(id.uuidString).png"
         let thumbnailFileName = "\(id.uuidString)-thumb.png"
@@ -119,8 +116,17 @@ public actor HistoryStore {
               let thumbnailData = ImageExporter.pngData(from: thumbnail) else {
             throw HistoryError.encodeFailed
         }
-        try png.write(to: baseDirectory.appendingPathComponent(imageFileName), options: .atomic)
-        try thumbnailData.write(to: baseDirectory.appendingPathComponent(thumbnailFileName), options: .atomic)
+        let imageURL = baseDirectory.appendingPathComponent(imageFileName)
+        let thumbnailURL = baseDirectory.appendingPathComponent(thumbnailFileName)
+        try png.write(to: imageURL, options: .atomic)
+        do {
+            try thumbnailData.write(to: thumbnailURL, options: .atomic)
+        } catch {
+            // Do not leave the full image behind when its pair could not be
+            // written.
+            try? fileManager.removeItem(at: imageURL)
+            throw error
+        }
         let entry = HistoryEntry(
             id: id,
             createdAt: Date(),
@@ -132,7 +138,7 @@ public actor HistoryStore {
         )
         entriesValue.insert(entry, at: 0)
         do {
-            try prune()
+            try prune(forceSave: true)
         } catch {
             // The index was not rewritten, so restore the pre-record state.
             entriesValue.removeAll { $0.id == entry.id }
@@ -147,23 +153,76 @@ public actor HistoryStore {
     }
 
     public func remove(id: UUID) throws {
+        ensureLoaded()
         guard let index = entriesValue.firstIndex(where: { $0.id == id }) else { return }
         let entry = entriesValue.remove(at: index)
+        let previousRecovery = allowRecovery
+        if entriesValue.isEmpty {
+            // Removing the last entry must not let a leftover image be
+            // recovered as if it were still part of the history.
+            allowRecovery = false
+        }
         do {
             try saveIndex(entriesValue)
         } catch {
             entriesValue.insert(entry, at: index)
+            allowRecovery = previousRecovery
             throw error
         }
         removeFiles(for: entry)
     }
 
     public func clear() throws {
+        // Write the tombstone first: if an image cannot be deleted, the next
+        // launch must sweep it rather than recover it as a cleared capture.
+        // Only mutate the in-memory list after the tombstone succeeds, so a
+        // failed clear does not make the UI pretend the history is empty.
+        try writeIndex([], allowRecovery: false)
+        hasTrustworthyIndex = true
+        loaded = true
         entriesValue.removeAll()
+        allowRecovery = false
         let files = (try? fileManager.contentsOfDirectory(at: baseDirectory, includingPropertiesForKeys: nil)) ?? []
-        for file in files {
+        for file in files where file.lastPathComponent != Self.indexFileName {
             try? fileManager.removeItem(at: file)
         }
+    }
+
+    // MARK: - Lazy load
+
+    private func ensureLoaded() {
+        guard !loaded else { return }
+        loaded = true
+        let state = Self.loadState(
+            baseDirectory: baseDirectory,
+            maxItems: maxItems,
+            maxBytes: maxBytes,
+            decoder: decoder,
+            fileManager: fileManager
+        )
+        entriesValue = state.entries
+        hasTrustworthyIndex = state.indexIsTrustworthy
+        allowRecovery = state.allowRecovery
+        if state.indexNeedsRewrite {
+            do {
+                try writeIndex(state.entries, allowRecovery: state.allowRecovery)
+                hasTrustworthyIndex = true
+            } catch {
+                Self.logger.error(
+                    "Failed to rewrite the history index: \(String(describing: error), privacy: .public)"
+                )
+            }
+        }
+    }
+
+    private func writeIndex(_ entries: [HistoryEntry], allowRecovery: Bool) throws {
+        let index = HistoryIndex(
+            version: HistoryIndex.currentVersion,
+            entries: entries,
+            allowRecovery: allowRecovery
+        )
+        let data = try encoder.encode(index)
+        try data.write(to: indexURL, options: .atomic)
     }
 
     private func saveIndex(_ entries: [HistoryEntry]) throws {
@@ -174,12 +233,13 @@ public actor HistoryStore {
             // writes a real index.
             return
         }
-        let data = try encoder.encode(entries)
-        try data.write(to: indexURL, options: .atomic)
+        let recovery = entries.isEmpty ? allowRecovery : true
+        try writeIndex(entries, allowRecovery: recovery)
+        allowRecovery = recovery
         hasTrustworthyIndex = true
     }
 
-    private func prune() throws {
+    private func prune(forceSave: Bool) throws {
         let kept = Self.survivors(
             of: entriesValue,
             maxItems: maxItems,
@@ -190,13 +250,22 @@ public actor HistoryStore {
         // Survivors are always a prefix of the newest-first array, so the
         // removed entries are its tail.
         let removed = Array(entriesValue.dropFirst(kept.count))
-        // Write the index once, and only then delete files. Until the write
-        // succeeds the in-memory list stays consistent with the on-disk index.
-        try saveIndex(kept)
+        // Avoid rewriting index.json for every unrelated settings change. A
+        // record forces the write so the new entry is persisted.
+        if forceSave || !removed.isEmpty || !hasTrustworthyIndex {
+            // Write the index once, and only then delete files. Until the write
+            // succeeds the in-memory list stays consistent with the on-disk index.
+            try saveIndex(kept)
+        }
         entriesValue = kept
         for entry in removed {
             removeFiles(for: entry)
         }
+    }
+
+    private func safeURL(for fileName: String) -> URL {
+        let safeName = Self.isSafeFileName(fileName) ? fileName : "__invalid__"
+        return baseDirectory.appendingPathComponent(safeName)
     }
 
     private func removeFiles(for entry: HistoryEntry) {
@@ -210,20 +279,19 @@ public actor HistoryStore {
         var entries: [HistoryEntry]
         var indexNeedsRewrite: Bool
         var indexIsTrustworthy: Bool
+        var allowRecovery: Bool
     }
 
     /// Loads `index.json`, drops entries whose image file is gone, prunes the
     /// survivors to the limits, and removes store files that no surviving
     /// entry references. Only files directly inside `baseDirectory` are
-    /// touched; `index.json` is never deleted by the orphan sweep (an
-    /// unreadable index is moved aside by `quarantineIndex`).
+    /// touched, and only names this store generated are swept.
     ///
-    /// A missing index or an index that cannot be decoded must never trigger
-    /// the orphan sweep: without a trustworthy index every image looks
-    /// unreferenced, and sweeping would delete the user's whole history. A
-    /// corrupt index is moved aside and no replacement is written until the
-    /// next successful record, so a later launch cannot sweep the preserved
-    /// files either.
+    /// A missing or corrupt index is recovered from the UUID-named image files
+    /// themselves: the previous build only preserved the files, which made the
+    /// history appear empty and let the next launch sweep them once a new
+    /// record wrote a replacement index. Recovery writes an index that
+    /// references the recovered entries, so they remain visible and safe.
     private static func loadState(
         baseDirectory: URL,
         maxItems: Int,
@@ -233,15 +301,24 @@ public actor HistoryStore {
     ) -> LoadedState {
         let indexPath = baseDirectory.appendingPathComponent(indexFileName)
         guard fileManager.fileExists(atPath: indexPath.path) else {
-            // No index: there is no way to tell which files belong to the
-            // store, so keep them all and do not create an empty index.
-            return LoadedState(entries: [], indexNeedsRewrite: false, indexIsTrustworthy: false)
+            return recoveredState(
+                baseDirectory: baseDirectory,
+                maxItems: maxItems,
+                maxBytes: maxBytes,
+                fileManager: fileManager
+            )
         }
 
         let decoded: [HistoryEntry]
+        var allowRecovery = true
         do {
             let data = try Data(contentsOf: indexPath)
-            decoded = try decoder.decode([HistoryEntry].self, from: data)
+            if let index = try? decoder.decode(HistoryIndex.self, from: data) {
+                decoded = index.entries
+                allowRecovery = index.allowRecovery ?? true
+            } else {
+                decoded = try decoder.decode([HistoryEntry].self, from: data)
+            }
         } catch {
             quarantineIndex(
                 at: indexPath,
@@ -249,11 +326,35 @@ public actor HistoryStore {
                 fileManager: fileManager,
                 error: error
             )
-            return LoadedState(entries: [], indexNeedsRewrite: false, indexIsTrustworthy: false)
+            return recoveredState(
+                baseDirectory: baseDirectory,
+                maxItems: maxItems,
+                maxBytes: maxBytes,
+                fileManager: fileManager
+            )
         }
 
-        var entries = decoded
-        var indexNeedsRewrite = false
+        let safeEntries = decoded.filter {
+            isSafeFileName($0.imageFileName) && isSafeFileName($0.thumbnailFileName)
+        }
+        var entries = safeEntries
+        var indexNeedsRewrite = safeEntries.count != decoded.count
+
+        // An old build could write an empty index while images were still on
+        // disk. Adopt them instead of treating them as orphans, unless an
+        // explicit clear left a tombstone.
+        if entries.isEmpty, allowRecovery {
+            let recovered = recoverEntries(in: baseDirectory, fileManager: fileManager)
+            if !recovered.isEmpty {
+                entries = recovered
+                indexNeedsRewrite = true
+            }
+        }
+        if !entries.isEmpty {
+            // Once real entries exist, future loads should be able to recover.
+            allowRecovery = true
+        }
+
         let existing = entries.filter { entry in
             fileManager.fileExists(
                 atPath: baseDirectory.appendingPathComponent(entry.imageFileName).path
@@ -283,8 +384,100 @@ public actor HistoryStore {
         return LoadedState(
             entries: entries,
             indexNeedsRewrite: indexNeedsRewrite,
-            indexIsTrustworthy: true
+            indexIsTrustworthy: true,
+            allowRecovery: allowRecovery
         )
+    }
+
+    /// Rebuilds entries from the image files when no usable index exists.
+    private static func recoveredState(
+        baseDirectory: URL,
+        maxItems: Int,
+        maxBytes: Int64,
+        fileManager: FileManager
+    ) -> LoadedState {
+        let recovered = recoverEntries(in: baseDirectory, fileManager: fileManager)
+        guard !recovered.isEmpty else {
+            // No index and no recognizable images: keep unknown files for a
+            // later diagnosis instead of sweeping the directory.
+            return LoadedState(
+                entries: [],
+                indexNeedsRewrite: false,
+                indexIsTrustworthy: false,
+                allowRecovery: true
+            )
+        }
+        let kept = survivors(
+            of: recovered,
+            maxItems: maxItems,
+            maxBytes: maxBytes,
+            in: baseDirectory,
+            fileManager: fileManager
+        )
+        _ = removeOrphanFiles(referencedBy: kept, in: baseDirectory, fileManager: fileManager)
+        return LoadedState(
+            entries: kept,
+            indexNeedsRewrite: true,
+            indexIsTrustworthy: true,
+            allowRecovery: true
+        )
+    }
+
+    private static func recoverEntries(
+        in baseDirectory: URL,
+        fileManager: FileManager
+    ) -> [HistoryEntry] {
+        let contents = (try? fileManager.contentsOfDirectory(
+            at: baseDirectory,
+            includingPropertiesForKeys: [.isRegularFileKey, .creationDateKey, .contentModificationDateKey]
+        )) ?? []
+        var entries: [HistoryEntry] = []
+        for url in contents {
+            let name = url.lastPathComponent
+            guard let id = imageID(from: name) else { continue }
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else {
+                continue
+            }
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+                  let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+                  width > 0, height > 0 else {
+                continue
+            }
+            let stem = String(name.dropLast(4))
+            let thumbnailFileName = "\(stem)-thumb.png"
+            let thumbnailURL = baseDirectory.appendingPathComponent(thumbnailFileName)
+            if !fileManager.fileExists(atPath: thumbnailURL.path) {
+                writeThumbnail(from: source, to: thumbnailURL)
+            }
+            let values = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+            let createdAt = values?.creationDate ?? values?.contentModificationDate ?? Date()
+            entries.append(HistoryEntry(
+                id: id,
+                createdAt: createdAt,
+                pixelWidth: width,
+                pixelHeight: height,
+                source: .unknown,
+                imageFileName: name,
+                thumbnailFileName: thumbnailFileName
+            ))
+        }
+        return entries.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private static func writeThumbnail(from source: CGImageSource, to url: URL) {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 256,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            options as CFDictionary
+        ), let data = ImageExporter.pngData(from: thumbnail) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 
     /// Moves an unreadable `index.json` out of the way so the next load sees
@@ -334,8 +527,10 @@ public actor HistoryStore {
         for url in contents {
             let name = url.lastPathComponent
             guard name != indexFileName else { continue }
-            // Never descend into or delete directories; the store owns only
-            // the regular files it wrote directly into its private directory.
+            // Only the UUID-named images this store writes are ours to remove.
+            // A user file or a quarantined corrupt index must survive.
+            guard isAppGeneratedImageFileName(name) else { continue }
+            // Never descend into or delete directories.
             guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else {
                 continue
             }
@@ -344,6 +539,29 @@ public actor HistoryStore {
             removedAny = true
         }
         return removedAny
+    }
+
+    // MARK: - Names
+
+    private static func isSafeFileName(_ name: String) -> Bool {
+        !name.isEmpty
+            && name != "."
+            && name != ".."
+            && !name.contains("/")
+            && !name.contains("\\")
+            && (name as NSString).lastPathComponent == name
+    }
+
+    private static func imageID(from name: String) -> UUID? {
+        guard name.hasSuffix(".png"), !name.hasSuffix("-thumb.png") else { return nil }
+        return UUID(uuidString: String(name.dropLast(4)))
+    }
+
+    private static func isAppGeneratedImageFileName(_ name: String) -> Bool {
+        if imageID(from: name) != nil { return true }
+        guard name.hasSuffix("-thumb.png") else { return false }
+        let stem = String(name.dropLast("-thumb.png".count))
+        return UUID(uuidString: stem) != nil
     }
 
     // MARK: - Limits

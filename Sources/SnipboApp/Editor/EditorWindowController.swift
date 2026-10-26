@@ -29,6 +29,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private var recognitionTask: Task<Void, Never>?
     /// Invalidates stale tasks after cancel or a newer recognition request.
     private var recognitionGeneration = 0
+    /// Prevents a second copy/save/pin from starting while the first render or
+    /// encode is still in flight.
+    private var exportInFlight = false
     private var toolbarView: EditorToolbarView?
     private var stylePanel: EditorStylePanelView?
     /// Exposed for probes: the floating style panel over the canvas.
@@ -140,7 +143,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         refreshReadouts()
         // Cmd+C copies without closing; Enter and the toolbar Copy button copy
         // and close.
-        canvas.onCopy = { [weak self] in self?.copyToPasteboard() }
+        canvas.onCopy = { [weak self] in
+            Task { await self?.copyToPasteboard() }
+        }
         canvas.onCopyAndClose = { [weak self] in self?.copyAndClose() }
         canvas.onPin = { [weak self] in self?.pinAction() }
         canvas.onSave = { [weak self] in self?.saveAndClose(saveAs: false) }
@@ -312,7 +317,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                 if modifiers.contains(.shift) { controller.redo() } else { controller.undo() }
                 return true
             case "c":
-                copyToPasteboard()
+                Task { await self.copyToPasteboard() }
                 return true
             case "p":
                 pinAction()
@@ -338,37 +343,114 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Copy and save
 
+    /// Renders on a background executor. The document is a value snapshot, so
+    /// the render does not block the main thread while a 6K canvas is composited.
+    private static func render(_ document: EditDocument) async -> ImageData? {
+        await Task.detached(priority: .userInitiated) {
+            guard let image = DocumentRenderer.render(document) else { return nil }
+            return ImageData(image)
+        }.value
+    }
+
+    private func renderedPayload() async -> ImageData? {
+        await Self.render(controller.document)
+    }
+
+    private static func pngData(for payload: ImageData) async -> Data? {
+        await Task.detached(priority: .userInitiated) {
+            ImageExporter.pngData(from: payload.cgImage)
+        }.value
+    }
+
+    private static func write(
+        _ payload: ImageData,
+        to url: URL,
+        format: ImageFormat,
+        quality: Double
+    ) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            try CaptureFileSaver.write(
+                payload.cgImage,
+                to: url,
+                format: format,
+                quality: quality
+            )
+        }.value
+    }
+
+    private static func write(
+        _ payload: ImageData,
+        format: ImageFormat,
+        quality: Double,
+        directory: String
+    ) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            try CaptureFileSaver.write(
+                payload.cgImage,
+                format: format,
+                quality: quality,
+                directory: directory
+            )
+        }.value
+    }
+
+    private func beginExport() -> Bool {
+        guard !exportInFlight else {
+            NSSound.beep()
+            return false
+        }
+        exportInFlight = true
+        return true
+    }
+
+    private func finishExport() {
+        exportInFlight = false
+    }
+
     /// Pins the rendered image as a floating window and closes the editor.
     /// Pins are not recorded to history.
     func pinAction() {
-        commitPendingText()
-        guard let image = controller.renderForExport() else { return }
-        PinBoard.shared.pin(image)
-        close()
+        guard beginExport() else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.finishExport() }
+            self.commitPendingText()
+            guard let payload = await self.renderedPayload() else { return }
+            PinBoard.shared.pin(payload.cgImage)
+            self.close()
+        }
     }
 
     /// Esc closes the editor, optionally copying and/or saving the rendered
     /// image first (Shottr's "Action when hiding with Esc").
     private func escapeAction() {
-        commitPendingText()
-        if settings.copyOnEditorEscape {
-            copyToPasteboard()
+        guard beginExport() else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.finishExport() }
+            self.commitPendingText()
+            let settings = self.settings
+            if settings.copyOnEditorEscape {
+                _ = await self.performCopy()
+            }
+            if settings.saveOnEditorEscape {
+                await self.performSaveSilently(settings: settings)
+            }
+            self.close()
         }
-        if settings.saveOnEditorEscape {
-            saveSilently()
-        }
-        close()
     }
 
     /// Writes the rendered document to the configured save directory without
     /// any panel or close side effect; used by the Esc-save option.
-    private func saveSilently() {
-        let settings = self.settings
-        guard let image = controller.renderForExport() else { return }
-        let url = URL(fileURLWithPath: settings.saveDirectory)
-            .appendingPathComponent(controller.defaultFileName(format: settings.format))
+    private func performSaveSilently(settings: AppSettings) async {
+        guard let payload = await renderedPayload() else { return }
         do {
-            try controller.write(image, to: url, format: settings.format, quality: settings.jpegQuality)
+            try await Self.write(
+                payload,
+                format: settings.format,
+                quality: settings.jpegQuality,
+                directory: settings.saveDirectory
+            )
         } catch {
             NSSound.beep()
             NSLog("Snipbo: Esc-save failed: \(error.localizedDescription)")
@@ -385,16 +467,21 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     /// Renders the document and writes it to the pasteboard, keeping the editor
     /// open. Returns false when the image could not be encoded or written.
     @discardableResult
-    func copyToPasteboard() -> Bool {
+    func copyToPasteboard() async -> Bool {
+        guard beginExport() else { return false }
+        defer { finishExport() }
         commitPendingText()
+        return await performCopy()
+    }
+
+    private func performCopy() async -> Bool {
         // Encode before touching the pasteboard, so a render/encode failure
         // leaves the user's current clipboard contents intact.
-        guard let image = controller.renderForExport(),
-              let data = ImageExporter.pngData(from: image) else {
+        guard let payload = await renderedPayload(),
+              let data = await Self.pngData(for: payload) else {
             reportCopyFailure()
             return false
         }
-        let pasteboard = self.pasteboard
         guard PasteboardWriter.writePNG(data, to: pasteboard) else {
             // The helper already put the previous contents back before
             // telling the user the copy failed.
@@ -412,8 +499,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         guard let window, window.isVisible else { return }
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Copy failed"
-        alert.informativeText = "The screenshot could not be placed on the clipboard."
+        alert.messageText = L10n.tr("Copy failed", "复制失败")
+        alert.informativeText = L10n.tr(
+            "The screenshot could not be placed on the clipboard.",
+            "无法把截图放入剪贴板。"
+        )
         alert.runModal()
     }
 
@@ -421,30 +511,56 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     /// Copy button, and any other "copy and finish" action use this; Cmd+C uses
     /// `copyToPasteboard()` and keeps the editor open.
     func copyAndClose() {
-        guard copyToPasteboard() else { return }
-        close()
+        guard beginExport() else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.finishExport() }
+            self.commitPendingText()
+            if await self.performCopy() {
+                self.close()
+            }
+        }
     }
 
     private func saveAndClose(saveAs: Bool) {
-        commitPendingText()
-        // Snapshot the live settings once so the file name, directory, format,
-        // and quality all come from the same action-time values.
-        let settings = self.settings
-        guard let image = controller.renderForExport() else { return }
-        let fileName = controller.defaultFileName(format: settings.format)
-        let url: URL
-        if saveAs {
-            let panel = savePanel(fileName: fileName)
-            guard panel.runModal() == .OK, let selected = panel.url else { return }
-            url = selected
-        } else {
-            url = URL(fileURLWithPath: settings.saveDirectory).appendingPathComponent(fileName)
-        }
-        do {
-            try controller.write(image, to: url, format: settings.format, quality: settings.jpegQuality)
-            close()
-        } catch {
-            NSAlert(error: error).runModal()
+        guard beginExport() else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.finishExport() }
+            self.commitPendingText()
+            // Snapshot the live settings once so the file name, directory,
+            // format, and quality all come from the same action-time values.
+            let settings = self.settings
+            if saveAs {
+                let fileName = self.controller.defaultFileName(format: settings.format)
+                let panel = self.savePanel(fileName: fileName)
+                guard panel.runModal() == .OK, let selected = panel.url else { return }
+                guard let payload = await self.renderedPayload() else { return }
+                do {
+                    try await Self.write(
+                        payload,
+                        to: selected,
+                        format: settings.format,
+                        quality: settings.jpegQuality
+                    )
+                    self.close()
+                } catch {
+                    NSAlert(error: error).runModal()
+                }
+            } else {
+                guard let payload = await self.renderedPayload() else { return }
+                do {
+                    try await Self.write(
+                        payload,
+                        format: settings.format,
+                        quality: settings.jpegQuality,
+                        directory: settings.saveDirectory
+                    )
+                    self.close()
+                } catch {
+                    NSAlert(error: error).runModal()
+                }
+            }
         }
     }
 
@@ -462,8 +578,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private func recognize() {
         guard recognitionTask == nil else { return }
         commitPendingText()
-        guard let image = controller.renderForExport() else { return }
+        let document = controller.document
+        let cropRect = document.cropRect
         let languages = settings.ocrLanguages
+        let removeLineBreaks = settings.ocrRemoveLineBreaks
         recognitionGeneration += 1
         let generation = recognitionGeneration
 
@@ -474,15 +592,32 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
         recognitionTask = Task { [weak self] in
             guard let self else { return }
+            guard let payload = await Self.render(document) else {
+                self.finishRecognition(generation: generation)
+                self.recognitionPanel.showMessage(
+                    L10n.tr("The image could not be rendered.", "图像渲染失败。")
+                )
+                return
+            }
             do {
+                try Task.checkCancellation()
                 let result = try await self.recognitionService.recognize(
-                    ImageData(image),
+                    payload,
                     languages: languages
                 )
                 try Task.checkCancellation()
                 guard generation == self.recognitionGeneration else { return }
-                self.recognitionTask = nil
-                self.toolbarView?.setRecognizing(false)
+                // A crop or resize while Vision was running makes the boxes
+                // relative to a different image; discard them instead of
+                // drawing highlights in the wrong place.
+                guard self.controller.document.cropRect == cropRect else {
+                    self.finishRecognition(generation: generation)
+                    self.recognitionPanel.showMessage(
+                        L10n.tr("The image changed; run recognition again.", "图像已变化，请重新识别。")
+                    )
+                    return
+                }
+                self.finishRecognition(generation: generation)
 
                 if result.isEmpty {
                     self.recognitionPanel.showMessage(L10n.tr("No text or barcode found.", "未识别到文字或条码。"))
@@ -490,31 +625,41 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                     return
                 }
 
-                self.recognitionPanel.show(result, removeLineBreaks: settings.ocrRemoveLineBreaks)
+                self.recognitionPanel.show(result, removeLineBreaks: removeLineBreaks)
                 // Vision boxes are relative to the rendered crop; the canvas
                 // works in original-image coordinates.
-                let origin = self.controller.document.cropRect.origin
+                let origin = cropRect.origin
                 let textRects = result.textBlocks.map {
-                    $0.pixelRect(imageWidth: image.width, imageHeight: image.height)
-                        .offsetBy(dx: origin.x, dy: origin.y)
+                    $0.pixelRect(
+                        imageWidth: payload.cgImage.width,
+                        imageHeight: payload.cgImage.height
+                    )
+                    .offsetBy(dx: origin.x, dy: origin.y)
                 }
                 let barcodeRects = result.barcodes.map {
-                    $0.pixelRect(imageWidth: image.width, imageHeight: image.height)
-                        .offsetBy(dx: origin.x, dy: origin.y)
+                    $0.pixelRect(
+                        imageWidth: payload.cgImage.width,
+                        imageHeight: payload.cgImage.height
+                    )
+                    .offsetBy(dx: origin.x, dy: origin.y)
                 }
                 self.canvas.setRecognitionHighlights(textRects + barcodeRects)
             } catch is CancellationError {
                 guard generation == self.recognitionGeneration else { return }
-                self.recognitionTask = nil
-                self.toolbarView?.setRecognizing(false)
+                self.finishRecognition(generation: generation)
             } catch {
                 guard generation == self.recognitionGeneration else { return }
-                self.recognitionTask = nil
-                self.toolbarView?.setRecognizing(false)
+                self.finishRecognition(generation: generation)
                 self.recognitionPanel.showMessage(error.localizedDescription)
                 NSSound.beep()
             }
         }
+    }
+
+    private func finishRecognition(generation: Int) {
+        guard generation == recognitionGeneration else { return }
+        recognitionTask = nil
+        toolbarView?.setRecognizing(false)
     }
 
     private func copyRecognitionText(_ text: String) {

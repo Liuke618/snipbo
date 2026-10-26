@@ -45,8 +45,6 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Saves the rendered image to the save directory before an editor Esc
     /// closes the window (Shottr's "Action when hiding with Esc").
     public var saveOnEditorEscape: Bool
-    /// Crops the transparent shadow padding off window captures.
-    public var windowShadowTrim: Bool
     /// Per-mode global shortcuts, keyed by capture mode. Modes without an
     /// entry fall back to `hotkey` for the region mode and have no chord
     /// otherwise.
@@ -56,6 +54,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Hides the menu bar icon. Settings can still be reopened from
     /// Spotlight or Finder, which activates the app and shows Settings.
     public var hideMenuBarIcon: Bool
+    /// Removes stored screenshots when the app quits.
+    public var clearHistoryOnQuit: Bool
 
     /// Capture modes that can carry their own global shortcut, in the order
     /// used to resolve chord conflicts.
@@ -104,10 +104,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case scrollCaptureFPS
         case copyOnEditorEscape
         case saveOnEditorEscape
-        case windowShadowTrim
         case modeHotkeys
         case uiLanguage
         case hideMenuBarIcon
+        case clearHistoryOnQuit
     }
 
     public init(
@@ -131,10 +131,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         scrollCaptureFPS: Int = 10,
         copyOnEditorEscape: Bool = false,
         saveOnEditorEscape: Bool = false,
-        windowShadowTrim: Bool = false,
         modeHotkeys: [String: Hotkey] = [:],
         uiLanguage: AppLanguage = .system,
-        hideMenuBarIcon: Bool = false
+        hideMenuBarIcon: Bool = false,
+        clearHistoryOnQuit: Bool = false
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -156,10 +156,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.scrollCaptureFPS = scrollCaptureFPS
         self.copyOnEditorEscape = copyOnEditorEscape
         self.saveOnEditorEscape = saveOnEditorEscape
-        self.windowShadowTrim = windowShadowTrim
         self.modeHotkeys = modeHotkeys
         self.uiLanguage = uiLanguage
         self.hideMenuBarIcon = hideMenuBarIcon
+        self.clearHistoryOnQuit = clearHistoryOnQuit
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -196,14 +196,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.copyOnEditorEscape
         saveOnEditorEscape = try container.decodeIfPresent(Bool.self, forKey: .saveOnEditorEscape)
             ?? fallback.saveOnEditorEscape
-        windowShadowTrim = try container.decodeIfPresent(Bool.self, forKey: .windowShadowTrim)
-            ?? fallback.windowShadowTrim
         modeHotkeys = try container.decodeIfPresent([String: Hotkey].self, forKey: .modeHotkeys)
             ?? fallback.modeHotkeys
         uiLanguage = try container.decodeIfPresent(AppLanguage.self, forKey: .uiLanguage)
             ?? fallback.uiLanguage
         hideMenuBarIcon = try container.decodeIfPresent(Bool.self, forKey: .hideMenuBarIcon)
             ?? fallback.hideMenuBarIcon
+        clearHistoryOnQuit = try container.decodeIfPresent(Bool.self, forKey: .clearHistoryOnQuit)
+            ?? fallback.clearHistoryOnQuit
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -231,14 +231,17 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ocrRemoveLineBreaks: false,
         copyOnEditorEscape: false,
         saveOnEditorEscape: false,
-        windowShadowTrim: false,
         modeHotkeys: [:],
         uiLanguage: .system,
-        hideMenuBarIcon: false
+        hideMenuBarIcon: false,
+        clearHistoryOnQuit: false
     )
 
     public func normalized() -> AppSettings {
         var copy = self
+        if !copy.hotkey.isGlobalShortcut {
+            copy.hotkey = Self.default.hotkey
+        }
         copy.jpegQuality = min(1, max(0.1, jpegQuality))
         copy.historyMaxItems = min(1000, max(1, historyMaxItems))
         copy.historyMaxBytes = min(10 * 1024 * 1024 * 1024, max(10 * 1024 * 1024, historyMaxBytes))
@@ -262,7 +265,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             } else {
                 chord = nil
             }
-            guard let chord, used.insert(chord).inserted else { continue }
+            guard let chord, chord.isGlobalShortcut, used.insert(chord).inserted else { continue }
             effective[mode] = chord
         }
         copy.modeHotkeys = copy.modeHotkeys.filter { effective[$0.key] == $0.value }

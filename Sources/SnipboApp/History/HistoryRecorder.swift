@@ -41,13 +41,15 @@ enum HistoryRecorder {
                 // the new entry when the user opens it next.
                 NotificationCenter.default.post(name: .snipboHistoryDidChange, object: entry)
             } catch {
-                let message = error.localizedDescription
                 logger.error(
-                    "Failed to record a history entry: \(message, privacy: .public)"
+                    "Failed to record a history entry: \(error.localizedDescription, privacy: .public)"
                 )
                 NotificationCenter.default.post(
                     name: .snipboHistoryWriteFailed,
-                    object: message
+                    object: L10n.tr(
+                        "The screenshot could not be added to history.",
+                        "截图未能加入历史。"
+                    )
                 )
             }
         }

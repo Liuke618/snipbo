@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SnipboCore
 import SwiftUI
 
@@ -39,53 +40,120 @@ final class HistoryBrowserWindowController: NSWindowController {
 final class HistoryBrowserModel: ObservableObject {
     @Published private(set) var entries: [HistoryEntry] = []
     @Published private(set) var thumbnails: [UUID: NSImage] = [:]
-    @Published private(set) var loadFailed = false
 
     private let store: HistoryStore
+    private var reloadGeneration = 0
+    /// Only written during init and read in deinit, where exclusive access is
+    /// guaranteed; the notification block itself captures `self` weakly.
+    nonisolated(unsafe) private var historyObserver: NSObjectProtocol?
 
     init(store: HistoryStore) {
         self.store = store
-    }
-
-    func reload() async {
-        let list = await store.entries()
-        entries = list
-        loadFailed = false
-        // Drop thumbnails of removed entries.
-        let liveIDs = Set(list.map(\.id))
-        thumbnails = thumbnails.filter { liveIDs.contains($0.key) }
-        for entry in list where thumbnails[entry.id] == nil {
-            let url = await store.thumbnailURL(for: entry)
-            if let image = NSImage(contentsOf: url) {
-                thumbnails[entry.id] = image
+        historyObserver = NotificationCenter.default.addObserver(
+            forName: .snipboHistoryDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.reload()
             }
         }
     }
 
-    func markUnavailable() {
-        loadFailed = true
+    deinit {
+        if let historyObserver {
+            NotificationCenter.default.removeObserver(historyObserver)
+        }
+    }
+
+    func reload() async {
+        reloadGeneration += 1
+        let generation = reloadGeneration
+        let list = await store.entries()
+        guard generation == reloadGeneration else { return }
+        entries = list
+        // Drop thumbnails of removed entries.
+        let liveIDs = Set(list.map(\.id))
+        thumbnails = thumbnails.filter { liveIDs.contains($0.key) }
+
+        let missing = list.filter { thumbnails[$0.id] == nil }
+        guard !missing.isEmpty else { return }
+        let directory = store.directory
+
+        // Decode a few thumbnails at a time off the main actor, publishing each
+        // as it finishes instead of blocking the grid on the whole list.
+        var iterator = missing.makeIterator()
+        await withTaskGroup(of: (UUID, ImageData?).self) { group in
+            for _ in 0..<4 {
+                guard let entry = iterator.next() else { break }
+                let url = directory.appendingPathComponent(entry.thumbnailFileName)
+                group.addTask {
+                    (entry.id, Self.loadThumbnail(at: url))
+                }
+            }
+            while let (id, payload) = await group.next() {
+                guard generation == reloadGeneration else {
+                    group.cancelAll()
+                    return
+                }
+                if let payload, liveIDs.contains(id) {
+                    thumbnails[id] = NSImage(
+                        cgImage: payload.cgImage,
+                        size: NSSize(
+                            width: payload.cgImage.width,
+                            height: payload.cgImage.height
+                        )
+                    )
+                }
+                if let entry = iterator.next() {
+                    let url = directory.appendingPathComponent(entry.thumbnailFileName)
+                    group.addTask {
+                        (entry.id, Self.loadThumbnail(at: url))
+                    }
+                }
+            }
+        }
     }
 
     func delete(_ entry: HistoryEntry) async {
-        try? await store.remove(id: entry.id)
+        do {
+            try await store.remove(id: entry.id)
+        } catch {
+            NSLog("Snipbo: history delete failed: \(error.localizedDescription)")
+            return
+        }
         thumbnails.removeValue(forKey: entry.id)
         await reload()
     }
 
     func clearAll() async {
-        try? await store.clear()
+        do {
+            try await store.clear()
+        } catch {
+            NSLog("Snipbo: history clear failed: \(error.localizedDescription)")
+            return
+        }
         thumbnails.removeAll()
         await reload()
     }
 
     func pin(_ entry: HistoryEntry) async {
-        guard let image = await loadImage(entry) else { return }
-        PinBoard.shared.pin(image)
+        let url = await store.imageURL(for: entry)
+        let payload = await Task.detached(priority: .userInitiated) {
+            Self.loadFullImage(at: url)
+        }.value
+        guard let payload else { return }
+        PinBoard.shared.pin(payload.cgImage)
     }
 
     func copy(_ entry: HistoryEntry) async {
-        guard let image = await loadImage(entry),
-              let data = ImageExporter.pngData(from: image) else { return }
+        let url = await store.imageURL(for: entry)
+        let data = await Task.detached(priority: .userInitiated) {
+            try? Data(contentsOf: url)
+        }.value
+        guard let data, !data.isEmpty else { return }
+        // The stored file is already a PNG; do not decode and re-encode it on
+        // the main thread just to copy it.
         _ = PasteboardWriter.writePNG(data, to: NSPasteboard.general)
     }
 
@@ -94,10 +162,27 @@ final class HistoryBrowserModel: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
-    private func loadImage(_ entry: HistoryEntry) async -> CGImage? {
-        let url = await store.imageURL(for: entry)
+    private nonisolated static func loadThumbnail(at url: URL) -> ImageData? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 256,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            options as CFDictionary
+        ) else { return nil }
+        return ImageData(image)
+    }
+
+    private nonisolated static func loadFullImage(at url: URL) -> ImageData? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return nil
+        }
+        return ImageData(image)
     }
 }
 
@@ -117,21 +202,20 @@ struct HistoryBrowserView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(L10n.tr("\(model.entries.count) screenshots", "\(model.entries.count) 张截图"))
-                    .foregroundStyle(.secondary)
+                Text(L10n.tr(
+                    "\(model.entries.count) screenshots · originals",
+                    "\(model.entries.count) 张截图 · 原始图"
+                ))
+                .foregroundStyle(.secondary)
                 Spacer()
                 Button(L10n.tr("Clear All", "全部清空")) {
-                    Task { await model.clearAll() }
+                    confirmClearAll()
                 }
                 .disabled(model.entries.isEmpty)
             }
             .padding(12)
             Divider()
-            if model.loadFailed {
-                Text(L10n.tr("The history index could not be read.", "历史索引无法读取。"))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if model.entries.isEmpty {
+            if model.entries.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "camera.viewfinder")
                         .font(.system(size: 32))
@@ -158,6 +242,20 @@ struct HistoryBrowserView: View {
         .onAppear {
             Task { await model.reload() }
         }
+    }
+
+    private func confirmClearAll() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L10n.tr("Clear all screenshots?", "清空全部截图？")
+        alert.informativeText = L10n.tr(
+            "This permanently deletes every screenshot in the history. It cannot be undone.",
+            "这会永久删除历史中的所有截图，且无法撤销。"
+        )
+        alert.addButton(withTitle: L10n.tr("Clear All", "全部清空"))
+        alert.addButton(withTitle: L10n.tr("Cancel", "取消"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { await model.clearAll() }
     }
 
     @ViewBuilder

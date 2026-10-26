@@ -42,7 +42,7 @@ struct ModeHotkeyRecorderView: NSViewRepresentable {
 
 /// Click-to-record control. It draws the current shortcut, and only while
 /// armed by a click it captures the next key combination that includes at
-/// least one of Command/Shift/Option/Control and reports it through `onChange`.
+/// least one of Command/Option/Control and reports it through `onChange`.
 /// Escape or losing first responder leaves recording mode without changing the
 /// shortcut; keys pressed while not recording pass through to the responder
 /// chain.
@@ -116,11 +116,12 @@ final class HotkeyRecorderNSView: NSView {
             needsDisplay = true
             return
         }
-        // Only Command/Shift/Option/Control form a valid global shortcut.
-        // Looking at those alone also keeps Caps Lock (and other independent
-        // flags) from turning a bare key press into a modifier-less hotkey.
+        // A global chord needs Command, Option, or Control. Shift-only chords
+        // would steal ordinary typing system-wide, and looking at these flags
+        // alone also keeps Caps Lock from turning a key into a modifier-less
+        // global shortcut.
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
-        if flags.isEmpty {
+        if flags.intersection([.command, .option, .control]).isEmpty {
             NSSound.beep()
             return
         }

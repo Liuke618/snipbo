@@ -163,6 +163,7 @@ final class CaptureCoordinator {
                     includeCursor: settings.captureCursor
                 )
                 let image: CGImage
+                var composedScale = captures.first?.geometry.backingScale ?? 1
                 if captures.count == 1 {
                     image = captures[0].image
                 } else {
@@ -175,20 +176,21 @@ final class CaptureCoordinator {
                     }
                     // Composition touches every output pixel; keep it off the
                     // main actor so a large multi-display capture does not
-                    // freeze the menu or editor. ImageData is the Sendable
-                    // wrapper for the resulting CGImage.
-                    let composed = await Task.detached(priority: .userInitiated) { () -> ImageData? in
-                        guard let composed = ScreenComposer.compose(slices) else { return nil }
-                        return ImageData(composed)
+                    // freeze the menu or editor. ScreenComposition is the
+                    // Sendable wrapper for the resulting CGImage and the
+                    // scale actually used (which may be budget-limited).
+                    let composed = await Task.detached(priority: .userInitiated) {
+                        ScreenComposer.composeWithScale(slices)
                     }.value
                     guard let composed else {
                         throw CaptureError.compositionFailed
                     }
-                    image = composed.cgImage
+                    image = composed.image
+                    composedScale = composed.scale
                 }
                 guard endCaptureAttempt(generation) else { return }
                 isCapturing = false
-                deliver(image, source: .fullScreen, backingScale: captures.first?.geometry.backingScale ?? 1)
+                deliver(image, source: .fullScreen, backingScale: composedScale)
             } catch {
                 guard generation == captureGeneration else { return }
                 fail(error)
@@ -558,11 +560,10 @@ final class CaptureCoordinator {
                 )
                 guard endCaptureAttempt(generation) else { return }
                 isCapturing = false
-                // Optional: crop the shadow padding off the window image.
-                let image = settings.windowShadowTrim
-                    ? (ImageTrimming.trimmedToOpaqueBounds(capture.image) ?? capture.image)
-                    : capture.image
-                deliver(image, source: .window, backingScale: capture.geometry.backingScale)
+                // Window capture already ignores the window shadow
+                // (`ignoreShadowsSingleWindow`), so there is no shadow padding
+                // to trim afterwards.
+                deliver(capture.image, source: .window, backingScale: capture.geometry.backingScale)
             } catch {
                 guard generation == captureGeneration else { return }
                 fail(error)
@@ -595,64 +596,88 @@ final class CaptureCoordinator {
     /// delivery path is shared by every capture mode so history sources and
     /// failure handling cannot drift.
     private func deliver(_ image: CGImage, source: CaptureSource, backingScale: CGFloat = 1) {
-        // Optional retina downscale keeps exports at 1x.
-        let effectiveScale: CGFloat = settings.retinaDownscale && backingScale > 1 ? 1 : backingScale
-        let image = settings.retinaDownscale && backingScale > 1
-            ? ImageExporter.downscaled(image, by: 1 / backingScale)
-            : image
-        // Shottr-style: every capture lands in history as soon as it is
-        // delivered — saving or copying is optional, and the editor's later
-        // copy/save must not duplicate the entry.
-        HistoryRecorder.record(image, source: source, settings: settings, history: history)
-        if settings.openEditorAfterCapture {
-            let identifier = UUID()
-            let editor = EditorWindowController(
-                document: EditDocument(image: image, backingScale: effectiveScale),
-                settingsProvider: { [weak self] in self?.settings ?? .default },
-                history: history,
-                identifier: identifier,
-                pasteboard: pasteboardProvider(),
-                onClose: { [weak self] in
-                    // Remove only the editor whose close callback runs; a
-                    // late close must not drop a newer editor.
-                    guard let self else { return }
-                    self.editors.removeAll { $0.identifier == identifier }
-                }
-            )
-            editors.append(editor)
-            editor.show()
-            return
-        }
+        // Snapshot at delivery time: an encoding pass can outlive a settings
+        // change, and all outputs of one capture should agree.
+        let settings = self.settings
+        let payload = ImageData(image)
+        let history = self.history
+        let pasteboard = self.pasteboardProvider()
 
-        // Direct path: copy and/or save per settings. Normalization guarantees
-        // at least one of the two is enabled when the editor is off.
-        do {
-            if settings.afterCaptureCopy {
-                guard let data = ImageExporter.pngData(from: image) else {
+        Task { [weak self] in
+            guard let self else { return }
+            let processed = await Task.detached(priority: .userInitiated) { () -> ImageData in
+                guard settings.retinaDownscale, backingScale > 1 else { return payload }
+                return ImageData(ImageExporter.downscaled(payload.cgImage, by: 1 / backingScale))
+            }.value
+            let effectiveScale: CGFloat = settings.retinaDownscale && backingScale > 1
+                ? 1
+                : backingScale
+
+            // Shottr-style: every capture lands in history as soon as it is
+            // delivered — saving or copying is optional, and the editor's later
+            // copy/save must not duplicate the entry.
+            HistoryRecorder.record(
+                processed.cgImage,
+                source: source,
+                settings: settings,
+                history: history
+            )
+
+            if settings.openEditorAfterCapture {
+                let identifier = UUID()
+                let editor = EditorWindowController(
+                    document: EditDocument(
+                        image: processed.cgImage,
+                        backingScale: effectiveScale
+                    ),
+                    settingsProvider: { [weak self] in self?.settings ?? .default },
+                    history: history,
+                    identifier: identifier,
+                    pasteboard: pasteboard,
+                    onClose: { [weak self] in
+                        // Remove only the editor whose close callback runs; a
+                        // late close must not drop a newer editor.
+                        guard let self else { return }
+                        self.editors.removeAll { $0.identifier == identifier }
+                    }
+                )
+                self.editors.append(editor)
+                editor.show()
+                return
+            }
+
+            // Direct path: copy and/or save per settings. Normalization
+            // guarantees one action, but keep a fallback so a stale settings
+            // snapshot can never discard the capture silently.
+            let shouldCopy = settings.afterCaptureCopy || !settings.afterCaptureSave
+            if shouldCopy {
+                let data = await Task.detached(priority: .userInitiated) {
+                    ImageExporter.pngData(from: processed.cgImage)
+                }.value
+                if let data, PasteboardWriter.writePNG(data, to: pasteboard) {
+                    // Copied successfully.
+                } else {
+                    self.logger.error("Failed to copy the captured screenshot to the pasteboard")
                     NSSound.beep()
-                    return
-                }
-                // Encode before touching the pasteboard, then write with rollback
-                // so a rejected write leaves the previous clipboard contents in
-                // place and never records a screenshot that was not copied.
-                guard PasteboardWriter.writePNG(data, to: pasteboardProvider()) else {
-                    logger.error("Failed to copy the captured screenshot to the pasteboard")
-                    NSSound.beep()
-                    return
                 }
             }
             if settings.afterCaptureSave {
-                try CaptureFileSaver.write(
-                    image,
-                    format: settings.format,
-                    quality: settings.jpegQuality,
-                    directory: settings.saveDirectory
-                )
+                do {
+                    try await Task.detached(priority: .userInitiated) {
+                        try CaptureFileSaver.write(
+                            processed.cgImage,
+                            format: settings.format,
+                            quality: settings.jpegQuality,
+                            directory: settings.saveDirectory
+                        )
+                    }.value
+                } catch {
+                    self.logger.error(
+                        "Failed to save the captured screenshot: \(error.localizedDescription)"
+                    )
+                    NSSound.beep()
+                }
             }
-        } catch {
-            logger.error("Failed to save the captured screenshot: \(error.localizedDescription)")
-            NSSound.beep()
-            return
         }
     }
 

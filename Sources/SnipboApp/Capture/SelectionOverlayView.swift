@@ -47,14 +47,15 @@ final class SelectionOverlayView: NSView {
         let nsImage = NSImage(cgImage: captured.image, size: bounds.size)
         nsImage.draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
 
-        NSColor.black.withAlphaComponent(0.45).setFill()
-        NSBezierPath(rect: bounds).fill()
-
         if selection.isUsable {
-            NSGraphicsContext.saveGraphicsState()
-            NSBezierPath(rect: selection.rect).addClip()
-            nsImage.draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-            NSGraphicsContext.restoreGraphicsState()
+            // Dim only the area outside the selection. The old path drew the
+            // full-screen image a second time through a clip, which doubled the
+            // pixel cost on every mouse move.
+            let dim = NSBezierPath(rect: bounds)
+            dim.append(NSBezierPath(rect: selection.rect))
+            dim.windingRule = .evenOdd
+            NSColor.black.withAlphaComponent(0.45).setFill()
+            dim.fill()
 
             NSColor.white.setStroke()
             let border = NSBezierPath(rect: selection.rect)
@@ -63,6 +64,8 @@ final class SelectionOverlayView: NSView {
             drawHandles()
             drawSizeLabel()
         } else {
+            NSColor.black.withAlphaComponent(0.45).setFill()
+            NSBezierPath(rect: bounds).fill()
             drawCrosshair()
         }
         drawMagnifierIfNeeded()

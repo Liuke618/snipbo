@@ -5,6 +5,8 @@ public enum CaptureSource: String, Codable, Sendable {
     case window
     case fullScreen
     case scrolling
+    /// A recovered entry whose original capture mode is no longer known.
+    case unknown
 }
 
 public struct HistoryEntry: Codable, Identifiable, Equatable, Sendable {

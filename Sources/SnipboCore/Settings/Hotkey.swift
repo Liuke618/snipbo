@@ -22,6 +22,12 @@ public struct Hotkey: Codable, Equatable, Hashable, Sendable {
         self.modifiers = modifiers
     }
 
+    /// A global chord must include Command, Option, or Control. Shift-only and
+    /// modifier-less chords would steal ordinary typing system-wide.
+    public var isGlobalShortcut: Bool {
+        !modifiers.intersection([.command, .option, .control]).isEmpty
+    }
+
     public var displayString: String {
         var result = ""
         if modifiers.contains(.control) { result += "⌃" }

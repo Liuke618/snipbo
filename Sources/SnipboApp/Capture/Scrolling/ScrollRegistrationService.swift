@@ -18,9 +18,15 @@ enum ScrollRegistrationError: Error, LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .requestFailed(let message):
-            return "Scroll registration failed: \(message)"
+            return L10n.tr(
+                "Scroll registration failed: \(message)",
+                "滚动对齐失败：\(message)"
+            )
         case .noResult:
-            return "Scroll registration found no alignment."
+            return L10n.tr(
+                "Scroll registration found no alignment.",
+                "滚动对齐没有找到匹配。"
+            )
         }
     }
 }

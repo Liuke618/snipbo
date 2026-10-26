@@ -195,8 +195,17 @@ private final class PinContentView: NSView {
     }
 
     private func copyImage() {
-        guard let data = ImageExporter.pngData(from: image) else { return }
-        _ = PasteboardWriter.writePNG(data, to: NSPasteboard.general)
+        let payload = ImageData(image)
+        Task {
+            let data = await Task.detached(priority: .userInitiated) {
+                ImageExporter.pngData(from: payload.cgImage)
+            }.value
+            guard let data else {
+                NSSound.beep()
+                return
+            }
+            _ = PasteboardWriter.writePNG(data, to: NSPasteboard.general)
+        }
     }
 
     @objc private func copyImageAction() { copyImage() }

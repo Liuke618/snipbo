@@ -8,6 +8,47 @@ struct ScreenComposerTests {
         #expect(ScreenComposer.compose([]) == nil)
     }
 
+    @Test func testEffectiveScaleKeepsNormalLayoutAtNativeScale() {
+        let union = CGRect(x: 0, y: 0, width: 2_000, height: 1_000)
+        #expect(ScreenComposer.effectiveScale(forUnion: union, maxBackingScale: 2) == 2)
+    }
+
+    @Test func testEffectiveScaleCapsHugeUnionWithinPixelBudget() {
+        let union = CGRect(x: 0, y: 0, width: 20_000, height: 10_000)
+        let scale = ScreenComposer.effectiveScale(forUnion: union, maxBackingScale: 2)
+        #expect(scale < 2)
+        let pixels = CGFloat(union.width) * CGFloat(union.height) * scale * scale
+        #expect(pixels <= CGFloat(ScreenComposer.maxCompositePixels) + 1)
+    }
+
+    @Test func testComposeWithScaleReportsNativeScale() throws {
+        let image = try makeSolidImage(red: 1, green: 0, blue: 0, width: 200, height: 100)
+        let composition = try #require(ScreenComposer.composeWithScale([
+            ScreenSlice(
+                image: image,
+                frame: CGRect(x: 0, y: 0, width: 100, height: 50),
+                backingScale: 2
+            ),
+        ]))
+        #expect(composition.scale == 2)
+        #expect(composition.image.width == 200)
+        #expect(composition.image.height == 100)
+    }
+
+    @Test func testComposeWithScaleHonorsPixelBudget() throws {
+        let image = try makeSolidImage(red: 1, green: 0, blue: 0, width: 200, height: 200)
+        let composition = try #require(ScreenComposer.composeWithScale([
+            ScreenSlice(
+                image: image,
+                frame: CGRect(x: 0, y: 0, width: 100, height: 100),
+                backingScale: 2
+            ),
+        ], pixelBudget: 10_000))
+        #expect(composition.scale == 1)
+        #expect(composition.image.width == 100)
+        #expect(composition.image.height == 100)
+    }
+
     @Test func testSingleSliceKeepsNativePixelSize() throws {
         let image = try makeSolidImage(red: 1, green: 0, blue: 0, width: 200, height: 100)
         let composed = try #require(ScreenComposer.compose([

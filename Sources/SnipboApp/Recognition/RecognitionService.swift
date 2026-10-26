@@ -8,7 +8,10 @@ enum RecognitionError: Error, LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .requestFailed(let message):
-            return "Recognition failed: \(message)"
+            return L10n.tr(
+                "Recognition failed: \(message)",
+                "识别失败：\(message)"
+            )
         }
     }
 }

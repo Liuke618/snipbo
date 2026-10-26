@@ -23,42 +23,90 @@ enum CaptureError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noDisplays:
-            return "ScreenCaptureKit returned no displays to capture."
+            return L10n.tr(
+                "ScreenCaptureKit returned no displays to capture.",
+                "ScreenCaptureKit 没有返回可截取的显示器。"
+            )
         case .unmappedDisplay(let displayID):
-            return "No screen matches display ID \(displayID)."
+            return L10n.tr(
+                "No screen matches display ID \(displayID).",
+                "没有与显示器 \(displayID) 匹配的屏幕。"
+            )
         case .displayNotFound(let displayID):
-            return "Display \(displayID) is no longer connected."
+            return L10n.tr(
+                "Display \(displayID) is no longer connected.",
+                "显示器 \(displayID) 已断开连接。"
+            )
         case .screenNotFound:
-            return "Could not determine the display under the pointer."
+            return L10n.tr(
+                "Could not determine the display under the pointer.",
+                "无法确定指针所在的显示器。"
+            )
         case .timedOut:
-            return "Screen capture did not respond in time."
+            return L10n.tr(
+                "Screen capture did not respond in time.",
+                "截图请求超时。"
+            )
         case .windowNotFound(let windowID):
-            return "The window \(windowID) is no longer available."
+            return L10n.tr(
+                "The window \(windowID) is no longer available.",
+                "窗口 \(windowID) 已不可用。"
+            )
         case .noWindows:
-            return "No capturable windows were found."
+            return L10n.tr(
+                "No capturable windows were found.",
+                "没有找到可截取的窗口。"
+            )
         case .compositionFailed:
-            return "The screens could not be combined into one image."
+            return L10n.tr(
+                "The screens could not be combined into one image.",
+                "无法把多个屏幕合成为一张图。"
+            )
         case let .unexpectedImageSize(displayID, expectedWidth, expectedHeight, actualWidth, actualHeight):
-            return "Captured image for display \(displayID) is \(actualWidth)x\(actualHeight) pixels; expected \(expectedWidth)x\(expectedHeight) pixels."
+            return L10n.tr(
+                "Captured image for display \(displayID) is \(actualWidth)x\(actualHeight) pixels; expected \(expectedWidth)x\(expectedHeight) pixels.",
+                "显示器 \(displayID) 的截图为 \(actualWidth)x\(actualHeight) 像素，预期为 \(expectedWidth)x\(expectedHeight) 像素。"
+            )
         }
     }
 
     var recoverySuggestion: String? {
         switch self {
         case .noDisplays, .unmappedDisplay:
-            return "Make sure Screen Recording permission is granted and the display is connected, then try again."
+            return L10n.tr(
+                "Make sure Screen Recording permission is granted and the display is connected, then try again.",
+                "请确认已授予屏幕录制权限且显示器已连接，然后重试。"
+            )
         case .displayNotFound:
-            return "Reconnect the display or capture the screen under the pointer instead."
+            return L10n.tr(
+                "Reconnect the display or capture the screen under the pointer instead.",
+                "请重新连接显示器，或改为截取指针所在的屏幕。"
+            )
         case .screenNotFound:
-            return "Move the pointer over a display and try again."
+            return L10n.tr(
+                "Move the pointer over a display and try again.",
+                "请把指针移到某个显示器上再试。"
+            )
         case .timedOut:
-            return "Check Screen Recording permission, then quit and reopen Snipbo. If the app was rebuilt, sign it with a stable identity so macOS keeps the permission."
+            return L10n.tr(
+                "Check Screen Recording permission, then quit and reopen Snipbo. If the app was rebuilt, sign it with a stable identity so macOS keeps the permission.",
+                "请检查屏幕录制权限，然后退出并重新打开 Snipbo。如果应用是重新构建的，请使用稳定签名，让 macOS 保留权限。"
+            )
         case .windowNotFound, .noWindows:
-            return "The window may have closed. Try again."
+            return L10n.tr(
+                "The window may have closed. Try again.",
+                "窗口可能已关闭，请重试。"
+            )
         case .compositionFailed:
-            return "Try capturing a single screen."
+            return L10n.tr(
+                "Try capturing a single screen.",
+                "请尝试只截取单个屏幕。"
+            )
         case .unexpectedImageSize:
-            return "The display may have changed resolution during capture. Try again."
+            return L10n.tr(
+                "The display may have changed resolution during capture. Try again.",
+                "显示器可能在截图期间改变了分辨率，请重试。"
+            )
         }
     }
 }
@@ -71,19 +119,34 @@ final class ScreenCaptureService {
             throw CaptureError.noDisplays
         }
         let excluded = ownWindows(in: content)
-        var results: [CapturedImage] = []
-        for display in content.displays {
+        var tasks: [(index: Int, task: Task<CapturedImage, Error>)] = []
+        for (index, display) in content.displays.enumerated() {
             guard let screen = screen(for: display.displayID) else {
                 throw CaptureError.unmappedDisplay(display.displayID)
             }
-            results.append(try await capture(
-                display: display,
-                screen: screen,
-                includeCursor: includeCursor,
-                excluding: excluded
-            ))
+            // Each capture suspends while ScreenCaptureKit encodes, so the
+            // displays are requested concurrently and the wait is the slowest
+            // one instead of their sum.
+            let task = Task { @MainActor in
+                try await capture(
+                    display: display,
+                    screen: screen,
+                    includeCursor: includeCursor,
+                    excluding: excluded
+                )
+            }
+            tasks.append((index, task))
         }
-        return results
+        var results = [CapturedImage?](repeating: nil, count: tasks.count)
+        do {
+            for (index, task) in tasks {
+                results[index] = try await task.value
+            }
+        } catch {
+            tasks.forEach { $0.task.cancel() }
+            throw error
+        }
+        return results.compactMap { $0 }
     }
 
     func captureDisplay(displayID: CGDirectDisplayID, includeCursor: Bool) async throws -> CapturedImage {

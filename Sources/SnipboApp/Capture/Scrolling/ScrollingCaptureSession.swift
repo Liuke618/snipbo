@@ -21,17 +21,35 @@ enum ScrollingCaptureError: Error, LocalizedError, Sendable {
     case streamFailed(String)
     case streamError(String)
     case noFrames
+    case compositionFailed
 
     var errorDescription: String? {
         switch self {
         case .displayNotFound:
-            return "The display used for scrolling capture is no longer available."
+            return L10n.tr(
+                "The display used for scrolling capture is no longer available.",
+                "滚动截图使用的显示器已不可用。"
+            )
         case .streamFailed(let message):
-            return "Scrolling capture could not start: \(message)"
+            return L10n.tr(
+                "Scrolling capture could not start: \(message)",
+                "滚动截图无法启动：\(message)"
+            )
         case .streamError(let message):
-            return "Scrolling capture failed: \(message)"
+            return L10n.tr(
+                "Scrolling capture failed: \(message)",
+                "滚动截图失败：\(message)"
+            )
         case .noFrames:
-            return "Scrolling capture did not receive any frames."
+            return L10n.tr(
+                "Scrolling capture did not receive any frames.",
+                "滚动截图没有收到任何画面。"
+            )
+        case .compositionFailed:
+            return L10n.tr(
+                "The scrolling capture could not be composed.",
+                "无法合成滚动截图。"
+            )
         }
     }
 }
@@ -56,6 +74,7 @@ final class ScrollingCaptureSession: @unchecked Sendable {
     private var output: ScrollStreamOutput?
     private var delegate: ScrollStreamDelegate?
     private var started = false
+    private var cancelled = false
 
     // Implicitly optional so phase-1 init completes before the onFinish
     // closure captures self.
@@ -115,7 +134,7 @@ final class ScrollingCaptureSession: @unchecked Sendable {
         // never start a stream for an already-finished capture.
         var shouldStart = false
         stateQueue.sync {
-            if !self.started {
+            if !self.started && !self.cancelled {
                 self.started = true
                 self.stream = stream
                 self.output = output
@@ -126,6 +145,15 @@ final class ScrollingCaptureSession: @unchecked Sendable {
         guard shouldStart else { return }
         ScrollDebugLog.log("stream start: display=\(displayID) rect=\(rect) scale=\(backingScale) fps=\(fps)")
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: frameQueue)
+        // Cancel may have won while we were adding the output; never start a
+        // stream for an already-finished capture.
+        let stillWanted = stateQueue.sync {
+            self.stream === stream && !self.cancelled
+        }
+        guard stillWanted else {
+            try? await stream.stopCapture()
+            return
+        }
         do {
             try await stream.startCapture()
         } catch {
@@ -148,6 +176,7 @@ final class ScrollingCaptureSession: @unchecked Sendable {
     }
 
     func cancel() async {
+        stateQueue.sync { self.cancelled = true }
         await stopStream()
         processor.cancel()
     }
@@ -163,16 +192,26 @@ final class ScrollingCaptureSession: @unchecked Sendable {
     }
 
     private func stopStream() async {
-        let stream: SCStream? = stateQueue.sync {
+        let (stream, output, delegate) = stateQueue.sync {
+            () -> (SCStream?, ScrollStreamOutput?, ScrollStreamDelegate?) in
+            self.cancelled = true
             let current = self.stream
+            let currentOutput = self.output
+            let currentDelegate = self.delegate
             self.stream = nil
             self.output = nil
             self.delegate = nil
-            return current
+            return (current, currentOutput, currentDelegate)
         }
         if let stream {
             try? await stream.stopCapture()
         }
+        // SCStream does not retain its outputs. Keep the locals alive until
+        // stopCapture has returned and any in-flight frame callback has
+        // drained, otherwise a late callback can touch a deallocated output.
+        frameQueue.sync {}
+        _ = output
+        _ = delegate
     }
 }
 
