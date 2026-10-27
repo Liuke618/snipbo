@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeyService: HotkeyService?
     private let settingsModel = SettingsModel()
     private var settings: AppSettings { settingsModel.settings }
+    private var appliedHiddenStatusItems: Set<StatusMenuItem> = []
     private var settingsWindowController: SettingsWindowController?
     private var localShortcutMonitor: Any?
     private let captureService = ScreenCaptureService()
@@ -66,17 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             presetsMenu: presetsController.menu,
             lastRegionAvailable: { coordinator.canCaptureLastRegion() },
             onQuit: { NSApp.terminate(nil) },
-            hiddenStatusItems: { [weak self] in self?.settings.hiddenStatusItems ?? [] },
-            onToggleStatusItem: { [weak self] id in
-                guard let self else { return }
-                var hidden = self.settings.hiddenStatusItems
-                if hidden.contains(id) {
-                    hidden.remove(id)
-                } else {
-                    hidden.insert(id)
-                }
-                self.settingsModel.settings.hiddenStatusItems = hidden
-            }
+            hiddenStatusItems: { [weak self] in self?.settings.hiddenStatusItems ?? [] }
         )
         statusItemController?.setIconHidden(settings.hideMenuBarIcon)
         var handlers: [UInt32: @MainActor () -> Void] = [:]
@@ -120,6 +111,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.appliedLanguage = newSettings.uiLanguage
                 // The menu shows localized titles and per-mode key equivalents;
                 // rebuild it only when the language actually changed.
+                self.statusItemController?.refreshLocalization()
+            }
+            if newSettings.hiddenStatusItems != self.appliedHiddenStatusItems {
+                self.appliedHiddenStatusItems = newSettings.hiddenStatusItems
+                // Settings owns this choice now, so rebuild the menu whenever it
+                // changes instead of waiting for a language switch.
                 self.statusItemController?.refreshLocalization()
             }
             self.statusItemController?.setIconHidden(newSettings.hideMenuBarIcon)

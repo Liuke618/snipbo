@@ -14,11 +14,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let lastRegionAvailable: () -> Bool
     private let onQuit: () -> Void
     private let hiddenStatusItems: () -> Set<StatusMenuItem>
-    private let onToggleStatusItem: (StatusMenuItem) -> Void
     private var lastRegionItem: NSMenuItem?
-    /// Hideable entries in build order, reused for the customization submenu.
-    private var hideableItems: [(StatusMenuItem, NSMenuItem)] = []
-    private var needsMenuRebuild = false
 
     init(
         onCapture: @escaping (CaptureCommand) -> Void,
@@ -30,8 +26,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         presetsMenu: NSMenu,
         lastRegionAvailable: @escaping () -> Bool,
         onQuit: @escaping () -> Void,
-        hiddenStatusItems: @escaping () -> Set<StatusMenuItem>,
-        onToggleStatusItem: @escaping (StatusMenuItem) -> Void
+        hiddenStatusItems: @escaping () -> Set<StatusMenuItem>
     ) {
         self.onCapture = onCapture
         self.onSettings = onSettings
@@ -43,7 +38,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.lastRegionAvailable = lastRegionAvailable
         self.onQuit = onQuit
         self.hiddenStatusItems = hiddenStatusItems
-        self.onToggleStatusItem = onToggleStatusItem
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -106,30 +100,28 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func populateMenu(_ menu: NSMenu) {
-        hideableItems.removeAll()
-
-        let regionItem = makeItem(L10n.tr("Capture Region", "区域截图"), icon: "scan", action: #selector(captureRegion))
+        let regionItem = makeItem(StatusMenuItem.region.title, icon: "scan", action: #selector(captureRegion))
         applyKeyEquivalent(regionItem, mode: "region")
         add(regionItem, as: .region, to: menu)
 
-        let windowItem = makeItem(L10n.tr("Capture Window", "窗口截图"), icon: "app-window", action: #selector(captureWindow))
+        let windowItem = makeItem(StatusMenuItem.window.title, icon: "app-window", action: #selector(captureWindow))
         applyKeyEquivalent(windowItem, mode: "window")
         add(windowItem, as: .window, to: menu)
         menu.addItem(makeItem(
-            L10n.tr("Capture App Windows", "应用全部窗口"),
+            StatusMenuItem.appWindows.title,
             icon: "layers",
             action: #selector(captureAppWindows)
         ))
 
-        let screenItem = makeItem(L10n.tr("Capture Screen", "屏幕截图"), icon: "monitor", action: #selector(captureScreen))
+        let screenItem = makeItem(StatusMenuItem.screen.title, icon: "monitor", action: #selector(captureScreen))
         applyKeyEquivalent(screenItem, mode: "screen")
         add(screenItem, as: .screen, to: menu)
 
-        let allScreensItem = makeItem(L10n.tr("Capture All Screens", "全部屏幕"), icon: "layers", action: #selector(captureAllScreens))
+        let allScreensItem = makeItem(StatusMenuItem.allScreens.title, icon: "layers", action: #selector(captureAllScreens))
         applyKeyEquivalent(allScreensItem, mode: "allScreens")
         add(allScreensItem, as: .allScreens, to: menu)
 
-        let timedItem = NSMenuItem(title: L10n.tr("Timed Capture", "延时截图"), action: nil, keyEquivalent: "")
+        let timedItem = NSMenuItem(title: StatusMenuItem.timed.title, action: nil, keyEquivalent: "")
         timedItem.image = Self.icon("timer", size: 16)
         let timedMenu = NSMenu()
         let timedRegionSub = makeItem(L10n.tr("Region", "区域"), action: #selector(captureTimedRegion))
@@ -144,12 +136,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         timedItem.submenu = timedMenu
         add(timedItem, as: .timed, to: menu)
 
-        let lastRegionItem = makeItem(L10n.tr("Capture Last Region", "上次区域截图"), icon: "square-dashed", action: #selector(captureLastRegion))
+        let lastRegionItem = makeItem(StatusMenuItem.lastRegion.title, icon: "square-dashed", action: #selector(captureLastRegion))
         applyKeyEquivalent(lastRegionItem, mode: "lastRegion")
         self.lastRegionItem = lastRegionItem
         add(lastRegionItem, as: .lastRegion, to: menu)
         let presetsItem = NSMenuItem(
-            title: L10n.tr("Region Presets", "区域预设"),
+            title: StatusMenuItem.presets.title,
             action: nil,
             keyEquivalent: ""
         )
@@ -159,7 +151,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         add(presetsItem, as: .presets, to: menu)
 
         let scrollingItem = NSMenuItem(
-            title: L10n.tr("Scrolling Capture", "滚动截图"),
+            title: StatusMenuItem.scrolling.title,
             action: nil,
             keyEquivalent: ""
         )
@@ -183,7 +175,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         add(scrollingItem, as: .scrolling, to: menu)
 
         let recordItem = NSMenuItem(
-            title: L10n.tr("Record", "录制"),
+            title: StatusMenuItem.record.title,
             action: nil,
             keyEquivalent: ""
         )
@@ -204,14 +196,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         add(recordItem, as: .record, to: menu)
 
         addSeparator(to: menu)
-        let recentItem = NSMenuItem(title: L10n.tr("Recent", "最近截图"), action: nil, keyEquivalent: "")
+        let recentItem = NSMenuItem(title: StatusMenuItem.recent.title, action: nil, keyEquivalent: "")
         recentItem.image = Self.icon("clock", size: 16)
         recentItem.submenu = recentMenu
         add(recentItem, as: .recent, to: menu)
-        let historyItem = makeItem(L10n.tr("History Browser…", "历史浏览…"), icon: "images", action: #selector(openHistoryBrowser))
+        let historyItem = makeItem(StatusMenuItem.history.title, icon: "images", action: #selector(openHistoryBrowser))
         add(historyItem, as: .history, to: menu)
         let pinsItem = NSMenuItem(
-            title: L10n.tr("Pins", "贴图"),
+            title: StatusMenuItem.pins.title,
             action: nil,
             keyEquivalent: ""
         )
@@ -220,7 +212,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         add(pinsItem, as: .pins, to: menu)
 
         addSeparator(to: menu)
-        addMenuItemsToggle(to: menu)
         let settingsItem = makeItem(L10n.tr("Settings…", "设置…"), icon: "settings", action: #selector(openSettings))
         settingsItem.keyEquivalent = ","
         menu.addItem(settingsItem)
@@ -232,7 +223,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func add(_ item: NSMenuItem, as id: StatusMenuItem, to menu: NSMenu) {
-        hideableItems.append((id, item))
         guard !hiddenStatusItems().contains(id) else { return }
         menu.addItem(item)
     }
@@ -240,47 +230,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func addSeparator(to menu: NSMenu) {
         guard menu.items.last?.isSeparatorItem == false else { return }
         menu.addItem(.separator())
-    }
-
-    /// Checkable list of the hideable entries. It is never hidden itself, so
-    /// anything turned off can always be turned back on.
-    private func addMenuItemsToggle(to menu: NSMenu) {
-        let title = L10n.tr("Menu Items", "菜单项")
-        let toggle = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        toggle.image = Self.icon("list", size: 16)
-            ?? NSImage(systemSymbolName: "list.bullet", accessibilityDescription: nil)
-        let submenu = NSMenu()
-        let hidden = hiddenStatusItems()
-        for (id, item) in hideableItems {
-            let entry = NSMenuItem(
-                title: item.title,
-                action: #selector(toggleMenuItemVisibility(_:)),
-                keyEquivalent: ""
-            )
-            entry.target = self
-            entry.image = item.image
-            entry.representedObject = id.rawValue
-            entry.state = hidden.contains(id) ? .off : .on
-            submenu.addItem(entry)
-        }
-        toggle.submenu = submenu
-        menu.addItem(toggle)
-    }
-
-    @objc private func toggleMenuItemVisibility(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let id = StatusMenuItem(rawValue: raw) else { return }
-        onToggleStatusItem(id)
-        sender.state = hiddenStatusItems().contains(id) ? .off : .on
-        // The open menu cannot be rebuilt under the pointer, so apply the
-        // change the next time the menu closes.
-        needsMenuRebuild = true
-    }
-
-    func menuDidClose(_ menu: NSMenu) {
-        guard menu === statusItem.menu, needsMenuRebuild else { return }
-        needsMenuRebuild = false
-        rebuildMenu()
     }
 
     private func makeItem(_ title: String, icon: String? = nil, action: Selector) -> NSMenuItem {

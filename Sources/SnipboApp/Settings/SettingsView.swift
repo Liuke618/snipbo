@@ -57,6 +57,9 @@ struct SettingsView: View {
             .frame(width: 560, height: 536, alignment: .top)
         }
         .frame(width: 560)
+        .sheet(isPresented: $tabModel.showsStatusMenuItems) {
+            StatusMenuItemsSheet(model: model, isPresented: $tabModel.showsStatusMenuItems)
+        }
     }
 
     // MARK: - Tab bar
@@ -218,6 +221,11 @@ struct SettingsView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                         }
+                        Button(L10n.tr("Menu items…", "菜单项…")) {
+                            tabModel.showsStatusMenuItems = true
+                        }
+                        .buttonStyle(.link)
+                        .font(.system(size: 11))
                     }
                 }
 
@@ -962,6 +970,56 @@ enum SettingsTab: String, CaseIterable {
     }
 }
 
+/// Picks which entries the status-bar menu shows. Settings owns this choice;
+/// the menu itself only reads it, so the dropdown stays uncluttered.
+private struct StatusMenuItemsSheet: View {
+    @ObservedObject var model: SettingsModel
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(L10n.tr("Menu items", "菜单项"))
+                .font(.system(size: 13, weight: .semibold))
+            Text(L10n.tr(
+                "Unchecked items are hidden from the menu bar menu. Settings and Quit always stay.",
+                "取消勾选的条目会从菜单栏下拉菜单中隐藏；设置与退出始终保留。"
+            ))
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(StatusMenuItem.allCases, id: \.self) { item in
+                    Toggle(item.title, isOn: visibility(item))
+                        .toggleStyle(.checkbox)
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button(L10n.tr("Done", "完成")) { isPresented = false }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 340)
+    }
+
+    private func visibility(_ item: StatusMenuItem) -> Binding<Bool> {
+        Binding(
+            get: { !model.settings.hiddenStatusItems.contains(item) },
+            set: { visible in
+                var hidden = model.settings.hiddenStatusItems
+                if visible {
+                    hidden.remove(item)
+                } else {
+                    hidden.insert(item)
+                }
+                model.settings.hiddenStatusItems = hidden
+            }
+        )
+    }
+}
+
 /// Holds the tab selection and hover state; `@State` is unavailable on this
 /// toolchain, and injecting the object keeps the selection across view
 /// struct re-initializations.
@@ -969,6 +1027,8 @@ enum SettingsTab: String, CaseIterable {
 final class SettingsTabSelection: ObservableObject {
     @Published var tab: SettingsTab = .general
     @Published var hovered: SettingsTab?
+    /// Drives the sheet that picks which status-menu entries are shown.
+    @Published var showsStatusMenuItems = false
 }
 
 private struct SettingsRow<Content: View>: View {
