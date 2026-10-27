@@ -94,10 +94,13 @@ final class EditorStylePanelView: NSView {
     }
 
     /// Background clicks move the panel; clicks on inputs keep going to them.
+    /// The bounds check is what keeps the panel from claiming clicks that
+    /// belong to the canvas or toolbar behind it.
     override func hitTest(_ point: NSPoint) -> NSView? {
+        guard frame.contains(point) else { return nil }
         let hit = super.hitTest(point)
         switch hit {
-        case is NSButton, is NSSlider, is NSPopUpButton, is NSSegmentedControl, is NSColorWell:
+        case is NSButton, is NSSlider, is NSSegmentedControl, is NSColorWell:
             return hit
         default:
             return self
