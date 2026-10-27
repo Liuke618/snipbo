@@ -89,8 +89,8 @@ struct SettingsView: View {
             }
             .frame(width: 60, height: 48)
             .background(
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(Color.primary.opacity(selected ? 0.08 : (hovered ? 0.045 : 0)))
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.primary.opacity(selected ? 0.08 : (hovered ? 0.06 : 0)))
             )
             .foregroundColor(selected ? .accentColor : .secondary)
         }
@@ -134,16 +134,12 @@ struct SettingsView: View {
                         Text(model.settings.saveDirectory)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .textSelection(.enabled)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 8)
-                            .frame(height: 24)
-                            .background(Color(nsColor: .textBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 5))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 5)
-                                    .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-                            )
                         Button(L10n.tr("Choose…", "选择…")) { chooseFolder() }
+                            .controlSize(.small)
                     }
                 }
 
@@ -884,7 +880,7 @@ struct SettingsView: View {
 
     private var groupDivider: some View {
         Divider()
-            .padding(.vertical, 10)
+            .padding(.vertical, 12)
     }
 
     private func openKeyboardShortcuts() {
@@ -1049,7 +1045,7 @@ private struct SettingsRow<Content: View>: View {
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minHeight: 26)
+        .frame(minHeight: 28)
     }
 }
 
