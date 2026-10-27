@@ -116,6 +116,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         )
         self.stylePanel = stylePanel
         stylePanel.onMove = { [weak self] delta in self?.moveStylePanel(by: delta) }
+        stylePanel.onFinishEditing = { [weak self] in
+            guard let self else { return }
+            self.window?.makeFirstResponder(self.canvas)
+        }
         window.title = "Snipbo"
         window.center()
         window.delegate = self

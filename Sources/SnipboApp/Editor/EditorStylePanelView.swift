@@ -6,13 +6,14 @@ import SnipboCore
 /// stroke slider for font controls and adds a text-only row. The panel floats
 /// over the canvas, so growing it never reflows the editor.
 @MainActor
-final class EditorStylePanelView: NSView, NSTextFieldDelegate {
+final class EditorStylePanelView: NSView {
     private let effect = NSVisualEffectView()
     private let colorWell = NSColorWell()
     private let hexLabel = NSTextField(labelWithString: "#FF0000")
     private let widthSlider = NSSlider(value: 3, minValue: 1, maxValue: 24, target: nil, action: nil)
-    private let sizeField = NSTextField(string: "3")
+    private let sizeField = SizeTextField(string: "3")
     private let sizeUnitLabel = NSTextField(labelWithString: "px")
+    private let sizeWell = NSView()
     private let fontSizeSlider = NSSlider(value: 24, minValue: 10, maxValue: 96, target: nil, action: nil)
     private let fontPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let boldButton = NSButton(title: "B", target: nil, action: nil)
@@ -62,6 +63,9 @@ final class EditorStylePanelView: NSView, NSTextFieldDelegate {
     /// Reports how far the user dragged the panel's background, in window
     /// points; the owner clamps and applies it.
     var onMove: ((CGSize) -> Void)?
+    /// Called after Return commits a typed size, so focus can go back to the
+    /// canvas and tool shortcuts keep working.
+    var onFinishEditing: (() -> Void)?
     private var dragOrigin: NSPoint?
     private var swatches: [ColorSwatchButton] = []
     /// Whether the shared size readout currently edits the text size.
@@ -111,13 +115,21 @@ final class EditorStylePanelView: NSView, NSTextFieldDelegate {
         }
     }
 
-    /// Commits a typed size on Return or when focus leaves the field.
-    func controlTextDidEndEditing(_ obj: Notification) {
+    /// Commits a typed size when focus leaves the field.
+    @objc private func sizeFieldEditingEnded(_ note: Notification) {
+        sizeWell.layer?.backgroundColor = Self.wellFill(forFocus: false).cgColor
         commitTypedSize()
+    }
+
+    private static func wellFill(forFocus focused: Bool) -> NSColor {
+        focused
+            ? NSColor.controlAccentColor.withAlphaComponent(0.3)
+            : NSColor.labelColor.withAlphaComponent(0.07)
     }
 
     @objc private func sizeFieldCommitted() {
         commitTypedSize()
+        onFinishEditing?()
     }
 
     private func commitTypedSize() {
@@ -295,13 +307,26 @@ final class EditorStylePanelView: NSView, NSTextFieldDelegate {
         sizeField.drawsBackground = false
         sizeField.isEditable = true
         sizeField.focusRingType = .none
-        sizeField.delegate = self
+        sizeField.onBeginEditing = { [weak self] in
+            self?.sizeWell.layer?.backgroundColor = Self.wellFill(forFocus: true).cgColor
+        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(sizeFieldEditingEnded(_:)),
+            name: NSControl.textDidEndEditingNotification,
+            object: sizeField
+        )
         sizeField.target = self
         sizeField.action = #selector(sizeFieldCommitted)
         sizeField.toolTip = L10n.tr("Type a size, or drag the slider", "可直接输入数值，或拖动滑杆")
         sizeUnitLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         sizeUnitLabel.textColor = .tertiaryLabelColor
         sizeUnitLabel.toolTip = L10n.tr("Pixels", "像素")
+        // One rounded well holds the number and its unit, so the readout reads
+        // as a single editable control rather than a field plus loose text.
+        sizeWell.wantsLayer = true
+        sizeWell.layer?.cornerRadius = 6
+        sizeWell.layer?.backgroundColor = Self.wellFill(forFocus: false).cgColor
         widthSlider.toolTip = L10n.tr(
             "Stroke width — affects the selected annotation, or the next one you draw",
             "线条粗细 — 作用于选中的标注，或接下来绘制的标注"
@@ -382,10 +407,12 @@ final class EditorStylePanelView: NSView, NSTextFieldDelegate {
 
         let sizeReadout = NSStackView(views: [sizeField, sizeUnitLabel])
         sizeReadout.orientation = .horizontal
-        sizeReadout.alignment = .firstBaseline
-        sizeReadout.spacing = 3
+        sizeReadout.alignment = .centerY
+        sizeReadout.spacing = 2
+        sizeReadout.translatesAutoresizingMaskIntoConstraints = false
+        sizeWell.addSubview(sizeReadout)
 
-        let topRow = Self.row([colorWell, hexLabel, widthSlider, fontSizeSlider, sizeReadout])
+        let topRow = Self.row([colorWell, hexLabel, widthSlider, fontSizeSlider, sizeWell])
 
         textRow.orientation = .horizontal
         textRow.alignment = .centerY
@@ -449,6 +476,11 @@ final class EditorStylePanelView: NSView, NSTextFieldDelegate {
             widthSlider.widthAnchor.constraint(equalToConstant: 100),
             // Wide enough for "23.5" and the three-digit text sizes.
             sizeField.widthAnchor.constraint(equalToConstant: 34),
+            sizeField.heightAnchor.constraint(equalToConstant: 16),
+            sizeWell.heightAnchor.constraint(equalToConstant: 22),
+            sizeReadout.leadingAnchor.constraint(equalTo: sizeWell.leadingAnchor, constant: 7),
+            sizeReadout.trailingAnchor.constraint(equalTo: sizeWell.trailingAnchor, constant: -7),
+            sizeReadout.centerYAnchor.constraint(equalTo: sizeWell.centerYAnchor),
             fontSizeSlider.widthAnchor.constraint(equalToConstant: 100),
             fontPopup.widthAnchor.constraint(equalToConstant: 118),
             boldButton.widthAnchor.constraint(equalToConstant: 32),
@@ -601,6 +633,20 @@ final class EditorStylePanelView: NSView, NSTextFieldDelegate {
 
     @objc private func pickArrowStyle(_ sender: NSMenuItem) {
         onArrowStyle((sender.representedObject as? Bool) == false ? .simple : .tapered)
+    }
+}
+
+/// Reports the click that starts editing; the begin-editing notification is
+/// not posted reliably by NSTextField, so the mouse event is the trigger.
+private final class SizeTextField: NSTextField {
+    var onBeginEditing: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onBeginEditing?()
+        super.mouseDown(with: event)
+        // A click selects the whole number, so typing replaces it instead of
+        // appending to it.
+        selectText(nil)
     }
 }
 
