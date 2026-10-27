@@ -187,6 +187,28 @@ struct EditorToolsRenderTests {
         ) == nil)
     }
 
+    @Test func testPolygonPreviewShowsVerticesAndEdgeBeforeClosing() throws {
+        let base = try makeSolidBase(gray: 255)
+        var document = EditDocument(image: base)
+        document.annotations = [Annotation(
+            kind: .polygon,
+            geometry: .polygon(points: [
+                CGPoint(x: 10, y: 10),
+                CGPoint(x: 30, y: 10),
+            ]),
+            style: AnnotationStyle(color: .red, lineWidth: 2),
+            zIndex: 1
+        )]
+        let rendered = try #require(DocumentRenderer.render(document))
+
+        let vertex = try #require(rendered.pixel(atX: 10, y: 10))
+        #expect(vertex.red > 180 && vertex.blue < 120)
+        let edge = try #require(rendered.pixel(atX: 20, y: 10))
+        #expect(edge.red > 180 && edge.blue < 120)
+        let empty = try #require(rendered.pixel(atX: 20, y: 25))
+        #expect(empty.red > 240 && empty.blue > 240)
+    }
+
     @Test func testPixelateBrushRendersInsideStrokeOnly() throws {
         let base = try makeTwoToneBase()
         var document = EditDocument(image: base)

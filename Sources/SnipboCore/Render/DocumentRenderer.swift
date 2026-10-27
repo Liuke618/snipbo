@@ -136,24 +136,46 @@ public enum DocumentRenderer {
             }
             context.strokePath()
         case .polygon(let points):
-            guard let first = points.first, points.count >= 3 else { return }
+            guard let first = points.first else { return }
+            context.setAlpha(annotation.style.opacity)
+            context.setStrokeColor(color(annotation.style.color))
+            context.setLineWidth(annotation.style.lineWidth)
+            context.setLineCap(.round)
+            context.setLineJoin(.round)
+            // Fewer than three vertices is an in-progress polygon: show the
+            // placed vertices, and the edge once there are two, so the tool
+            // gives feedback while it is being drawn.
+            guard points.count >= 3 else {
+                let radius = max(2, annotation.style.lineWidth * 0.9)
+                context.setFillColor(color(annotation.style.color))
+                for point in points {
+                    let center = convert(point, canvasHeight: canvasHeight, crop: crop)
+                    context.fillEllipse(in: CGRect(
+                        x: center.x - radius,
+                        y: center.y - radius,
+                        width: radius * 2,
+                        height: radius * 2
+                    ))
+                }
+                if points.count == 2 {
+                    context.move(to: convert(first, canvasHeight: canvasHeight, crop: crop))
+                    context.addLine(to: convert(points[1], canvasHeight: canvasHeight, crop: crop))
+                    context.strokePath()
+                }
+                return
+            }
             let path = CGMutablePath()
             path.move(to: convert(first, canvasHeight: canvasHeight, crop: crop))
             for point in points.dropFirst() {
                 path.addLine(to: convert(point, canvasHeight: canvasHeight, crop: crop))
             }
             path.closeSubpath()
-            context.setAlpha(annotation.style.opacity)
             if let fill = annotation.style.fillColor {
                 context.addPath(path)
                 context.setFillColor(color(fill))
                 context.fillPath()
             }
             context.addPath(path)
-            context.setStrokeColor(color(annotation.style.color))
-            context.setLineWidth(annotation.style.lineWidth)
-            context.setLineCap(.round)
-            context.setLineJoin(.round)
             applyDash(annotation.style, to: context)
             context.strokePath()
         case .text:

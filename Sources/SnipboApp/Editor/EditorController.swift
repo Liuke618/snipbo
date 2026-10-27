@@ -296,6 +296,11 @@ final class EditorController {
     }
 
     func end(at point: CGPoint) {
+        // A polygon is placed click by click, so releasing the mouse must keep
+        // the draft that the next click extends instead of dropping the
+        // preview between clicks.
+        if tool == .polygon { return }
+
         defer {
             startPoint = nil
             freehandPoints.removeAll()
@@ -307,7 +312,7 @@ final class EditorController {
         }
 
         switch tool {
-        case .select, .polygon:
+        case .select:
             return
         case .crop:
             commitCropDraft()
