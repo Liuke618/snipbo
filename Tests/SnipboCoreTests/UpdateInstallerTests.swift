@@ -59,7 +59,7 @@ struct UpdateInstallerTests {
         #expect(recorder.url == newBundle)
     }
 
-    @Test func installRollsBackWhenMoveFails() throws {
+    @Test func installThrowsWhenStagedVersionMismatchesWithoutTouchingCurrentBundle() throws {
         let root = tmp
         try makeDir(root)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -69,11 +69,8 @@ struct UpdateInstallerTests {
         try makeDir(appsDir)
         let current = try UpdateInstaller.makeFakeAppBundle(version: "0.5.0", at: appsDir)
             .appendingPathComponent("Snipbo.app", isDirectory: true)
-        // 目标位置预置同名目录,让「移动新包」这一步必然失败。
-        let blocked = current.deletingLastPathComponent()
-            .appendingPathComponent("Snipbo.app-blocked", isDirectory: true)
-        try makeDir(blocked)
-        // staged 版本不符:在 install 内部的重命名步骤失败前抛错,旧包必须完好。
+        // staged 版本与 newVersion 不符:install 在版本守卫处抛错,
+        // 不做任何文件系统改动,旧包必须原样还在且仍能读出旧版本。
         let stagedRoot = try UpdateInstaller.makeFakeAppBundle(version: "9.9.9", at: root)
         let staged = stagedRoot.appendingPathComponent("Snipbo.app", isDirectory: true)
         let installer = UpdateInstaller(relaunch: { _ in })
@@ -84,10 +81,54 @@ struct UpdateInstallerTests {
                 workspace: workspace,
                 newVersion: "0.6.0"
             )
-            Issue.record("expected failure")
+            Issue.record("expected version-mismatch failure")
         } catch {
-            // 旧包必须原样还在,且仍能读出旧版本。
             #expect(UpdateInstaller.stagedVersion(of: current) == "0.5.0")
+        }
+    }
+
+    @Test func installRestoresBackupWhenTargetMoveFails() throws {
+        let root = tmp
+        try makeDir(root)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        let appsDir = root.appendingPathComponent("apps", isDirectory: true)
+        try makeDir(workspace)
+        try makeDir(appsDir)
+        let current = try UpdateInstaller.makeFakeAppBundle(version: "0.5.0", at: appsDir)
+            .appendingPathComponent("Snipbo.app", isDirectory: true)
+        // staged 版本必须与 newVersion 匹配,否则会先在版本守卫处抛错、走不到回滚分支。
+        // install 用 stagedApp.lastPathComponent 作为目标名,所以把 staged 包改名为
+        // MySnip.app,再在目标位置 apps/MySnip.app 预置一个非空目录——moveItem 到
+        // 已存在的非空目录必然失败(NSFileWriteFileExistsError),触发「把备份移回原位」。
+        let stagedDir = root.appendingPathComponent("staged", isDirectory: true)
+        try makeDir(stagedDir)
+        try UpdateInstaller.makeFakeAppBundle(version: "0.6.0", at: stagedDir)
+        let staged = stagedDir.appendingPathComponent("Snipbo.app", isDirectory: true)
+        let renamedStaged = stagedDir.appendingPathComponent("MySnip.app", isDirectory: true)
+        try FileManager.default.moveItem(at: staged, to: renamedStaged)
+        let blockedTarget = appsDir.appendingPathComponent("MySnip.app", isDirectory: true)
+        try makeDir(blockedTarget)
+        try Data("blocked".utf8).write(to: blockedTarget.appendingPathComponent("blocked.txt"))
+        let installer = UpdateInstaller(relaunch: { _ in })
+        do {
+            _ = try installer.install(
+                stagedApp: renamedStaged,
+                currentBundle: current,
+                workspace: workspace,
+                newVersion: "0.6.0"
+            )
+            Issue.record("expected installFailed")
+        } catch {
+            if case .installFailed = error as? UpdateError {
+                // 回滚:旧包被移回原位,仍能读出旧版本;备份位置不再残留。
+                #expect(UpdateInstaller.stagedVersion(of: current) == "0.5.0")
+                #expect(!FileManager.default.fileExists(
+                    atPath: workspace.appendingPathComponent("backup/Snipbo.app").path
+                ))
+            } else {
+                Issue.record("expected installFailed, got \(error)")
+            }
         }
     }
 
