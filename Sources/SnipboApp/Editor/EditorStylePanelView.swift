@@ -6,12 +6,12 @@ import SnipboCore
 /// stroke slider for font controls and adds a text-only row. The panel floats
 /// over the canvas, so growing it never reflows the editor.
 @MainActor
-final class EditorStylePanelView: NSView {
+final class EditorStylePanelView: NSView, NSTextFieldDelegate {
     private let effect = NSVisualEffectView()
     private let colorWell = NSColorWell()
     private let hexLabel = NSTextField(labelWithString: "#FF0000")
     private let widthSlider = NSSlider(value: 3, minValue: 1, maxValue: 24, target: nil, action: nil)
-    private let sizeValueLabel = NSTextField(labelWithString: "3")
+    private let sizeField = NSTextField(string: "3")
     private let sizeUnitLabel = NSTextField(labelWithString: "px")
     private let fontSizeSlider = NSSlider(value: 24, minValue: 10, maxValue: 96, target: nil, action: nil)
     private let fontPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -64,6 +64,8 @@ final class EditorStylePanelView: NSView {
     var onMove: ((CGSize) -> Void)?
     private var dragOrigin: NSPoint?
     private var swatches: [ColorSwatchButton] = []
+    /// Whether the shared size readout currently edits the text size.
+    private var showsTextSize = false
 
     private static let paletteColors: [RGBA] = [
         RGBA(red: 0.93, green: 0.16, blue: 0.16),
@@ -100,11 +102,41 @@ final class EditorStylePanelView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard frame.contains(point) else { return nil }
         let hit = super.hitTest(point)
+        if let field = hit as? NSTextField, field.isEditable { return hit }
         switch hit {
         case is NSButton, is NSSlider, is NSSegmentedControl, is NSColorWell:
             return hit
         default:
             return self
+        }
+    }
+
+    /// Commits a typed size on Return or when focus leaves the field.
+    func controlTextDidEndEditing(_ obj: Notification) {
+        commitTypedSize()
+    }
+
+    @objc private func sizeFieldCommitted() {
+        commitTypedSize()
+    }
+
+    private func commitTypedSize() {
+        let text = sizeField.stringValue
+            .replacingOccurrences(of: ",", with: ".")
+            .trimmingCharacters(in: .whitespaces)
+        let current = showsTextSize ? fontSizeSlider.doubleValue : widthSlider.doubleValue
+        guard let typed = Double(text) else {
+            sizeField.stringValue = Self.widthText(current)
+            return
+        }
+        if showsTextSize {
+            let size = min(max(typed, fontSizeSlider.minValue), fontSizeSlider.maxValue)
+            onFontSize(size)
+            sizeField.stringValue = Self.widthText(size)
+        } else {
+            let width = min(max(typed, widthSlider.minValue), widthSlider.maxValue)
+            onWidth(width)
+            sizeField.stringValue = Self.widthText(width)
         }
     }
 
@@ -256,10 +288,17 @@ final class EditorStylePanelView: NSView {
         hexLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         hexLabel.textColor = .secondaryLabelColor
         hexLabel.toolTip = L10n.tr("Press Tab to copy the color", "按 Tab 复制色值")
-        sizeValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        sizeValueLabel.textColor = .secondaryLabelColor
-        sizeValueLabel.alignment = .right
-        sizeValueLabel.toolTip = L10n.tr("Size", "数值")
+        sizeField.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        sizeField.textColor = .secondaryLabelColor
+        sizeField.alignment = .right
+        sizeField.isBordered = false
+        sizeField.drawsBackground = false
+        sizeField.isEditable = true
+        sizeField.focusRingType = .none
+        sizeField.delegate = self
+        sizeField.target = self
+        sizeField.action = #selector(sizeFieldCommitted)
+        sizeField.toolTip = L10n.tr("Type a size, or drag the slider", "可直接输入数值，或拖动滑杆")
         sizeUnitLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         sizeUnitLabel.textColor = .tertiaryLabelColor
         sizeUnitLabel.toolTip = L10n.tr("Pixels", "像素")
@@ -341,7 +380,7 @@ final class EditorStylePanelView: NSView {
         arrowButton.target = self
         arrowButton.action = #selector(showArrowMenu)
 
-        let sizeReadout = NSStackView(views: [sizeValueLabel, sizeUnitLabel])
+        let sizeReadout = NSStackView(views: [sizeField, sizeUnitLabel])
         sizeReadout.orientation = .horizontal
         sizeReadout.alignment = .firstBaseline
         sizeReadout.spacing = 3
@@ -409,7 +448,7 @@ final class EditorStylePanelView: NSView {
             hexLabel.widthAnchor.constraint(equalToConstant: 54),
             widthSlider.widthAnchor.constraint(equalToConstant: 100),
             // Wide enough for "23.5" and the three-digit text sizes.
-            sizeValueLabel.widthAnchor.constraint(equalToConstant: 34),
+            sizeField.widthAnchor.constraint(equalToConstant: 34),
             fontSizeSlider.widthAnchor.constraint(equalToConstant: 100),
             fontPopup.widthAnchor.constraint(equalToConstant: 118),
             boldButton.widthAnchor.constraint(equalToConstant: 32),
@@ -462,7 +501,10 @@ final class EditorStylePanelView: NSView {
     ) {
         widthSlider.doubleValue = style.lineWidth
         fontSizeSlider.doubleValue = style.fontSize
-        sizeValueLabel.stringValue = Self.widthText(isText ? style.fontSize : style.lineWidth)
+        showsTextSize = isText
+        if sizeField.currentEditor() == nil {
+            sizeField.stringValue = Self.widthText(isText ? style.fontSize : style.lineWidth)
+        }
         colorWell.color = NSColor(style.color)
         hexLabel.stringValue = String(
             format: "#%02X%02X%02X",
@@ -499,12 +541,12 @@ final class EditorStylePanelView: NSView {
         onColor(swatch.rgba)
     }
     @objc private func widthChanged() {
-        sizeValueLabel.stringValue = Self.widthText(widthSlider.doubleValue)
+        sizeField.stringValue = Self.widthText(widthSlider.doubleValue)
         onWidth(widthSlider.doubleValue)
     }
 
     @objc private func fontSizeChanged() {
-        sizeValueLabel.stringValue = Self.widthText(fontSizeSlider.doubleValue)
+        sizeField.stringValue = Self.widthText(fontSizeSlider.doubleValue)
         onFontSize(fontSizeSlider.doubleValue)
     }
 

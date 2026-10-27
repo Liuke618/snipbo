@@ -415,6 +415,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         if responder is EditorCanvasView || responder is TextEditingOverlay {
             return false
         }
+        // While a field editor is active (the style panel's size readout), the
+        // field owns typing, Return, and ⌘A — otherwise Return would copy and
+        // close the editor out from under the user.
+        if let textView = responder as? NSTextView, textView.isFieldEditor {
+            return false
+        }
         // The results panel owns its text-selection and button shortcuts.
         if let view = responder as? NSView, view.isDescendant(of: recognitionPanel) {
             return false
