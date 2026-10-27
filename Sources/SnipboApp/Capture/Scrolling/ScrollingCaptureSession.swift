@@ -63,10 +63,18 @@ final class ScrollingCaptureSession: @unchecked Sendable {
     private let rect: CGRect
     private let backingScale: CGFloat
     private let fps: Int
+    private let axis: ScrollAxis
+    private let autoScroll: Bool
+    /// CG-global point at the selection center, moved to before auto-scrolling
+    /// so the wheel events land on the intended content.
+    private let autoScrollPoint: CGPoint?
     private let onAutomaticFinish: @MainActor @Sendable (Result<ScrollingCaptureResult, Error>) -> Void
 
     private let stateQueue = DispatchQueue(label: "local.snipbo.scrolling.state")
     private let frameQueue = DispatchQueue(label: "local.snipbo.scrolling.frames")
+    private let autoScrollQueue = DispatchQueue(label: "local.snipbo.scrolling.autoscroll")
+    // stateQueue-confined.
+    private var autoScrollTimer: DispatchSourceTimer?
 
     // stateQueue-confined. SCStream does not retain its outputs, so the
     // output must be stored here or the frame callback deallocates.
@@ -86,6 +94,9 @@ final class ScrollingCaptureSession: @unchecked Sendable {
         backingScale: CGFloat,
         maxHeight: Int,
         fps: Int,
+        axis: ScrollAxis = .vertical,
+        autoScroll: Bool = false,
+        autoScrollPoint: CGPoint? = nil,
         onProgress: @MainActor @Sendable @escaping (Int) -> Void,
         onAutomaticFinish: @MainActor @Sendable @escaping (Result<ScrollingCaptureResult, Error>) -> Void
     ) {
@@ -93,9 +104,13 @@ final class ScrollingCaptureSession: @unchecked Sendable {
         self.rect = rect
         self.backingScale = backingScale
         self.fps = fps
+        self.axis = axis
+        self.autoScroll = autoScroll
+        self.autoScrollPoint = autoScrollPoint
         self.onAutomaticFinish = onAutomaticFinish
         self.processor = ScrollFrameProcessor(
             maxHeight: maxHeight,
+            autoScroll: autoScroll,
             onProgress: onProgress,
             onFinish: { [weak self] result in
                 self?.finishAutomatically(result)
@@ -123,12 +138,27 @@ final class ScrollingCaptureSession: @unchecked Sendable {
         configuration.showsCursor = false
 
         let filter = SCContentFilter(display: display, excludingWindows: ownWindows)
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
-        let output = ScrollStreamOutput { [weak self] image in
-            self?.processor.enqueue(image)
-        }
         let delegate = ScrollStreamDelegate { [weak self] message in
             self?.processor.abort(ScrollingCaptureError.streamError(message))
+        }
+        let stream = SCStream(
+            filter: filter,
+            configuration: configuration,
+            delegate: delegate
+        )
+        let output = ScrollStreamOutput { [weak self] image in
+            guard let self else { return }
+            // Reuse the vertical stitcher for horizontal scrolling: rotate
+            // every frame so the horizontal axis becomes vertical, then rotate
+            // the finished composite back.
+            let prepared: CGImage
+            if self.axis == .horizontal,
+               let rotated = ImageRotation.rotated90(image, clockwise: true) {
+                prepared = rotated
+            } else {
+                prepared = image
+            }
+            self.processor.enqueue(prepared)
         }
         // The user may have cancelled while shareable content was loading;
         // never start a stream for an already-finished capture.
@@ -164,6 +194,47 @@ final class ScrollingCaptureSession: @unchecked Sendable {
             }
             throw ScrollingCaptureError.streamFailed(error.localizedDescription)
         }
+        if autoScroll {
+            startAutoScroll()
+        }
+    }
+
+    /// Posts wheel events to whatever is under the pointer. The user must keep
+    /// the pointer over the scrollable content; the floating control panel is
+    /// deliberately placed away from the selection.
+    private func startAutoScroll() {
+        if let point = autoScrollPoint {
+            CGEvent(
+                mouseEventSource: nil,
+                mouseType: .mouseMoved,
+                mouseCursorPosition: point,
+                mouseButton: .left
+            )?.post(tap: .cghidEventTap)
+        }
+        let timer = DispatchSource.makeTimerSource(queue: autoScrollQueue)
+        timer.schedule(
+            deadline: .now() + 0.5,
+            repeating: .milliseconds(100)
+        )
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            let cancelled = self.stateQueue.sync { self.cancelled }
+            guard !cancelled else { return }
+            let horizontal = self.axis == .horizontal
+            let event = CGEvent(
+                scrollWheelEvent2Source: nil,
+                units: .pixel,
+                wheelCount: horizontal ? 2 : 1,
+                wheel1: horizontal ? 0 : -20,
+                wheel2: horizontal ? -20 : 0,
+                wheel3: 0
+            )
+            event?.post(tap: .cghidEventTap)
+        }
+        timer.resume()
+        stateQueue.sync {
+            autoScrollTimer = timer
+        }
     }
 
     /// Stops capture and returns the stitched image, waiting out the
@@ -172,7 +243,7 @@ final class ScrollingCaptureSession: @unchecked Sendable {
         await stopStream()
         let result = processor.stopAndWait()
         ScrollDebugLog.log("stop: \(result.map { "reason=\($0.reason) height=\($0.image.height)" } ?? "no composite (no frames)")")
-        return result
+        return result.map(orientedResult)
     }
 
     func cancel() async {
@@ -182,16 +253,38 @@ final class ScrollingCaptureSession: @unchecked Sendable {
     }
 
     private func finishAutomatically(_ result: Result<ScrollingCaptureResult, Error>) {
+        let oriented: Result<ScrollingCaptureResult, Error>
+        switch result {
+        case .success(let value):
+            oriented = .success(orientedResult(value))
+        case .failure(let error):
+            oriented = .failure(error)
+        }
         Task { [weak self] in
             await self?.stopStream()
             guard let self else { return }
             await MainActor.run {
-                self.onAutomaticFinish(result)
+                self.onAutomaticFinish(oriented)
             }
         }
     }
 
+    private func orientedResult(_ result: ScrollingCaptureResult) -> ScrollingCaptureResult {
+        guard axis == .horizontal,
+              let image = ImageRotation.rotated90(result.image, clockwise: false) else {
+            return result
+        }
+        return ScrollingCaptureResult(image: image, reason: result.reason)
+    }
+
     private func stopStream() async {
+        if let timer = stateQueue.sync(execute: { () -> DispatchSourceTimer? in
+            let current = autoScrollTimer
+            autoScrollTimer = nil
+            return current
+        }) {
+            timer.cancel()
+        }
         let (stream, output, delegate) = stateQueue.sync {
             () -> (SCStream?, ScrollStreamOutput?, ScrollStreamDelegate?) in
             self.cancelled = true

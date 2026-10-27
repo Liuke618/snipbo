@@ -21,6 +21,7 @@ extension NSColor {
 final class EditorToolbarView: NSView {
     /// Shottr-style standalone tool buttons, one per `EditorTool`.
     private var toolButtons: [ToolButton] = []
+    private let redactButton = NSButton()
     private let recognizeButton = NSButton()
     private let pinButton = NSButton()
     private let copyButton = NSButton()
@@ -47,6 +48,7 @@ final class EditorToolbarView: NSView {
     private let onTool: (EditorTool) -> Void
     private let onUndo: () -> Void
     private let onRedo: () -> Void
+    private let onRedact: (RedactionMode) -> Void
     private let onRecognize: () -> Void
     private let onPin: () -> Void
     private let onCopy: () -> Void
@@ -60,6 +62,7 @@ final class EditorToolbarView: NSView {
         onTool: @escaping (EditorTool) -> Void,
         onUndo: @escaping () -> Void,
         onRedo: @escaping () -> Void,
+        onRedact: @escaping (RedactionMode) -> Void,
         onRecognize: @escaping () -> Void,
         onPin: @escaping () -> Void,
         onCopy: @escaping () -> Void,
@@ -69,6 +72,7 @@ final class EditorToolbarView: NSView {
         self.onTool = onTool
         self.onUndo = onUndo
         self.onRedo = onRedo
+        self.onRedact = onRedact
         self.onRecognize = onRecognize
         self.onPin = onPin
         self.onCopy = onCopy
@@ -103,10 +107,20 @@ final class EditorToolbarView: NSView {
 
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: Self.height))
 
-        for button in [recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton] {
+        for button in [
+            recognizeButton, pinButton, copyButton, saveButton,
+            undoButton, redoButton, redactButton,
+        ] {
             button.imagePosition = .imageOnly
             button.isBordered = false
         }
+        redactButton.image = EditorToolbarView.icon("shield") ?? NSImage(
+            systemSymbolName: "shield", accessibilityDescription: "Redact"
+        )
+        redactButton.toolTip = L10n.tr(
+            "Privacy redaction: sensitive text, faces, or all text",
+            "隐私打码：敏感文本、人脸或全部文字"
+        )
         recognizeButton.image = EditorToolbarView.icon("scan-text") ?? NSImage(
             systemSymbolName: "text.viewfinder", accessibilityDescription: "Recognize"
         )
@@ -141,7 +155,10 @@ final class EditorToolbarView: NSView {
             "调整图像大小 · 逻辑点读数"
         )
 
-        for control in [recognizeButton, pinButton, copyButton, saveButton, undoButton, redoButton, sizeButton] {
+        for control in [
+            recognizeButton, pinButton, copyButton, saveButton,
+            undoButton, redoButton, redactButton, sizeButton,
+        ] {
             control.controlSize = .small
         }
         toolButtons = buttons
@@ -150,6 +167,8 @@ final class EditorToolbarView: NSView {
             button.action = #selector(toolButtonPressed(_:))
         }
         toolButtons.first?.showsSelected = true
+        redactButton.target = self
+        redactButton.action = #selector(showRedactMenu)
         recognizeButton.target = self
         recognizeButton.action = #selector(recognizeAction)
         pinButton.target = self
@@ -177,7 +196,7 @@ final class EditorToolbarView: NSView {
         leading.orientation = .horizontal
         leading.spacing = 6
         let trailing = NSStackView(views: [
-            recognizeButton, undoButton, redoButton, Self.separator(),
+            redactButton, recognizeButton, undoButton, redoButton, Self.separator(),
             sizeButton, zoomLabel,
         ])
         trailing.orientation = .horizontal
@@ -237,6 +256,39 @@ final class EditorToolbarView: NSView {
 
     func setRecognizing(_ recognizing: Bool) {
         recognizeButton.isEnabled = !recognizing
+    }
+
+    func setRedacting(_ redacting: Bool) {
+        redactButton.isEnabled = !redacting
+    }
+
+    @objc private func showRedactMenu() {
+        let menu = NSMenu()
+        let items: [(String, RedactionMode)] = [
+            (L10n.tr("Redact Sensitive Text", "打码敏感文本"), .sensitiveText),
+            (L10n.tr("Redact Faces", "打码人脸"), .faces),
+            (L10n.tr("Redact All Text", "打码全部文字"), .allText),
+        ]
+        for (title, mode) in items {
+            let item = NSMenuItem(
+                title: title,
+                action: #selector(redactItem(_:)),
+                keyEquivalent: ""
+            )
+            item.tag = mode.rawValue
+            item.target = self
+            menu.addItem(item)
+        }
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: 0, y: redactButton.bounds.height + 4),
+            in: redactButton
+        )
+    }
+
+    @objc private func redactItem(_ sender: NSMenuItem) {
+        guard let mode = RedactionMode(rawValue: sender.tag) else { return }
+        onRedact(mode)
     }
 
     /// Marks the active tool's button; called whenever the tool changes from

@@ -428,6 +428,107 @@ struct HistoryStoreTests {
         #expect(FileManager.default.fileExists(atPath: outsideURL.path))
     }
 
+    @Test func testEditableDocumentRoundTripAndRemoval() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entry = try await store.record(image: ImageData(try makeImage()), source: .region)
+        let annotation = Annotation(
+            kind: .rectangle,
+            geometry: .rect(CGRect(x: 1, y: 1, width: 2, height: 2)),
+            style: AnnotationStyle(),
+            zIndex: 1
+        )
+        let snapshot = DocumentSnapshot(
+            cropRect: CGRect(x: 0, y: 0, width: 3, height: 3),
+            annotations: [annotation],
+            backingScale: 2
+        )
+        try await store.saveDocument(snapshot, for: entry.id)
+        let loaded = await store.document(for: entry.id)
+        #expect(loaded == snapshot)
+        let documentURL = store.documentURL(for: entry.id)
+        #expect(FileManager.default.fileExists(atPath: documentURL.path))
+
+        try await store.remove(id: entry.id)
+        #expect(!FileManager.default.fileExists(atPath: documentURL.path))
+    }
+
+    @Test func testDocumentForUnknownEntryIsIgnored() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let unknown = UUID()
+        try await store.saveDocument(
+            DocumentSnapshot(cropRect: .zero, annotations: [], backingScale: 1),
+            for: unknown
+        )
+        #expect(!FileManager.default.fileExists(atPath: store.documentURL(for: unknown).path))
+        let loaded = await store.document(for: unknown)
+        #expect(loaded == nil)
+    }
+
+    @Test func testOrphanDocumentFilesAreSwept() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let orphanID = UUID()
+        let orphan = directory.appendingPathComponent("\(orphanID.uuidString)-document.json")
+        try Data("{}".utf8).write(to: orphan)
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        _ = await store.entries()
+        #expect(!FileManager.default.fileExists(atPath: orphan.path))
+    }
+
+    @Test func testSearchMetadataPersistsAcrossReload() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let entry = try await store.record(image: ImageData(try makeImage()), source: .region)
+        try await store.updateOCR(id: entry.id, text: "Invoice 12345 test@example.com")
+        try await store.setTags(id: entry.id, tags: ["Work", "#work", "  finance  "])
+        try await store.setFavorite(id: entry.id, isFavorite: true)
+
+        let reloaded = HistoryStore(baseDirectory: directory, maxItems: 10, maxBytes: 10 * 1024 * 1024)
+        let loaded = await reloaded.entries()
+        #expect(loaded.count == 1)
+        #expect(loaded[0].ocrText == "Invoice 12345 test@example.com")
+        #expect(loaded[0].tags == ["Work", "finance"])
+        #expect(loaded[0].isFavorite)
+    }
+
+    @Test func testHistoryEntryLegacyJSONUsesSearchDefaults() throws {
+        let entry = HistoryEntry(
+            id: UUID(),
+            createdAt: Date(),
+            pixelWidth: 10,
+            pixelHeight: 20,
+            source: .window,
+            imageFileName: "a.png",
+            thumbnailFileName: "a-thumb.png"
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        var object = try #require(
+            JSONSerialization.jsonObject(with: try encoder.encode(entry)) as? [String: Any]
+        )
+        object.removeValue(forKey: "ocrText")
+        object.removeValue(forKey: "tags")
+        object.removeValue(forKey: "isFavorite")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(
+            HistoryEntry.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(decoded.id == entry.id)
+        #expect(decoded.ocrText == nil)
+        #expect(decoded.tags.isEmpty)
+        #expect(!decoded.isFavorite)
+    }
+
     private func fileBytes(for entry: HistoryEntry, in directory: URL) -> Int64 {
         let imageBytes = fileSize(directory.appendingPathComponent(entry.imageFileName))
         let thumbnailBytes = fileSize(directory.appendingPathComponent(entry.thumbnailFileName))

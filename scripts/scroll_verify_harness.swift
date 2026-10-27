@@ -37,6 +37,8 @@ struct ScrollVerifyHarness {
             try await scenarioNoMovement(reporter: reporter)
             try await scenarioHeightLimit(reporter: reporter)
             try await scenarioUpwardScrollAppendsNothing(reporter: reporter)
+            try await scenarioAutoScrollReachesEnd(reporter: reporter)
+            try await scenarioAutoScrollWithoutMovement(reporter: reporter)
         } catch {
             reporter.fail("harness crashed: \(error)")
         }
@@ -154,6 +156,49 @@ struct ScrollVerifyHarness {
         let result = try await drain(run: run, expectAutomatic: false)
         reporter.check(result?.reason == .stopped, "up-scroll run finishes as .stopped")
         reporter.check(result?.image.height == 1100, "up-scroll appends nothing (got \(result?.image.height ?? -1), expected 1100)")
+    }
+
+    /// Auto-scroll posts wheel events until the viewport stops changing, which
+    /// is also what reaching the end of a document looks like. Content already
+    /// stitched must still be delivered, not discarded as "no movement".
+    private static func scenarioAutoScrollReachesEnd(reporter: Reporter) async throws {
+        let run = ProcessorRun(maxHeight: 100_000, autoScroll: true)
+        for top in stride(from: 0.0, through: 600.0, by: 150.0) {
+            run.processor.enqueue(try renderFrame(topPt: top))
+            try await Task.sleep(nanoseconds: 350_000_000)
+        }
+        for _ in 0..<28 {
+            run.processor.enqueue(try renderFrame(topPt: 600))
+            try await Task.sleep(nanoseconds: 60_000_000)
+        }
+        let automatic = try await drain(run: run, expectAutomatic: true)
+        reporter.check(
+            automatic?.reason == .stopped,
+            "auto-scroll that reaches the end finishes as .stopped (got \(automatic.map { String(describing: $0.reason) } ?? "nil"))"
+        )
+        reporter.check(
+            (automatic?.image.height ?? 0) > 800,
+            "auto-scroll keeps the stitched content (got \(automatic?.image.height ?? 0) px, expected > 800)"
+        )
+    }
+
+    /// The pointer sitting on a non-scrollable area is the one case where
+    /// discarding the capture is still right.
+    private static func scenarioAutoScrollWithoutMovement(reporter: Reporter) async throws {
+        let run = ProcessorRun(maxHeight: 100_000, autoScroll: true)
+        for _ in 0..<28 {
+            run.processor.enqueue(try renderFrame(topPt: 0))
+            try await Task.sleep(nanoseconds: 60_000_000)
+        }
+        let automatic = try await drain(run: run, expectAutomatic: true)
+        reporter.check(
+            automatic?.reason == .noMovement,
+            "auto-scroll over a still page reports .noMovement (got \(automatic.map { String(describing: $0.reason) } ?? "nil"))"
+        )
+        reporter.check(
+            automatic?.image.height == 800,
+            "a still page keeps only the first frame (got \(automatic?.image.height ?? -1))"
+        )
     }
 
     /// Waits out the worker queue and returns the automatic result if one is
@@ -307,9 +352,10 @@ final class ProcessorRun: @unchecked Sendable {
     private let lock = NSLock()
     private var storedAutomaticResult: ScrollingCaptureResult?
 
-    init(maxHeight: Int) {
+    init(maxHeight: Int, autoScroll: Bool = false) {
         processor = ScrollFrameProcessor(
             maxHeight: maxHeight,
+            autoScroll: autoScroll,
             onProgress: { _ in },
             onFinish: { [weak self] result in
                 guard let self else { return }

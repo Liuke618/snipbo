@@ -18,8 +18,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private let settingsProvider: () -> AppSettings
     private var settings: AppSettings { settingsProvider() }
     private let history: HistoryStore
+    private let metadata: CaptureMetadata?
     private let pasteboard: any PasteboardWriting
     private let onClose: () -> Void
+    /// The history entry this editor belongs to, attached after the async
+    /// record completes (or immediately for a history-opened editor).
+    private var historyEntryID: UUID?
+    private var snapshotSaveTask: Task<Void, Never>?
     private var keyMonitor: Any?
     private let recognitionService: RecognitionService
     private let recognitionPanel: RecognitionResultsView
@@ -29,6 +34,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private var recognitionTask: Task<Void, Never>?
     /// Invalidates stale tasks after cancel or a newer recognition request.
     private var recognitionGeneration = 0
+    private var redactionTask: Task<Void, Never>?
+    private var redactionGeneration = 0
     /// Prevents a second copy/save/pin from starting while the first render or
     /// encode is still in flight.
     private var exportInFlight = false
@@ -42,6 +49,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         settingsProvider: @escaping () -> AppSettings,
         history: HistoryStore,
         identifier: UUID = UUID(),
+        historyEntryID: UUID? = nil,
+        metadata: CaptureMetadata? = nil,
         pasteboard: any PasteboardWriting = NSPasteboard.general,
         onClose: @escaping () -> Void = {}
     ) {
@@ -49,8 +58,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         self.recognitionPanel = RecognitionResultsView(frame: .zero)
         self.identifier = identifier
         self.controller = EditorController(document: document)
+        self.historyEntryID = historyEntryID
         self.settingsProvider = settingsProvider
         self.history = history
+        self.metadata = metadata
         self.pasteboard = pasteboard
         self.canvas = EditorCanvasView(controller: controller)
         self.onClose = onClose
@@ -67,6 +78,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             onTool: { [weak controller] tool in controller?.tool = tool },
             onUndo: { [weak controller] in controller?.undo() },
             onRedo: { [weak controller] in controller?.redo() },
+            onRedact: { [weak self] mode in self?.redact(mode) },
             onRecognize: { [weak self] in self?.recognize() },
             onPin: { [weak self] in self?.pinAction() },
             onCopy: { [weak self] in self?.copyAndClose() },
@@ -76,7 +88,27 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         self.toolbarView = toolbar
         let stylePanel = EditorStylePanelView(
             onColor: { [weak controller] color in controller?.setColor(color) },
-            onWidth: { [weak controller] width in controller?.setLineWidth(width) }
+            onWidth: { [weak controller] width in controller?.setLineWidth(width) },
+            onFontSize: { [weak controller] size in controller?.setFontSize(size) },
+            onFontName: { [weak controller] name in controller?.setFontName(name) },
+            onBold: { [weak controller] bold in controller?.setFontBold(bold) },
+            onAlignment: { [weak controller] alignment in
+                controller?.setTextAlignment(alignment)
+            },
+            onTextBackground: { [weak controller] enabled in
+                controller?.setTextBackground(
+                    enabled ? RGBA(red: 0, green: 0, blue: 0, alpha: 0.55) : nil
+                )
+            },
+            onLineStyle: { [weak controller] lineStyle in
+                controller?.setLineStyle(lineStyle)
+            },
+            onFill: { [weak controller] enabled in
+                controller?.setFillEnabled(enabled)
+            },
+            onArrowStyle: { [weak controller] arrowStyle in
+                controller?.setArrowStyle(arrowStyle)
+            }
         )
         self.stylePanel = stylePanel
         window.title = "Snipbo"
@@ -152,6 +184,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         canvas.onSaveAs = { [weak self] in self?.saveAndClose(saveAs: true) }
         canvas.onEscape = { [weak self] in self?.escapeAction() }
         canvas.onCopyColor = { [weak self] in self?.copyColorHex() }
+        canvas.onRedact = { [weak self] mode in self?.redact(mode) }
+        canvas.suggestedExportName = { [weak self] in
+            self?.defaultFileName(format: .png) ?? "Snipbo.png"
+        }
         recognitionPanel.onCopy = { [weak self] text in
             self?.copyRecognitionText(text)
         }
@@ -191,7 +227,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             maxScrollHeight / crop.height,
             1
         )
-        let width = min(max(640, crop.width * fitZoom), maxContentWidth)
+        // A small capture still needs room for every tool and action; the
+        // toolbar would otherwise clip on the right. The floor is measured
+        // from the live view, so adding a tool never silently hides another.
+        let toolbarFloor = toolbarView?.fittingSize.width ?? 640
+        let width = min(
+            max(640, crop.width * fitZoom, toolbarFloor),
+            maxContentWidth
+        )
         let height = min(max(320, crop.height * fitZoom), maxScrollHeight) + EditorToolbarView.height
         window.setContentSize(NSSize(width: width, height: height))
         window.center()
@@ -219,9 +262,35 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         toolbarView?.updateReadouts(size: size, zoom: canvas.zoom)
         toolbarView?.setSelectedTool(controller.tool)
         let editedStyle = controller.selectedStyle ?? controller.style
-        stylePanel?.syncStyleControls(lineWidth: editedStyle.lineWidth, color: editedStyle.color)
+        let isText = controller.tool == .text || controller.selectedKind == .text
+        let shapeTools: [EditorTool] = [
+            .rectangle, .ellipse, .line, .arrow, .measure, .polygon,
+        ]
+        let shapeKinds: [AnnotationKind] = [
+            .rectangle, .ellipse, .line, .arrow, .measure, .polygon,
+        ]
+        let shapeSelected = controller.selectedKind.map { shapeKinds.contains($0) } ?? false
+        let showsShapeOptions = !isText
+            && (shapeTools.contains(controller.tool) || shapeSelected)
+        stylePanel?.syncStyleControls(
+            style: editedStyle,
+            isText: isText,
+            showsShapeOptions: showsShapeOptions
+        )
         stylePanel?.isHidden = controller.selectedStyle == nil
             && (controller.tool == .select || controller.tool == .crop)
+        scheduleDocumentSnapshot()
+    }
+
+    /// Debounces snapshot writes while the user draws or adjusts a crop.
+    private func scheduleDocumentSnapshot() {
+        guard historyEntryID != nil else { return }
+        snapshotSaveTask?.cancel()
+        snapshotSaveTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.persistDocumentSnapshot()
+        }
     }
 
     // MARK: - Options popover
@@ -295,7 +364,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         if let view = responder as? NSView, view.isDescendant(of: recognitionPanel) {
             return false
         }
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         // An active crop draft owns Enter (commit) and Escape (cancel), even
         // when a toolbar control has focus.
         if controller.cropDraft != nil {
@@ -305,6 +374,64 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                 return true
             case 53:
                 controller.cancelCropDraft()
+                return true
+            default:
+                break
+            }
+        }
+        if controller.tool == .polygon, controller.isPolygonInProgress {
+            switch event.keyCode {
+            case 36:
+                _ = controller.commitPolygon()
+                return true
+            case 53:
+                controller.cancelPolygon()
+                return true
+            default:
+                break
+            }
+        }
+        if modifiers == [.command, .option],
+           let key = event.charactersIgnoringModifiers?.lowercased() {
+            switch key {
+            case "c":
+                controller.copySelectedAnnotations()
+                return true
+            case "v":
+                controller.pasteAnnotations()
+                return true
+            default:
+                break
+            }
+        }
+        if modifiers == [.command],
+           let key = event.charactersIgnoringModifiers?.lowercased() {
+            switch key {
+            case "a":
+                controller.selectAll()
+                return true
+            case "d":
+                controller.duplicateSelected()
+                return true
+            default:
+                break
+            }
+        }
+        if event.keyCode == 51 || event.keyCode == 117 {
+            controller.deleteSelected()
+            return true
+        }
+        if modifiers == [.command, .shift],
+           let key = event.charactersIgnoringModifiers?.lowercased() {
+            switch key {
+            case "r":
+                redact(.sensitiveText)
+                return true
+            case "f":
+                redact(.faces)
+                return true
+            case "a":
+                redact(.allText)
                 return true
             default:
                 break
@@ -341,6 +468,34 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    // MARK: - Editable history document
+
+    /// Called once the background history write finishes, or immediately when
+    /// the editor was opened from an existing history entry.
+    func attachHistoryEntry(_ id: UUID) {
+        historyEntryID = id
+        guard window != nil else { return }
+        persistDocumentSnapshot()
+    }
+
+    /// Saves the crop and annotations next to the original history PNG. An
+    /// untouched document removes any stale snapshot from an earlier session.
+    private func persistDocumentSnapshot() {
+        guard let historyEntryID else { return }
+        let document = controller.document
+        let store = history
+        if document.hasEdits {
+            let snapshot = document.snapshot
+            Task.detached(priority: .utility) {
+                try? await store.saveDocument(snapshot, for: historyEntryID)
+            }
+        } else {
+            Task.detached(priority: .utility) {
+                await store.removeDocument(for: historyEntryID)
+            }
+        }
+    }
+
     // MARK: - Copy and save
 
     /// Renders on a background executor. The document is a value snapshot, so
@@ -356,6 +511,33 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         await Self.render(controller.document)
     }
 
+    /// Copy/save output: plain render plus optional beautify and watermark.
+    /// Pins and drag-out intentionally use the plain render.
+    private func exportPayload() async -> ImageData? {
+        guard let payload = await renderedPayload() else { return nil }
+        let appearance = settings.exportAppearance
+        guard appearance.hasWork else { return payload }
+        return await Task.detached(priority: .userInitiated) {
+            guard let composed = ExportRenderer.apply(
+                payload.cgImage,
+                options: appearance
+            ) else { return nil as ImageData? }
+            return ImageData(composed)
+        }.value
+    }
+
+    private func defaultFileName(format: ImageFormat) -> String {
+        CaptureFileSaver.defaultFileName(
+            format: format,
+            template: settings.fileNameTemplate,
+            metadata: metadata
+        )
+    }
+
+    private var targetBytes: Int? {
+        settings.targetFileSizeKB > 0 ? settings.targetFileSizeKB * 1024 : nil
+    }
+
     private static func pngData(for payload: ImageData) async -> Data? {
         await Task.detached(priority: .userInitiated) {
             ImageExporter.pngData(from: payload.cgImage)
@@ -366,14 +548,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         _ payload: ImageData,
         to url: URL,
         format: ImageFormat,
-        quality: Double
+        quality: Double,
+        targetBytes: Int?
     ) async throws {
         try await Task.detached(priority: .userInitiated) {
             try CaptureFileSaver.write(
                 payload.cgImage,
                 to: url,
                 format: format,
-                quality: quality
+                quality: quality,
+                targetBytes: targetBytes
             )
         }.value
     }
@@ -382,14 +566,20 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         _ payload: ImageData,
         format: ImageFormat,
         quality: Double,
-        directory: String
+        directory: String,
+        targetBytes: Int?,
+        template: String,
+        metadata: CaptureMetadata?
     ) async throws {
         try await Task.detached(priority: .userInitiated) {
             try CaptureFileSaver.write(
                 payload.cgImage,
                 format: format,
                 quality: quality,
-                directory: directory
+                directory: directory,
+                targetBytes: targetBytes,
+                template: template,
+                metadata: metadata
             )
         }.value
     }
@@ -443,13 +633,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     /// Writes the rendered document to the configured save directory without
     /// any panel or close side effect; used by the Esc-save option.
     private func performSaveSilently(settings: AppSettings) async {
-        guard let payload = await renderedPayload() else { return }
+        guard let payload = await exportPayload() else { return }
         do {
             try await Self.write(
                 payload,
                 format: settings.format,
                 quality: settings.jpegQuality,
-                directory: settings.saveDirectory
+                directory: settings.saveDirectory,
+                targetBytes: targetBytes,
+                template: settings.fileNameTemplate,
+                metadata: metadata
             )
         } catch {
             NSSound.beep()
@@ -477,7 +670,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private func performCopy() async -> Bool {
         // Encode before touching the pasteboard, so a render/encode failure
         // leaves the user's current clipboard contents intact.
-        guard let payload = await renderedPayload(),
+        guard let payload = await exportPayload(),
               let data = await Self.pngData(for: payload) else {
             reportCopyFailure()
             return false
@@ -489,7 +682,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             return false
         }
         // No history record here: the capture was recorded on delivery, and
-        // re-recording the rendered copy would duplicate the entry.
+        // re-recording the rendered copy would duplicate the entry. The
+        // editable snapshot is refreshed so re-opening sees these annotations.
+        persistDocumentSnapshot()
         return true
     }
 
@@ -532,29 +727,33 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             // format, and quality all come from the same action-time values.
             let settings = self.settings
             if saveAs {
-                let fileName = self.controller.defaultFileName(format: settings.format)
+                let fileName = self.defaultFileName(format: settings.format)
                 let panel = self.savePanel(fileName: fileName)
                 guard panel.runModal() == .OK, let selected = panel.url else { return }
-                guard let payload = await self.renderedPayload() else { return }
+                guard let payload = await self.exportPayload() else { return }
                 do {
                     try await Self.write(
                         payload,
                         to: selected,
                         format: settings.format,
-                        quality: settings.jpegQuality
+                        quality: settings.jpegQuality,
+                        targetBytes: self.targetBytes
                     )
                     self.close()
                 } catch {
                     NSAlert(error: error).runModal()
                 }
             } else {
-                guard let payload = await self.renderedPayload() else { return }
+                guard let payload = await self.exportPayload() else { return }
                 do {
                     try await Self.write(
                         payload,
                         format: settings.format,
                         quality: settings.jpegQuality,
-                        directory: settings.saveDirectory
+                        directory: settings.saveDirectory,
+                        targetBytes: self.targetBytes,
+                        template: settings.fileNameTemplate,
+                        metadata: self.metadata
                     )
                     self.close()
                 } catch {
@@ -569,8 +768,99 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     func savePanel(fileName: String) -> NSSavePanel {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = fileName
-        panel.allowedContentTypes = settings.format == .png ? [.png] : [.jpeg]
+        switch settings.format {
+        case .png:
+            panel.allowedContentTypes = [.png]
+        case .jpeg:
+            panel.allowedContentTypes = [.jpeg]
+        case .heic:
+            panel.allowedContentTypes = [.heic]
+        case .avif:
+            panel.allowedContentTypes = [UTType("public.avif") ?? .heic]
+        }
         return panel
+    }
+
+    // MARK: - Privacy redaction
+
+    /// Runs on-device Vision detection on the unannotated crop and adds one
+    /// pixelate annotation per result. Undo removes the whole batch at once.
+    private func redact(_ mode: RedactionMode) {
+        guard redactionTask == nil else { return }
+        commitPendingText()
+        var detectionDocument = controller.document
+        // Existing annotations may contain text; recognize the source image
+        // only so the editor never redacts its own labels.
+        detectionDocument.annotations = []
+        let cropRect = detectionDocument.cropRect
+        let languages = settings.ocrLanguages
+        redactionGeneration += 1
+        let generation = redactionGeneration
+        toolbarView?.setRedacting(true)
+
+        redactionTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if generation == self.redactionGeneration {
+                    self.redactionTask = nil
+                    self.toolbarView?.setRedacting(false)
+                }
+            }
+            guard let payload = await Self.render(detectionDocument) else {
+                self.showRedactionMessage(
+                    L10n.tr("The image could not be rendered.", "图像渲染失败。")
+                )
+                return
+            }
+            do {
+                let regions = try await RedactionService.shared.regions(
+                    in: payload,
+                    mode: mode,
+                    languages: languages
+                )
+                try Task.checkCancellation()
+                guard generation == self.redactionGeneration else { return }
+                guard self.controller.document.cropRect == cropRect else {
+                    self.showRedactionMessage(L10n.tr(
+                        "The image changed; run redaction again.",
+                        "图像已变化，请重新打码。"
+                    ))
+                    return
+                }
+                guard !regions.isEmpty else {
+                    NSSound.beep()
+                    self.showRedactionMessage(L10n.tr(
+                        "Nothing was found to redact.",
+                        "未检测到需要打码的内容。"
+                    ))
+                    return
+                }
+                let mapped = regions.map {
+                    $0.offsetBy(dx: cropRect.minX, dy: cropRect.minY)
+                }
+                self.controller.addRedactions(mapped)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.showRedactionMessage(error.localizedDescription)
+            }
+        }
+    }
+
+    private func showRedactionMessage(_ message: String) {
+        guard let window, window.isVisible else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = L10n.tr("Privacy Redaction", "隐私打码")
+        alert.informativeText = message
+        alert.runModal()
+    }
+
+    private func cancelRedaction() {
+        redactionGeneration += 1
+        redactionTask?.cancel()
+        redactionTask = nil
+        toolbarView?.setRedacting(false)
     }
 
     // MARK: - Recognition
@@ -708,14 +998,22 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     override func close() {
         commitPendingText()
+        snapshotSaveTask?.cancel()
+        snapshotSaveTask = nil
+        persistDocumentSnapshot()
         cancelRecognition()
+        cancelRedaction()
         removeKeyMonitor()
         super.close()
     }
 
     func windowWillClose(_ notification: Notification) {
         commitPendingText()
+        snapshotSaveTask?.cancel()
+        snapshotSaveTask = nil
+        persistDocumentSnapshot()
         cancelRecognition()
+        cancelRedaction()
         removeKeyMonitor()
         onClose()
     }

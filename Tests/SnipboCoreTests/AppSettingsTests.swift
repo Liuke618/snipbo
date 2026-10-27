@@ -255,6 +255,264 @@ struct AppSettingsTests {
         #expect(legacy.uiLanguage == .system)
     }
 
+    @Test func testModeActionsOverrideAndFallback() {
+        var settings = AppSettings.default
+        settings.openEditorAfterCapture = false
+        settings.afterCaptureCopy = true
+        settings.afterCaptureSave = false
+
+        // No override uses the legacy profile.
+        #expect(settings.actions(for: "region").copy)
+        #expect(!settings.actions(for: "region").openEditor)
+
+        settings.modeActions["window"] = CaptureActions(pin: true)
+        let window = settings.actions(for: "window")
+        #expect(window.pin)
+        #expect(!window.copy)
+        #expect(!window.openEditor)
+
+        // An all-off override still leaves the capture a destination.
+        settings.modeActions["scrolling"] = CaptureActions()
+        #expect(settings.actions(for: "scrolling").copy)
+    }
+
+    @Test func testModeActionsNormalizationDropsUnknownModes() {
+        var settings = AppSettings.default
+        settings.modeActions = [
+            "region": CaptureActions(save: true),
+            "unknown": CaptureActions(pin: true),
+            "window": CaptureActions(),
+        ]
+        let normalized = settings.normalized()
+        #expect(normalized.modeActions["region"]?.save == true)
+        #expect(normalized.modeActions["unknown"] == nil)
+        #expect(normalized.modeActions["window"]?.copy == true)
+    }
+
+    @Test func testModeActionsRoundTripAndLegacyDecode() throws {
+        var settings = AppSettings.default
+        settings.modeActions["window"] = CaptureActions(openEditor: true, pin: true)
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(decoded.modeActions["window"] == CaptureActions(openEditor: true, pin: true))
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        object.removeValue(forKey: "modeActions")
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(legacy.modeActions.isEmpty)
+    }
+
+    @Test func testExportDefaultsAndNormalization() {
+        let defaults = AppSettings.default
+        #expect(defaults.targetFileSizeKB == 0)
+        #expect(defaults.fileNameTemplate == "Snipbo-{datetime}")
+        #expect(!defaults.watermarkEnabled)
+        #expect(!defaults.beautifyEnabled)
+
+        var settings = defaults
+        settings.targetFileSizeKB = -10
+        settings.fileNameTemplate = "   "
+        settings.watermarkOpacity = 5
+        settings.beautifyPadding = -1
+        settings.beautifyCornerRadius = 999
+        let normalized = settings.normalized()
+        #expect(normalized.targetFileSizeKB == 0)
+        #expect(normalized.fileNameTemplate == "Snipbo-{datetime}")
+        #expect(normalized.watermarkOpacity == 1)
+        #expect(normalized.beautifyPadding == 0)
+        #expect(normalized.beautifyCornerRadius == 80)
+    }
+
+    @Test func testExportAppearanceReflectsSettings() {
+        var settings = AppSettings.default
+        #expect(!settings.exportAppearance.hasWork)
+
+        settings.watermarkEnabled = true
+        settings.watermarkText = "Snipbo"
+        #expect(settings.exportAppearance.watermark != nil)
+        #expect(settings.exportAppearance.beautify == nil)
+
+        settings.beautifyEnabled = true
+        #expect(settings.exportAppearance.beautify != nil)
+
+        settings.watermarkText = "   "
+        #expect(settings.exportAppearance.watermark == nil)
+    }
+
+    @Test func testExportFieldsRoundTripAndLegacyDecode() throws {
+        var settings = AppSettings.default
+        settings.targetFileSizeKB = 2_048
+        settings.fileNameTemplate = "{date}-{app}-{n}"
+        settings.watermarkEnabled = true
+        settings.watermarkText = "Acme"
+        settings.watermarkPosition = .topLeft
+        settings.watermarkOpacity = 0.5
+        settings.beautifyEnabled = true
+        settings.beautifyPadding = 40
+        settings.beautifyCornerRadius = 20
+        settings.beautifyBackground = .dark
+        settings.beautifyShadow = false
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(decoded.targetFileSizeKB == 2_048)
+        #expect(decoded.fileNameTemplate == "{date}-{app}-{n}")
+        #expect(decoded.watermarkPosition == .topLeft)
+        #expect(decoded.beautifyBackground == .dark)
+        #expect(!decoded.beautifyShadow)
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        for key in [
+            "targetFileSizeKB", "fileNameTemplate", "watermarkEnabled",
+            "watermarkText", "watermarkPosition", "watermarkOpacity",
+            "beautifyEnabled", "beautifyPadding", "beautifyCornerRadius",
+            "beautifyBackground", "beautifyShadow",
+        ] {
+            object.removeValue(forKey: key)
+        }
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(legacy.targetFileSizeKB == 0)
+        #expect(legacy.fileNameTemplate == "Snipbo-{datetime}")
+        #expect(!legacy.watermarkEnabled)
+        #expect(!legacy.beautifyEnabled)
+    }
+
+    @Test func testSelectionConstraintsDefaultsAndNormalization() {
+        #expect(SelectionAspectRatio.square.ratio == 1)
+        #expect(abs((SelectionAspectRatio.fourThree.ratio ?? 0) - 4.0 / 3.0) < 0.0001)
+        #expect(SelectionAspectRatio.free.ratio == nil)
+        #expect(AppSettings.default.selectionSnapToWindows)
+        #expect(AppSettings.default.selectionAspectRatio == .free)
+        #expect(AppSettings.default.selectionFixedWidth == 0)
+
+        var settings = AppSettings.default
+        settings.selectionFixedWidth = 400
+        settings.selectionFixedHeight = 0
+        let normalized = settings.normalized()
+        // A fixed size needs both dimensions; half a lock would be confusing.
+        #expect(normalized.selectionFixedWidth == 0)
+        #expect(normalized.selectionFixedHeight == 0)
+
+        settings.selectionFixedWidth = 20_000
+        settings.selectionFixedHeight = 10_000
+        #expect(settings.normalized().selectionFixedWidth == 20_000)
+    }
+
+    @Test func testSelectionFieldsRoundTripAndLegacyDecode() throws {
+        var settings = AppSettings.default
+        settings.selectionSnapToWindows = false
+        settings.selectionAspectRatio = .sixteenNine
+        settings.selectionFixedWidth = 800
+        settings.selectionFixedHeight = 450
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(!decoded.selectionSnapToWindows)
+        #expect(decoded.selectionAspectRatio == .sixteenNine)
+        #expect(decoded.selectionFixedWidth == 800)
+        #expect(decoded.selectionFixedHeight == 450)
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        for key in [
+            "selectionSnapToWindows", "selectionAspectRatio",
+            "selectionFixedWidth", "selectionFixedHeight",
+        ] {
+            object.removeValue(forKey: key)
+        }
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(legacy.selectionSnapToWindows)
+        #expect(legacy.selectionAspectRatio == .free)
+        #expect(legacy.selectionFixedWidth == 0)
+    }
+
+    @Test func testAppearanceDefaultsAndRoundTrip() throws {
+        #expect(AppSettings.default.appearance == .system)
+        var settings = AppSettings.default
+        settings.appearance = .dark
+        let data = try JSONEncoder().encode(settings)
+        #expect(try JSONDecoder().decode(AppSettings.self, from: data).appearance == .dark)
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        object.removeValue(forKey: "appearance")
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(legacy.appearance == .system)
+    }
+
+    @Test func testRecordingDefaultsAndNormalization() {
+        let defaults = AppSettings.default
+        #expect(defaults.recordingFormat == .mp4)
+        #expect(defaults.recordingFPS == 30)
+        #expect(defaults.recordingMaxSeconds == 120)
+        #expect(defaults.recordingGIFMaxWidth == 800)
+
+        var settings = defaults
+        settings.recordingFPS = 1
+        settings.recordingMaxSeconds = 999
+        settings.recordingGIFMaxWidth = 100
+        let low = settings.normalized()
+        #expect(low.recordingFPS == 5)
+        #expect(low.recordingMaxSeconds == 600)
+        #expect(low.recordingGIFMaxWidth == 240)
+
+        settings.recordingFPS = 99
+        settings.recordingMaxSeconds = 1
+        settings.recordingGIFMaxWidth = 9_999
+        let high = settings.normalized()
+        #expect(high.recordingFPS == 30)
+        #expect(high.recordingMaxSeconds == 5)
+        #expect(high.recordingGIFMaxWidth == 1_920)
+    }
+
+    @Test func testRecordingFieldsRoundTripAndLegacyDecode() throws {
+        var settings = AppSettings.default
+        settings.recordingFormat = .gif
+        settings.recordingFPS = 15
+        settings.recordingMaxSeconds = 30
+        settings.recordingGIFMaxWidth = 1_200
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(decoded.recordingFormat == .gif)
+        #expect(decoded.recordingFPS == 15)
+        #expect(decoded.recordingMaxSeconds == 30)
+        #expect(decoded.recordingGIFMaxWidth == 1_200)
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        for key in [
+            "recordingFormat", "recordingFPS",
+            "recordingMaxSeconds", "recordingGIFMaxWidth",
+        ] {
+            object.removeValue(forKey: key)
+        }
+        let legacy = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        #expect(legacy.recordingFormat == .mp4)
+        #expect(legacy.recordingFPS == 30)
+        #expect(legacy.recordingMaxSeconds == 120)
+        #expect(legacy.recordingGIFMaxWidth == 800)
+    }
+
     @Test func testAppLanguageResolution() {
         // Explicit choices resolve to themselves.
         #expect(AppLanguage.english.resolved == "en")

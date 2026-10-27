@@ -21,14 +21,24 @@ public struct RGBA: Codable, Equatable, Sendable {
 }
 
 public enum AnnotationKind: String, Codable, Sendable {
-    case arrow, rectangle, ellipse, line, freehand, highlight, text, pixelate
-    case blur, spotlight, counter, magnifier
+    case arrow, rectangle, ellipse, line, measure, freehand, highlight, text, pixelate
+    case blur, spotlight, counter, magnifier, polygon, pixelateBrush
+}
+
+public enum AnnotationLineStyle: String, Codable, Sendable, CaseIterable {
+    case solid, dashed
+}
+
+public enum AnnotationArrowStyle: String, Codable, Sendable, CaseIterable {
+    case tapered, simple
 }
 
 public enum AnnotationGeometry: Codable, Equatable, Sendable {
     case rect(CGRect)
     case line(start: CGPoint, end: CGPoint)
     case path(points: [CGPoint])
+    /// Closed polygon; used by the polygon annotation tool.
+    case polygon(points: [CGPoint])
     case text(origin: CGPoint, width: CGFloat, value: String)
     /// Step-counter badge: the numbered circle's center. `value` is the step
     /// number assigned when the badge was placed.
@@ -38,25 +48,59 @@ public enum AnnotationGeometry: Codable, Equatable, Sendable {
     case lens(center: CGPoint, source: CGPoint, radius: CGFloat)
 }
 
+public enum AnnotationTextAlignment: String, Codable, Sendable {
+    case left, center, right
+}
+
 public struct AnnotationStyle: Codable, Equatable, Sendable {
     public var color: RGBA
     public var lineWidth: CGFloat
     public var opacity: CGFloat
     public var fontSize: CGFloat
     public var pixelBlockSize: CGFloat
+    /// nil uses the system UI font.
+    public var fontName: String?
+    public var fontBold: Bool?
+    public var textAlignment: AnnotationTextAlignment?
+    /// nil draws no background behind the text.
+    public var textBackground: RGBA?
+    /// nil draws no outline around the glyphs.
+    public var textOutline: RGBA?
+    /// nil is solid.
+    public var lineStyle: AnnotationLineStyle?
+    /// nil is the tapered arrow.
+    public var arrowStyle: AnnotationArrowStyle?
+    /// nil draws no fill inside rectangles and ellipses.
+    public var fillColor: RGBA?
 
     public init(
         color: RGBA = .red,
         lineWidth: CGFloat = 3,
         opacity: CGFloat = 1,
         fontSize: CGFloat = 24,
-        pixelBlockSize: CGFloat = 12
+        pixelBlockSize: CGFloat = 12,
+        fontName: String? = nil,
+        fontBold: Bool? = nil,
+        textAlignment: AnnotationTextAlignment? = nil,
+        textBackground: RGBA? = nil,
+        textOutline: RGBA? = nil,
+        lineStyle: AnnotationLineStyle? = nil,
+        arrowStyle: AnnotationArrowStyle? = nil,
+        fillColor: RGBA? = nil
     ) {
         self.color = color
         self.lineWidth = lineWidth
         self.opacity = opacity
         self.fontSize = fontSize
         self.pixelBlockSize = pixelBlockSize
+        self.fontName = fontName
+        self.fontBold = fontBold
+        self.textAlignment = textAlignment
+        self.textBackground = textBackground
+        self.textOutline = textOutline
+        self.lineStyle = lineStyle
+        self.arrowStyle = arrowStyle
+        self.fillColor = fillColor
     }
 }
 
@@ -106,9 +150,33 @@ public struct Annotation: Identifiable, Codable, Equatable, Sendable {
                 maxX = max(maxX, point.x)
                 maxY = max(maxY, point.y)
             }
-            return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-        case .text(let origin, let width, _):
-            return CGRect(x: origin.x, y: origin.y, width: width, height: style.fontSize * 1.4)
+            let rect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+            return kind == .pixelateBrush
+                ? rect.insetBy(dx: -style.lineWidth * 3, dy: -style.lineWidth * 3)
+                : rect
+        case .polygon(let points):
+            guard let first = points.first else { return .zero }
+            var minX = first.x
+            var minY = first.y
+            var maxX = first.x
+            var maxY = first.y
+            for point in points.dropFirst() {
+                minX = min(minX, point.x)
+                minY = min(minY, point.y)
+                maxX = max(maxX, point.x)
+                maxY = max(maxY, point.y)
+            }
+            return CGRect(
+                x: minX,
+                y: minY,
+                width: maxX - minX,
+                height: maxY - minY
+            ).insetBy(dx: -style.lineWidth / 2, dy: -style.lineWidth / 2)
+        case .text(let origin, let width, let value):
+            return CGRect(
+                origin: origin,
+                size: TextLayout.size(value: value, width: width, style: style)
+            )
         case .badge(let center, _):
             let diameter = max(24, style.fontSize)
             return CGRect(
@@ -157,6 +225,8 @@ extension AnnotationGeometry {
             return .line(start: point(start), end: point(end))
         case .path(let points):
             return .path(points: points.map(point))
+        case .polygon(let points):
+            return .polygon(points: points.map(point))
         case .text(let origin, let width, let value):
             return .text(origin: point(origin), width: width * factor, value: value)
         case .badge(let center, let value):

@@ -3,6 +3,79 @@ import Foundation
 public enum ImageFormat: String, Codable, Sendable {
     case png
     case jpeg
+    case heic
+    case avif
+
+    public var fileExtension: String {
+        switch self {
+        case .png: return "png"
+        case .jpeg: return "jpg"
+        case .heic: return "heic"
+        case .avif: return "avif"
+        }
+    }
+
+    public var isLossy: Bool { self != .png }
+}
+
+public enum WatermarkPosition: String, Codable, Sendable, CaseIterable {
+    case topLeft, topRight, bottomLeft, bottomRight, center
+}
+
+public enum BeautifyBackground: String, Codable, Sendable, CaseIterable {
+    case light, dark, blue, transparent
+}
+
+public enum AppAppearance: String, Codable, Sendable, CaseIterable {
+    case system, light, dark
+}
+
+public enum RecordingFormat: String, Codable, Sendable, CaseIterable {
+    case mp4, gif
+
+    public var fileExtension: String {
+        switch self {
+        case .mp4: return "mp4"
+        case .gif: return "gif"
+        }
+    }
+}
+
+public enum SelectionAspectRatio: String, Codable, Sendable, CaseIterable {
+    case free, square, fourThree, sixteenNine
+
+    public var ratio: CGFloat? {
+        switch self {
+        case .free: return nil
+        case .square: return 1
+        case .fourThree: return 4.0 / 3.0
+        case .sixteenNine: return 16.0 / 9.0
+        }
+    }
+}
+
+/// What happens to a capture when the editor is not opened. A capture must
+/// always have at least one destination; normalization forces copy when every
+/// action is off.
+public struct CaptureActions: Codable, Equatable, Sendable {
+    public var openEditor: Bool
+    public var copy: Bool
+    public var save: Bool
+    public var pin: Bool
+
+    public init(
+        openEditor: Bool = false,
+        copy: Bool = false,
+        save: Bool = false,
+        pin: Bool = false
+    ) {
+        self.openEditor = openEditor
+        self.copy = copy
+        self.save = save
+        self.pin = pin
+    }
+
+    public var isEmpty: Bool { !openEditor && !copy && !save && !pin }
 }
 
 public struct AppSettings: Codable, Equatable, Sendable {
@@ -19,6 +92,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var historyEnabled: Bool
     public var historyMaxItems: Int
     public var historyMaxBytes: Int64
+    /// Runs on-device OCR when a capture is recorded so history can be
+    /// searched by its text.
+    public var historySearchEnabled: Bool
     public var captureCursor: Bool
     /// Countdown used by the timed capture menu entries, in seconds.
     public var captureDelaySeconds: Int
@@ -51,17 +127,47 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var modeHotkeys: [String: Hotkey]
     /// UI language for menus, settings, and dialogs.
     public var uiLanguage: AppLanguage
+    /// App-wide light/dark override; system follows macOS.
+    public var appearance: AppAppearance
+    public var recordingFormat: RecordingFormat
+    public var recordingFPS: Int
+    public var recordingMaxSeconds: Int
+    /// GIF frames are downscaled to this width before encoding.
+    public var recordingGIFMaxWidth: Int
     /// Hides the menu bar icon. Settings can still be reopened from
     /// Spotlight or Finder, which activates the app and shows Settings.
     public var hideMenuBarIcon: Bool
     /// Removes stored screenshots when the app quits.
     public var clearHistoryOnQuit: Bool
+    /// Per-mode capture actions. Modes without an entry use the legacy
+    /// `openEditorAfterCapture` / `afterCaptureCopy` / `afterCaptureSave`
+    /// profile.
+    public var modeActions: [String: CaptureActions]
+    /// Target maximum encoded size in KB. Zero keeps the quality setting.
+    public var targetFileSizeKB: Int
+    /// Supports {date}, {time}, {datetime}, {source}, {app}, {window}, {n}.
+    public var fileNameTemplate: String
+    public var watermarkEnabled: Bool
+    public var watermarkText: String
+    public var watermarkPosition: WatermarkPosition
+    public var watermarkOpacity: Double
+    public var beautifyEnabled: Bool
+    public var beautifyPadding: Int
+    public var beautifyCornerRadius: Int
+    public var beautifyBackground: BeautifyBackground
+    public var beautifyShadow: Bool
+    public var selectionSnapToWindows: Bool
+    public var selectionAspectRatio: SelectionAspectRatio
+    /// Zero means the drag decides the size. Both must be non-zero to lock a
+    /// fixed selection size.
+    public var selectionFixedWidth: Int
+    public var selectionFixedHeight: Int
 
     /// Capture modes that can carry their own global shortcut, in the order
     /// used to resolve chord conflicts.
     public static let hotkeyModeIDs = [
         "region", "window", "screen", "allScreens",
-        "timedRegion", "timedScreen", "lastRegion", "scrolling",
+        "timedRegion", "timedScreen", "timedWindow", "lastRegion", "scrolling",
     ]
 
     /// Stable Carbon hotkey identifiers, one per mode.
@@ -72,6 +178,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         "allScreens": 4,
         "timedRegion": 5,
         "timedScreen": 6,
+        "timedWindow": 9,
         "lastRegion": 7,
         "scrolling": 8,
     ]
@@ -92,6 +199,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case historyEnabled
         case historyMaxItems
         case historyMaxBytes
+        case historySearchEnabled
         case captureCursor
         case captureDelaySeconds
         case ocrLanguages
@@ -106,8 +214,29 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case saveOnEditorEscape
         case modeHotkeys
         case uiLanguage
+        case appearance
+        case recordingFormat
+        case recordingFPS
+        case recordingMaxSeconds
+        case recordingGIFMaxWidth
         case hideMenuBarIcon
         case clearHistoryOnQuit
+        case modeActions
+        case targetFileSizeKB
+        case fileNameTemplate
+        case watermarkEnabled
+        case watermarkText
+        case watermarkPosition
+        case watermarkOpacity
+        case beautifyEnabled
+        case beautifyPadding
+        case beautifyCornerRadius
+        case beautifyBackground
+        case beautifyShadow
+        case selectionSnapToWindows
+        case selectionAspectRatio
+        case selectionFixedWidth
+        case selectionFixedHeight
     }
 
     public init(
@@ -119,6 +248,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         historyEnabled: Bool,
         historyMaxItems: Int,
         historyMaxBytes: Int64,
+        historySearchEnabled: Bool = true,
         captureCursor: Bool,
         captureDelaySeconds: Int = 3,
         ocrLanguages: [String] = AppSettings.defaultOCRLanguages,
@@ -133,8 +263,29 @@ public struct AppSettings: Codable, Equatable, Sendable {
         saveOnEditorEscape: Bool = false,
         modeHotkeys: [String: Hotkey] = [:],
         uiLanguage: AppLanguage = .system,
+        appearance: AppAppearance = .system,
+        recordingFormat: RecordingFormat = .mp4,
+        recordingFPS: Int = 30,
+        recordingMaxSeconds: Int = 120,
+        recordingGIFMaxWidth: Int = 800,
         hideMenuBarIcon: Bool = false,
-        clearHistoryOnQuit: Bool = false
+        clearHistoryOnQuit: Bool = false,
+        modeActions: [String: CaptureActions] = [:],
+        targetFileSizeKB: Int = 0,
+        fileNameTemplate: String = "Snipbo-{datetime}",
+        watermarkEnabled: Bool = false,
+        watermarkText: String = "Snipbo",
+        watermarkPosition: WatermarkPosition = .bottomRight,
+        watermarkOpacity: Double = 0.75,
+        beautifyEnabled: Bool = false,
+        beautifyPadding: Int = 32,
+        beautifyCornerRadius: Int = 12,
+        beautifyBackground: BeautifyBackground = .light,
+        beautifyShadow: Bool = true,
+        selectionSnapToWindows: Bool = true,
+        selectionAspectRatio: SelectionAspectRatio = .free,
+        selectionFixedWidth: Int = 0,
+        selectionFixedHeight: Int = 0
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -144,6 +295,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.historyEnabled = historyEnabled
         self.historyMaxItems = historyMaxItems
         self.historyMaxBytes = historyMaxBytes
+        self.historySearchEnabled = historySearchEnabled
         self.captureCursor = captureCursor
         self.captureDelaySeconds = captureDelaySeconds
         self.ocrLanguages = ocrLanguages
@@ -158,8 +310,29 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.saveOnEditorEscape = saveOnEditorEscape
         self.modeHotkeys = modeHotkeys
         self.uiLanguage = uiLanguage
+        self.appearance = appearance
+        self.recordingFormat = recordingFormat
+        self.recordingFPS = recordingFPS
+        self.recordingMaxSeconds = recordingMaxSeconds
+        self.recordingGIFMaxWidth = recordingGIFMaxWidth
         self.hideMenuBarIcon = hideMenuBarIcon
         self.clearHistoryOnQuit = clearHistoryOnQuit
+        self.modeActions = modeActions
+        self.targetFileSizeKB = targetFileSizeKB
+        self.fileNameTemplate = fileNameTemplate
+        self.watermarkEnabled = watermarkEnabled
+        self.watermarkText = watermarkText
+        self.watermarkPosition = watermarkPosition
+        self.watermarkOpacity = watermarkOpacity
+        self.beautifyEnabled = beautifyEnabled
+        self.beautifyPadding = beautifyPadding
+        self.beautifyCornerRadius = beautifyCornerRadius
+        self.beautifyBackground = beautifyBackground
+        self.beautifyShadow = beautifyShadow
+        self.selectionSnapToWindows = selectionSnapToWindows
+        self.selectionAspectRatio = selectionAspectRatio
+        self.selectionFixedWidth = selectionFixedWidth
+        self.selectionFixedHeight = selectionFixedHeight
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -175,6 +348,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         historyEnabled = try container.decodeIfPresent(Bool.self, forKey: .historyEnabled) ?? fallback.historyEnabled
         historyMaxItems = try container.decodeIfPresent(Int.self, forKey: .historyMaxItems) ?? fallback.historyMaxItems
         historyMaxBytes = try container.decodeIfPresent(Int64.self, forKey: .historyMaxBytes) ?? fallback.historyMaxBytes
+        historySearchEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .historySearchEnabled
+        ) ?? fallback.historySearchEnabled
         captureCursor = try container.decodeIfPresent(Bool.self, forKey: .captureCursor) ?? fallback.captureCursor
         captureDelaySeconds = try container.decodeIfPresent(Int.self, forKey: .captureDelaySeconds) ?? fallback.captureDelaySeconds
         ocrLanguages = try container.decodeIfPresent([String].self, forKey: .ocrLanguages) ?? fallback.ocrLanguages
@@ -200,10 +377,62 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.modeHotkeys
         uiLanguage = try container.decodeIfPresent(AppLanguage.self, forKey: .uiLanguage)
             ?? fallback.uiLanguage
+        appearance = try container.decodeIfPresent(AppAppearance.self, forKey: .appearance)
+            ?? fallback.appearance
+        recordingFormat = try container.decodeIfPresent(RecordingFormat.self, forKey: .recordingFormat)
+            ?? fallback.recordingFormat
+        recordingFPS = try container.decodeIfPresent(Int.self, forKey: .recordingFPS)
+            ?? fallback.recordingFPS
+        recordingMaxSeconds = try container.decodeIfPresent(Int.self, forKey: .recordingMaxSeconds)
+            ?? fallback.recordingMaxSeconds
+        recordingGIFMaxWidth = try container.decodeIfPresent(Int.self, forKey: .recordingGIFMaxWidth)
+            ?? fallback.recordingGIFMaxWidth
         hideMenuBarIcon = try container.decodeIfPresent(Bool.self, forKey: .hideMenuBarIcon)
             ?? fallback.hideMenuBarIcon
         clearHistoryOnQuit = try container.decodeIfPresent(Bool.self, forKey: .clearHistoryOnQuit)
             ?? fallback.clearHistoryOnQuit
+        modeActions = try container.decodeIfPresent(
+            [String: CaptureActions].self,
+            forKey: .modeActions
+        ) ?? fallback.modeActions
+        targetFileSizeKB = try container.decodeIfPresent(Int.self, forKey: .targetFileSizeKB)
+            ?? fallback.targetFileSizeKB
+        fileNameTemplate = try container.decodeIfPresent(String.self, forKey: .fileNameTemplate)
+            ?? fallback.fileNameTemplate
+        watermarkEnabled = try container.decodeIfPresent(Bool.self, forKey: .watermarkEnabled)
+            ?? fallback.watermarkEnabled
+        watermarkText = try container.decodeIfPresent(String.self, forKey: .watermarkText)
+            ?? fallback.watermarkText
+        watermarkPosition = try container.decodeIfPresent(WatermarkPosition.self, forKey: .watermarkPosition)
+            ?? fallback.watermarkPosition
+        watermarkOpacity = try container.decodeIfPresent(Double.self, forKey: .watermarkOpacity)
+            ?? fallback.watermarkOpacity
+        beautifyEnabled = try container.decodeIfPresent(Bool.self, forKey: .beautifyEnabled)
+            ?? fallback.beautifyEnabled
+        beautifyPadding = try container.decodeIfPresent(Int.self, forKey: .beautifyPadding)
+            ?? fallback.beautifyPadding
+        beautifyCornerRadius = try container.decodeIfPresent(Int.self, forKey: .beautifyCornerRadius)
+            ?? fallback.beautifyCornerRadius
+        beautifyBackground = try container.decodeIfPresent(BeautifyBackground.self, forKey: .beautifyBackground)
+            ?? fallback.beautifyBackground
+        beautifyShadow = try container.decodeIfPresent(Bool.self, forKey: .beautifyShadow)
+            ?? fallback.beautifyShadow
+        selectionSnapToWindows = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .selectionSnapToWindows
+        ) ?? fallback.selectionSnapToWindows
+        selectionAspectRatio = try container.decodeIfPresent(
+            SelectionAspectRatio.self,
+            forKey: .selectionAspectRatio
+        ) ?? fallback.selectionAspectRatio
+        selectionFixedWidth = try container.decodeIfPresent(
+            Int.self,
+            forKey: .selectionFixedWidth
+        ) ?? fallback.selectionFixedWidth
+        selectionFixedHeight = try container.decodeIfPresent(
+            Int.self,
+            forKey: .selectionFixedHeight
+        ) ?? fallback.selectionFixedHeight
     }
 
     public static let defaultSaveDirectory = FileManager.default
@@ -220,6 +449,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         historyEnabled: true,
         historyMaxItems: 200,
         historyMaxBytes: 500 * 1024 * 1024,
+        historySearchEnabled: true,
         captureCursor: false,
         captureDelaySeconds: 3,
         ocrLanguages: AppSettings.defaultOCRLanguages,
@@ -233,9 +463,46 @@ public struct AppSettings: Codable, Equatable, Sendable {
         saveOnEditorEscape: false,
         modeHotkeys: [:],
         uiLanguage: .system,
+        appearance: .system,
+        recordingFormat: .mp4,
+        recordingFPS: 30,
+        recordingMaxSeconds: 120,
+        recordingGIFMaxWidth: 800,
         hideMenuBarIcon: false,
-        clearHistoryOnQuit: false
+        clearHistoryOnQuit: false,
+        modeActions: [:],
+        targetFileSizeKB: 0,
+        fileNameTemplate: "Snipbo-{datetime}",
+        watermarkEnabled: false,
+        watermarkText: "Snipbo",
+        watermarkPosition: .bottomRight,
+        watermarkOpacity: 0.75,
+        beautifyEnabled: false,
+        beautifyPadding: 32,
+        beautifyCornerRadius: 12,
+        beautifyBackground: .light,
+        beautifyShadow: true,
+        selectionSnapToWindows: true,
+        selectionAspectRatio: .free,
+        selectionFixedWidth: 0,
+        selectionFixedHeight: 0
     )
+
+    /// Effective actions for a capture mode: an explicit per-mode override, or
+    /// the legacy global profile. A capture can never end with no destination.
+    public func actions(for mode: String) -> CaptureActions {
+        if var override = modeActions[mode] {
+            if override.isEmpty { override.copy = true }
+            return override
+        }
+        var actions = CaptureActions(
+            openEditor: openEditorAfterCapture,
+            copy: afterCaptureCopy,
+            save: afterCaptureSave
+        )
+        if actions.isEmpty { actions.copy = true }
+        return actions
+    }
 
     public func normalized() -> AppSettings {
         var copy = self
@@ -276,9 +543,31 @@ public struct AppSettings: Codable, Equatable, Sendable {
         copy.ocrLanguages = ocrLanguages.filter {
             Self.supportedOCRLanguages.contains($0) && seen.insert($0).inserted
         }
+        copy.recordingFPS = min(30, max(5, copy.recordingFPS))
+        copy.recordingMaxSeconds = min(600, max(5, copy.recordingMaxSeconds))
+        copy.recordingGIFMaxWidth = min(1_920, max(240, copy.recordingGIFMaxWidth))
+        copy.targetFileSizeKB = min(100_000, max(0, copy.targetFileSizeKB))
+        let template = copy.fileNameTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.fileNameTemplate = template.isEmpty ? "Snipbo-{datetime}" : template
+        copy.watermarkOpacity = min(1, max(0.05, copy.watermarkOpacity))
+        copy.beautifyPadding = min(200, max(0, copy.beautifyPadding))
+        copy.beautifyCornerRadius = min(80, max(0, copy.beautifyCornerRadius))
+        copy.selectionFixedWidth = min(20_000, max(0, copy.selectionFixedWidth))
+        copy.selectionFixedHeight = min(20_000, max(0, copy.selectionFixedHeight))
+        if copy.selectionFixedWidth == 0 || copy.selectionFixedHeight == 0 {
+            copy.selectionFixedWidth = 0
+            copy.selectionFixedHeight = 0
+        }
         if copy.ocrLanguages.isEmpty {
             copy.ocrLanguages = Self.defaultOCRLanguages
         }
+        var sanitizedActions: [String: CaptureActions] = [:]
+        for (mode, actions) in copy.modeActions where Self.hotkeyModeIDs.contains(mode) {
+            var fixed = actions
+            if fixed.isEmpty { fixed.copy = true }
+            sanitizedActions[mode] = fixed
+        }
+        copy.modeActions = sanitizedActions
         return copy
     }
 }

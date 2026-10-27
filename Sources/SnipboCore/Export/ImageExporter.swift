@@ -40,6 +40,113 @@ public enum ImageExporter {
     }
 
     public static func jpegData(from image: CGImage, quality: CGFloat) -> Data? {
+        lossyData(
+            image,
+            type: UTType.jpeg.identifier as CFString,
+            quality: quality,
+            targetBytes: nil,
+            flattenAlpha: true
+        )
+    }
+
+    public static func heicData(from image: CGImage, quality: CGFloat) -> Data? {
+        lossyData(
+            image,
+            type: UTType.heic.identifier as CFString,
+            quality: quality,
+            targetBytes: nil,
+            flattenAlpha: false
+        )
+    }
+
+    public static func avifData(from image: CGImage, quality: CGFloat) -> Data? {
+        let type = UTType("public.avif")?.identifier ?? UTType.heic.identifier
+        return lossyData(
+            image,
+            type: type as CFString,
+            quality: quality,
+            targetBytes: nil,
+            flattenAlpha: false
+        )
+    }
+
+    /// Encodes according to the chosen format. For lossy formats a non-zero
+    /// `targetBytes` lowers the quality until the output fits, keeping the
+    /// highest quality that satisfies the budget.
+    public static func data(
+        from image: CGImage,
+        format: ImageFormat,
+        quality: Double,
+        targetBytes: Int? = nil
+    ) -> Data? {
+        switch format {
+        case .png:
+            return pngData(from: image)
+        case .jpeg:
+            return lossyData(
+                image,
+                type: UTType.jpeg.identifier as CFString,
+                quality: quality,
+                targetBytes: targetBytes,
+                flattenAlpha: true
+            )
+        case .heic:
+            return lossyData(
+                image,
+                type: UTType.heic.identifier as CFString,
+                quality: quality,
+                targetBytes: targetBytes,
+                flattenAlpha: false
+            )
+        case .avif:
+            let type = UTType("public.avif")?.identifier ?? UTType.heic.identifier
+            return lossyData(
+                image,
+                type: type as CFString,
+                quality: quality,
+                targetBytes: targetBytes,
+                flattenAlpha: false
+            )
+        }
+    }
+
+    private static func lossyData(
+        _ image: CGImage,
+        type: CFString,
+        quality: CGFloat,
+        targetBytes: Int?,
+        flattenAlpha: Bool
+    ) -> Data? {
+        func encoded(quality: CGFloat) -> Data? {
+            let source = flattenAlpha ? flattened(image) : image
+            return encode(
+                source ?? image,
+                type: type,
+                options: [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary
+            )
+        }
+        guard let targetBytes, targetBytes > 0 else {
+            return encoded(quality: quality)
+        }
+        var low: CGFloat = 0.05
+        var high: CGFloat = 1
+        var best: Data?
+        for _ in 0..<9 {
+            let mid = (low + high) / 2
+            guard let data = encoded(quality: mid) else { break }
+            if data.count <= targetBytes {
+                best = data
+                low = mid
+            } else {
+                high = mid
+            }
+        }
+        return best ?? encoded(quality: 0.05)
+    }
+
+    /// JPEG cannot carry alpha; composite onto sRGB so the encoder sees a
+    /// 24-bit image instead of failing or producing a black background.
+    private static func flattened(_ image: CGImage) -> CGImage? {
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
                 data: nil,
@@ -52,12 +159,7 @@ public enum ImageExporter {
               ) else { return nil }
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-        guard let converted = context.makeImage() else { return nil }
-        return encode(
-            converted,
-            type: UTType.jpeg.identifier as CFString,
-            options: [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary
-        )
+        return context.makeImage()
     }
 
     private static func encode(_ image: CGImage, type: CFString, options: CFDictionary?) -> Data? {

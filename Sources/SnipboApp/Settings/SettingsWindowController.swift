@@ -11,9 +11,9 @@ final class SettingsWindowController: NSWindowController {
     let tabSelection = SettingsTabSelection()
 
     init(model: SettingsModel) {
-        // Tab bar (72) + divider (1) + the form's fixed 510 pt frame.
+        // Tab bar (72) + divider (1) + the form's fixed 536 pt frame.
         let window = NSWindow(
-            contentRect: CGRect(x: 0, y: 0, width: 560, height: 583),
+            contentRect: CGRect(x: 0, y: 0, width: 560, height: 609),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -27,7 +27,7 @@ final class SettingsWindowController: NSWindowController {
         let hostingView = NSHostingView(
             rootView: SettingsView(model: model, tabSelection: tabSelection)
         )
-        hostingView.frame = NSRect(x: 0, y: 0, width: 560, height: 583)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 560, height: 609)
         hostingView.autoresizingMask = [.width, .height]
         window.contentView?.addSubview(hostingView)
         window.center()

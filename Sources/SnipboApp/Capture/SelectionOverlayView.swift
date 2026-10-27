@@ -3,6 +3,7 @@ import SnipboCore
 
 final class SelectionOverlayView: NSView {
     let captured: CapturedImage
+    let selectionConstraints: SelectionConstraints
     var selection = SelectionModel()
     var onConfirm: ((CGRect) -> Void)?
     var onCancel: (() -> Void)?
@@ -12,6 +13,9 @@ final class SelectionOverlayView: NSView {
     private var moveAnchor: CGPoint?
     private var activeHandle: SelectionHandle?
     private var mousePoint: CGPoint = .zero
+    /// On-screen layer-0 window edges for this display, in screen-local
+    /// top-left coordinates. Empty when snapping is disabled.
+    private let windowFrames: [CGRect]
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -20,8 +24,16 @@ final class SelectionOverlayView: NSView {
         true
     }
 
-    init(captured: CapturedImage) {
+    init(
+        captured: CapturedImage,
+        constraints: SelectionConstraints = SelectionConstraints()
+    ) {
         self.captured = captured
+        self.selectionConstraints = constraints
+        self.windowFrames = Self.windowFrames(
+            for: captured,
+            enabled: constraints.snapToWindows
+        )
         super.init(frame: CGRect(origin: .zero, size: captured.geometry.frame.size))
         wantsLayer = true
     }
@@ -187,12 +199,7 @@ final class SelectionOverlayView: NSView {
                 x: min(max(point.x, bounds.minX), bounds.maxX),
                 y: min(max(point.y, bounds.minY), bounds.maxY)
             )
-            selection = SelectionModel(rect: CGRect(
-                x: min(anchor.x, clamped.x),
-                y: min(anchor.y, clamped.y),
-                width: abs(clamped.x - anchor.x),
-                height: abs(clamped.y - anchor.y)
-            ))
+            selection = SelectionModel(rect: newSelectionRect(anchor: anchor, point: clamped))
         } else if activeHandle == .inside, let moveAnchor {
             // SelectionModel.drag(.inside) centers the rect on the supplied point,
             // so pass the center plus the pointer delta to keep the grab offset.
@@ -205,8 +212,238 @@ final class SelectionOverlayView: NSView {
             self.moveAnchor = point
         } else if let activeHandle {
             selection.drag(handle: activeHandle, to: point, constrainedTo: bounds)
+            var rect = selection.rect
+            if let ratio = selectionConstraints.aspectRatio {
+                rect = aspectAdjusted(rect, handle: activeHandle, ratio: ratio)
+            }
+            rect = snapped(rect, handle: activeHandle)
+            selection = SelectionModel(rect: clamped(rect))
         }
         needsDisplay = true
+    }
+
+    /// Rect for a new drag. Fixed size wins over the aspect ratio; snapping is
+    /// only applied to unconstrained drags so it cannot fight either rule.
+    private func newSelectionRect(anchor: CGPoint, point: CGPoint) -> CGRect {
+        if let fixed = selectionConstraints.fixedSize {
+            let size = CGSize(
+                width: max(1, fixed.width),
+                height: max(1, fixed.height)
+            )
+            var origin = anchor
+            if point.x < anchor.x { origin.x = anchor.x - size.width }
+            if point.y < anchor.y { origin.y = anchor.y - size.height }
+            return clamped(CGRect(origin: origin, size: size))
+        }
+
+        var rect = CGRect(
+            x: min(anchor.x, point.x),
+            y: min(anchor.y, point.y),
+            width: abs(point.x - anchor.x),
+            height: abs(point.y - anchor.y)
+        )
+        if let ratio = selectionConstraints.aspectRatio {
+            let signX: CGFloat = point.x < anchor.x ? -1 : 1
+            let signY: CGFloat = point.y < anchor.y ? -1 : 1
+            var width = max(1, rect.width)
+            var height = max(1, rect.height)
+            if width / height > ratio {
+                height = width / ratio
+            } else {
+                width = height * ratio
+            }
+            let maxWidth = signX > 0 ? bounds.maxX - anchor.x : anchor.x - bounds.minX
+            let maxHeight = signY > 0 ? bounds.maxY - anchor.y : anchor.y - bounds.minY
+            width = min(width, max(1, maxWidth))
+            height = min(height, max(1, maxHeight))
+            if width / height > ratio {
+                height = width / ratio
+            } else {
+                width = height * ratio
+            }
+            let x = signX > 0 ? anchor.x : anchor.x - width
+            let y = signY > 0 ? anchor.y : anchor.y - height
+            rect = CGRect(x: x, y: y, width: width, height: height)
+        } else {
+            rect = snapped(
+                rect,
+                left: point.x < anchor.x,
+                right: point.x >= anchor.x,
+                top: point.y < anchor.y,
+                bottom: point.y >= anchor.y
+            )
+        }
+        return clamped(rect)
+    }
+
+    /// Keeps the aspect ratio while dragging a handle. Corner handles pin the
+    /// opposite corner; edge handles grow symmetrically around the opposite
+    /// edge's midpoint.
+    private func aspectAdjusted(
+        _ rect: CGRect,
+        handle: SelectionHandle,
+        ratio: CGFloat
+    ) -> CGRect {
+        guard rect.width > 0, rect.height > 0 else { return rect }
+        switch handle {
+        case .topLeft, .topRight, .bottomLeft, .bottomRight:
+            var width = rect.width
+            var height = rect.height
+            if width / height > ratio {
+                height = width / ratio
+            } else {
+                width = height * ratio
+            }
+            let origin: CGPoint
+            switch handle {
+            case .topLeft:
+                origin = CGPoint(x: rect.maxX - width, y: rect.maxY - height)
+            case .topRight:
+                origin = CGPoint(x: rect.minX, y: rect.maxY - height)
+            case .bottomLeft:
+                origin = CGPoint(x: rect.maxX - width, y: rect.minY)
+            default:
+                origin = CGPoint(x: rect.minX, y: rect.minY)
+            }
+            return CGRect(origin: origin, size: CGSize(width: width, height: height))
+        case .left, .right:
+            let height = rect.width / ratio
+            return CGRect(
+                x: rect.minX,
+                y: rect.midY - height / 2,
+                width: rect.width,
+                height: height
+            )
+        case .top, .bottom:
+            let width = rect.height * ratio
+            return CGRect(
+                x: rect.midX - width / 2,
+                y: rect.minY,
+                width: width,
+                height: rect.height
+            )
+        case .inside:
+            return rect
+        }
+    }
+
+    private func snapped(
+        _ rect: CGRect,
+        handle: SelectionHandle
+    ) -> CGRect {
+        switch handle {
+        case .topLeft:
+            return snapped(rect, left: true, right: false, top: true, bottom: false)
+        case .topRight:
+            return snapped(rect, left: false, right: true, top: true, bottom: false)
+        case .bottomRight:
+            return snapped(rect, left: false, right: true, top: false, bottom: true)
+        case .bottomLeft:
+            return snapped(rect, left: true, right: false, top: false, bottom: true)
+        case .left:
+            return snapped(rect, left: true, right: false, top: false, bottom: false)
+        case .right:
+            return snapped(rect, left: false, right: true, top: false, bottom: false)
+        case .top:
+            return snapped(rect, left: false, right: false, top: true, bottom: false)
+        case .bottom:
+            return snapped(rect, left: false, right: false, top: false, bottom: true)
+        case .inside:
+            return rect
+        }
+    }
+
+    private func snapped(
+        _ rect: CGRect,
+        left: Bool,
+        right: Bool,
+        top: Bool,
+        bottom: Bool
+    ) -> CGRect {
+        guard selectionConstraints.snapToWindows,
+              selectionConstraints.fixedSize == nil,
+              selectionConstraints.aspectRatio == nil,
+              !windowFrames.isEmpty else {
+            return rect
+        }
+        var result = rect
+        let xEdges = windowFrames.flatMap { [$0.minX, $0.maxX] }
+            + [bounds.minX, bounds.maxX]
+        let yEdges = windowFrames.flatMap { [$0.minY, $0.maxY] }
+            + [bounds.minY, bounds.maxY]
+        if left, let x = nearest(rect.minX, in: xEdges) {
+            result.origin.x = x
+            result.size.width = rect.maxX - x
+        }
+        if right, let x = nearest(rect.maxX, in: xEdges) {
+            result.size.width = x - result.minX
+        }
+        if top, let y = nearest(rect.minY, in: yEdges) {
+            result.origin.y = y
+            result.size.height = rect.maxY - y
+        }
+        if bottom, let y = nearest(rect.maxY, in: yEdges) {
+            result.size.height = y - result.minY
+        }
+        return result
+    }
+
+    private func nearest(_ value: CGFloat, in edges: [CGFloat]) -> CGFloat? {
+        let tolerance: CGFloat = 6
+        return edges
+            .filter { abs($0 - value) <= tolerance }
+            .min { abs($0 - value) < abs($1 - value) }
+    }
+
+    private func clamped(_ rect: CGRect) -> CGRect {
+        var result = rect
+        result.size.width = min(max(result.width, 1), bounds.width)
+        result.size.height = min(max(result.height, 1), bounds.height)
+        result.origin.x = min(max(result.origin.x, bounds.minX), bounds.maxX - result.width)
+        result.origin.y = min(max(result.origin.y, bounds.minY), bounds.maxY - result.height)
+        return result
+    }
+
+    private static func windowFrames(
+        for captured: CapturedImage,
+        enabled: Bool
+    ) -> [CGRect] {
+        guard enabled else { return [] }
+        let layout = ScreenLayout.current()
+        guard let screen = layout.screens.first(where: {
+            $0.displayID == captured.geometry.displayID
+        }) else { return [] }
+        guard let info = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else { return [] }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let screenBounds = CGRect(origin: .zero, size: screen.frame.size)
+        var frames: [CGRect] = []
+        for entry in info {
+            guard let owner = (entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                  owner != ownPID,
+                  let layer = (entry[kCGWindowLayer as String] as? NSNumber)?.intValue,
+                  layer == 0,
+                  let bounds = entry[kCGWindowBounds as String] as? [String: Any],
+                  let x = (bounds["X"] as? NSNumber)?.doubleValue,
+                  let y = (bounds["Y"] as? NSNumber)?.doubleValue,
+                  let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+                  let height = (bounds["Height"] as? NSNumber)?.doubleValue,
+                  width > 2, height > 2 else {
+                continue
+            }
+            let local = layout.localRect(
+                fromCGRect: CGRect(x: x, y: y, width: width, height: height),
+                on: screen
+            )
+            let clipped = local.intersection(screenBounds)
+            guard !clipped.isNull, clipped.width > 2, clipped.height > 2 else {
+                continue
+            }
+            frames.append(clipped)
+        }
+        return frames
     }
 
     override func mouseUp(with event: NSEvent) {

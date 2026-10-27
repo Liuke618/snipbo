@@ -17,6 +17,9 @@ extension NSColor {
 final class TextEditingOverlay: NSTextView {
     var onCommit: ((String) -> Void)?
     var onCancel: (() -> Void)?
+    /// Grows the editor as wrapped or multi-line text is typed. The canvas
+    /// owns the origin; only the height changes.
+    private let minimumHeight: CGFloat = 32
 
     override func keyDown(with event: NSEvent) {
         if hasMarkedText() {
@@ -25,11 +28,33 @@ final class TextEditingOverlay: NSTextView {
         }
         switch event.keyCode {
         case 36:
-            onCommit?(string)
+            // Shift/Option+Return inserts a line break; plain Return commits,
+            // matching the single-key workflow of the other tools.
+            if event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.option) {
+                insertNewline(nil)
+            } else {
+                onCommit?(string)
+            }
         case 53:
             onCancel?()
         default:
             super.keyDown(with: event)
         }
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        resizeToFitContent()
+    }
+
+    private func resizeToFitContent() {
+        guard let layoutManager, let textContainer else { return }
+        layoutManager.ensureLayout(for: textContainer)
+        let used = layoutManager.usedRect(for: textContainer).height
+        let target = max(minimumHeight, ceil(used + 4))
+        guard abs(frame.height - target) > 0.5 else { return }
+        var next = frame
+        next.size.height = target
+        frame = next
     }
 }

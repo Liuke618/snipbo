@@ -35,4 +35,7 @@ if [[ "$IDENTITY" == "-" ]]; then
     echo "warning: ad-hoc signed; Screen Recording permission can reset after every rebuild."
     echo "         Set SNIPBO_SIGN_IDENTITY to a stable code-signing identity to keep it."
 fi
+if [[ -f "$BIN_DIR/snipbo-cli" ]]; then
+    cp "$BIN_DIR/snipbo-cli" "$ROOT/dist/snipbo"
+fi
 echo "Built $APP_DIR (signed with: $IDENTITY)"

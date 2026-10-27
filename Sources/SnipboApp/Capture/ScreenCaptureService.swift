@@ -11,6 +11,7 @@ enum CaptureError: Error, LocalizedError {
     case timedOut
     case windowNotFound(CGWindowID)
     case noWindows
+    case noApplicationWindows(String)
     case compositionFailed
     case unexpectedImageSize(
         displayID: CGDirectDisplayID,
@@ -57,6 +58,11 @@ enum CaptureError: Error, LocalizedError {
                 "No capturable windows were found.",
                 "没有找到可截取的窗口。"
             )
+        case .noApplicationWindows(let app):
+            return L10n.tr(
+                "No capturable windows were found for \(app).",
+                "没有找到 \(app) 的可截取窗口。"
+            )
         case .compositionFailed:
             return L10n.tr(
                 "The screens could not be combined into one image.",
@@ -92,7 +98,7 @@ enum CaptureError: Error, LocalizedError {
                 "Check Screen Recording permission, then quit and reopen Snipbo. If the app was rebuilt, sign it with a stable identity so macOS keeps the permission.",
                 "请检查屏幕录制权限，然后退出并重新打开 Snipbo。如果应用是重新构建的，请使用稳定签名，让 macOS 保留权限。"
             )
-        case .windowNotFound, .noWindows:
+        case .windowNotFound, .noWindows, .noApplicationWindows:
             return L10n.tr(
                 "The window may have closed. Try again.",
                 "窗口可能已关闭，请重试。"
@@ -200,11 +206,120 @@ final class ScreenCaptureService {
         guard let window = content.windows.first(where: { $0.windowID == windowID }) else {
             throw CaptureError.windowNotFound(windowID)
         }
+        let (image, geometry) = try await capture(
+            window: window,
+            includeCursor: includeCursor
+        )
+        return CapturedImage(image: image, geometry: geometry)
+    }
+
+    /// Captures every on-screen window belonging to `appName` and composites
+    /// them in window-server order. The result is transparent between windows,
+    /// so it reads as a snapshot of the app rather than a fake desktop.
+    func captureApplicationWindows(
+        appName: String,
+        includeCursor: Bool
+    ) async throws -> CapturedImage {
+        let content = try await SCShareableContent.current
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let order = windowOrder()
+        let windows = content.windows
+            .filter { window in
+                guard window.isOnScreen,
+                      window.windowLayer == 0,
+                      window.frame.width >= 8,
+                      window.frame.height >= 8,
+                      let application = window.owningApplication,
+                      application.processID != ownPID else {
+                    return false
+                }
+                return application.applicationName
+                    .caseInsensitiveCompare(appName) == .orderedSame
+            }
+            .sorted {
+                (order[$0.windowID] ?? Int.max) < (order[$1.windowID] ?? Int.max)
+            }
+        guard !windows.isEmpty else {
+            throw CaptureError.noApplicationWindows(appName)
+        }
+
+        var captured: [(image: CGImage, frame: CGRect, scale: CGFloat)] = []
+        for window in windows {
+            if let result = try? await capture(window: window, includeCursor: includeCursor) {
+                captured.append((
+                    image: result.0,
+                    frame: window.frame,
+                    scale: result.1.backingScale
+                ))
+            }
+        }
+        guard !captured.isEmpty else {
+            throw CaptureError.noApplicationWindows(appName)
+        }
+
+        let union = captured.dropFirst().reduce(captured[0].frame) {
+            $0.union($1.frame)
+        }
+        guard union.width >= 1, union.height >= 1 else {
+            throw CaptureError.noApplicationWindows(appName)
+        }
+        let requestedScale = captured.map(\.scale).max() ?? 1
+        let pixelBudget = CGFloat(ScrollAlignment.maxCompositePixels)
+        let budgetScale = sqrt(pixelBudget / max(1, union.width * union.height))
+        let scale = max(0.5, min(requestedScale, budgetScale))
+        let outputWidth = max(1, Int((union.width * scale).rounded()))
+        let outputHeight = max(1, Int((union.height * scale).rounded()))
+        guard let context = CGContext(
+            data: nil,
+            width: outputWidth,
+            height: outputHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)
+                ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            throw CaptureError.compositionFailed
+        }
+        context.interpolationQuality = .high
+        // `captured` is front-to-back; draw back-to-front so the topmost
+        // window ends up on top of the composite.
+        for item in captured.reversed() {
+            let x = (item.frame.minX - union.minX) * scale
+            let y = (union.maxY - item.frame.maxY) * scale
+            context.draw(item.image, in: CGRect(
+                x: x,
+                y: y,
+                width: item.frame.width * scale,
+                height: item.frame.height * scale
+            ))
+        }
+        guard let image = context.makeImage() else {
+            throw CaptureError.compositionFailed
+        }
+        let layout = ScreenLayout.current()
+        let screen = layout.screens.first {
+            $0.frame.width >= CGFloat(outputWidth)
+                || $0.frame.height >= CGFloat(outputHeight)
+        } ?? layout.screens.first
+        return CapturedImage(
+            image: image,
+            geometry: ScreenGeometry(
+                displayID: screen?.displayID ?? 0,
+                frame: CGRect(origin: .zero, size: union.size),
+                backingScale: scale
+            )
+        )
+    }
+
+    private func capture(
+        window: SCWindow,
+        includeCursor: Bool
+    ) async throws -> (CGImage, ScreenGeometry) {
         let layout = ScreenLayout.current()
         guard let screen = layout.bestScreen(forCGRect: window.frame) else {
             throw CaptureError.screenNotFound
         }
-
         // The capture configuration is in pixels. Choose the backing scale of
         // the screen with the largest intersection so a spanning window keeps
         // native detail on the display that shows most of it.
@@ -221,11 +336,11 @@ final class ScreenCaptureService {
             configuration: configuration
         )
         guard image.width > 0, image.height > 0 else {
-            throw CaptureError.windowNotFound(windowID)
+            throw CaptureError.windowNotFound(window.windowID)
         }
-        return CapturedImage(
-            image: image,
-            geometry: ScreenGeometry(
+        return (
+            image,
+            ScreenGeometry(
                 displayID: screen.displayID,
                 frame: CGRect(origin: .zero, size: window.frame.size),
                 backingScale: scale

@@ -24,9 +24,19 @@ final class EditorCanvasView: NSView {
     var onEscape: (() -> Void)?
     /// Tab: copy the current annotation color as a hex string.
     var onCopyColor: (() -> Void)?
+    /// On-device privacy redaction.
+    var onRedact: ((RedactionMode) -> Void)?
+    /// File name shown when dragging the image out, honoring the configured
+    /// template and capture metadata.
+    var suggestedExportName: (() -> String)?
     /// Called after the zoom level changes so the toolbar readout can refresh.
     var onZoomChanged: (() -> Void)?
     private var textOverlay: TextEditingOverlay?
+    /// Starts a drag-out gesture when the select tool is active and the press
+    /// missed every annotation. The view point is captured at mouse-down so
+    /// the drag preview appears where the gesture began.
+    private var dragOutOrigin: CGPoint?
+    private var dragOutTemporaryFile: URL?
     /// Image-pixel rects returned by the last recognition. They are drawn over
     /// the current crop and are not part of the document or undo history.
     private(set) var recognitionHighlights: [CGRect] = []
@@ -175,8 +185,20 @@ final class EditorCanvasView: NSView {
             hints: nil
         )
 
-        if let selected = selectedAnnotation, let box = imageBounds(of: selected) {
-            drawSelectionBox(viewRect(fromImageRect: box).insetBy(dx: -3, dy: -3))
+        let selected = controller.selectedAnnotations
+        for annotation in selected {
+            if let box = imageBounds(of: annotation) {
+                drawSelectionBox(viewRect(fromImageRect: box).insetBy(dx: -3, dy: -3))
+            }
+        }
+        if selected.count > 1 {
+            let union = selected.dropFirst().reduce(selected[0].bounds) {
+                $0.union($1.bounds)
+            }
+            drawSelectionBox(
+                viewRect(fromImageRect: union).insetBy(dx: -6, dy: -6),
+                color: .systemBlue
+            )
         }
 
         for rect in recognitionHighlights {
@@ -260,51 +282,10 @@ final class EditorCanvasView: NSView {
         return String(format: "W: %.2f", Double(width) / Double(height))
     }
 
-    private var selectedAnnotation: Annotation? {
-        guard let selectedID = controller.selectedID else { return nil }
-        return controller.document.annotations.first(where: { $0.id == selectedID })
-    }
-
-    /// Image-pixel bounds of the annotation's geometry.
+    /// Image-pixel bounds of the annotation, including its text layout and
+    /// stroke spread, so selection boxes match what was drawn.
     private func imageBounds(of annotation: Annotation) -> CGRect? {
-        let geometryBounds: CGRect
-        switch annotation.geometry {
-        case .rect(let rect):
-            geometryBounds = rect
-        case .line(let start, let end):
-            geometryBounds = CGRect(
-                x: min(start.x, end.x),
-                y: min(start.y, end.y),
-                width: abs(end.x - start.x),
-                height: abs(end.y - start.y)
-            )
-        case .path(let points):
-            guard let first = points.first else { return nil }
-            var minX = first.x
-            var minY = first.y
-            var maxX = first.x
-            var maxY = first.y
-            for point in points.dropFirst() {
-                minX = min(minX, point.x)
-                minY = min(minY, point.y)
-                maxX = max(maxX, point.x)
-                maxY = max(maxY, point.y)
-            }
-            geometryBounds = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-        case .text(let origin, let width, _):
-            geometryBounds = CGRect(
-                x: origin.x,
-                y: origin.y,
-                width: width,
-                height: annotation.style.fontSize * 1.4
-            )
-        case .badge(let center, _):
-            let diameter = max(24, annotation.style.fontSize)
-            geometryBounds = CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter)
-        case .lens(let center, _, let radius):
-            geometryBounds = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
-        }
-        return geometryBounds
+        annotation.bounds
     }
 
     /// Converts an original-image-pixel rect to crop-relative view coordinates.
@@ -318,10 +299,10 @@ final class EditorCanvasView: NSView {
         )
     }
 
-    private func drawSelectionBox(_ rect: CGRect) {
+    private func drawSelectionBox(_ rect: CGRect, color: NSColor = .white) {
         let path = NSBezierPath(rect: rect)
         path.lineWidth = 1
-        NSColor.white.setStroke()
+        color.setStroke()
         path.stroke()
         path.setLineDash([4, 4], count: 2, phase: 0)
         NSColor.black.setStroke()
@@ -358,8 +339,34 @@ final class EditorCanvasView: NSView {
             presentTextEditor(at: imagePoint(from: event))
             return
         }
+        let imagePoint = imagePoint(from: event)
+        if controller.tool == .polygon {
+            if event.clickCount == 2, controller.isPolygonInProgress {
+                _ = controller.commitPolygon()
+            } else {
+                controller.begin(at: imagePoint)
+            }
+            return
+        }
+        // Dragging empty canvas with the select tool exports the rendered
+        // image. A press that lands on an annotation keeps moving it instead.
+        if controller.tool == .select,
+           !event.modifierFlags.contains(.shift),
+           AnnotationHitTester.topmost(
+               in: controller.document.annotations,
+               at: imagePoint,
+               tolerance: 8 / zoom
+           ) == nil {
+            dragOutOrigin = convert(event.locationInWindow, from: nil)
+        } else {
+            dragOutOrigin = nil
+        }
         // Keep the select hit radius at ~8 view points at any zoom.
-        controller.begin(at: imagePoint(from: event), tolerance: 8 / zoom)
+        controller.begin(
+            at: imagePoint,
+            tolerance: 8 / zoom,
+            extendSelection: event.modifierFlags.contains(.shift)
+        )
     }
 
     /// Shows the text entry overlay at an original-image-pixel point and makes
@@ -371,7 +378,8 @@ final class EditorCanvasView: NSView {
         // The committed width is in image pixels. Capture it at presentation so
         // a zoom change before commit does not alter the annotation's width.
         let imageWidth = widthInPoints / zoom
-        let fontSize = max(12, controller.style.fontSize * zoom)
+        let style = controller.style
+        let fontSize = max(12, style.fontSize * zoom)
         // The canvas shows the committed crop zoomed, so map image pixels to
         // crop-relative view points before creating the overlay. The height
         // follows the 1.4x line height used for text annotation bounds so the
@@ -383,13 +391,26 @@ final class EditorCanvasView: NSView {
             height: max(32, (fontSize * 1.4).rounded(.up))
         )
         let editor = TextEditingOverlay(frame: frame)
-        editor.font = .systemFont(ofSize: fontSize)
-        editor.textColor = NSColor(controller.style.color)
-        editor.drawsBackground = false
+        editor.font = appFont(for: style, size: fontSize)
+        editor.alignment = appAlignment(style.textAlignment)
+        editor.textColor = NSColor(style.color)
+        if let background = style.textBackground {
+            editor.drawsBackground = true
+            editor.backgroundColor = NSColor(background)
+        } else {
+            editor.drawsBackground = false
+        }
         editor.isRichText = false
         editor.isAutomaticQuoteSubstitutionEnabled = false
         editor.isAutomaticDashSubstitutionEnabled = false
         editor.textContainerInset = .zero
+        editor.isVerticallyResizable = true
+        editor.isHorizontallyResizable = false
+        editor.textContainer?.widthTracksTextView = true
+        editor.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
         // NSTextContainer pads lines by 5 points by default; remove it so the
         // text being edited starts where the committed annotation will.
         editor.textContainer?.lineFragmentPadding = 0
@@ -412,12 +433,63 @@ final class EditorCanvasView: NSView {
         window?.makeFirstResponder(editor)
     }
 
+    private func appFont(for style: AnnotationStyle, size: CGFloat) -> NSFont {
+        var font = style.fontName.flatMap { NSFont(name: $0, size: size) }
+            ?? NSFont.systemFont(ofSize: size)
+        if style.fontBold == true {
+            font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        }
+        return font
+    }
+
+    private func appAlignment(_ alignment: AnnotationTextAlignment?) -> NSTextAlignment {
+        switch alignment ?? .left {
+        case .left: return .left
+        case .center: return .center
+        case .right: return .right
+        }
+    }
+
     override func mouseDragged(with event: NSEvent) {
+        if let origin = dragOutOrigin {
+            let point = convert(event.locationInWindow, from: nil)
+            if hypot(point.x - origin.x, point.y - origin.y) >= 4 {
+                dragOutOrigin = nil
+                beginImageDrag(with: event, from: origin)
+                return
+            }
+        }
         controller.drag(to: imagePoint(from: event))
     }
 
     override func mouseUp(with event: NSEvent) {
+        dragOutOrigin = nil
         controller.end(at: imagePoint(from: event))
+    }
+
+    /// Starts a drag session carrying a temporary PNG plus the rendered
+    /// preview. The select tool only reaches this path on empty canvas, so it
+    /// cannot interfere with moving or drawing annotations.
+    private func beginImageDrag(with event: NSEvent, from origin: CGPoint) {
+        guard let image = controller.render(),
+              let payload = ImageDragSupport.makePayload(
+                  image: image,
+                  suggestedName: suggestedExportName?()
+                      ?? controller.defaultFileName(format: .png)
+              ) else {
+            NSSound.beep()
+            return
+        }
+        let frame = NSRect(
+            x: origin.x - payload.preview.size.width / 2,
+            y: origin.y - payload.preview.size.height / 2,
+            width: payload.preview.size.width,
+            height: payload.preview.size.height
+        )
+        payload.item.setDraggingFrame(frame, contents: payload.preview)
+        dragOutTemporaryFile = payload.temporaryFile
+        let session = beginDraggingSession(with: [payload.item], event: event, source: self)
+        session.animatesToStartingPositionsOnCancelOrFail = true
     }
 
     /// Two-finger pinch zoom, anchored at the pinch center (Shottr-style).
@@ -457,6 +529,19 @@ final class EditorCanvasView: NSView {
                 break
             }
         }
+        // An in-progress polygon owns Enter (close) and Escape (cancel).
+        if controller.tool == .polygon, controller.isPolygonInProgress {
+            switch event.keyCode {
+            case 36:
+                _ = controller.commitPolygon()
+                return
+            case 53:
+                controller.cancelPolygon()
+                return
+            default:
+                break
+            }
+        }
         // ⇧P toggles logical-point readouts (Shottr-style).
         if modifiers == [.shift],
            event.charactersIgnoringModifiers?.lowercased() == "p" {
@@ -476,6 +561,59 @@ final class EditorCanvasView: NSView {
            let characters = event.charactersIgnoringModifiers?.lowercased(),
            let tool = EditorTool.tool(forHotKey: characters) {
             controller.tool = tool
+            return
+        }
+        if modifiers == [.command, .shift],
+           let key = event.charactersIgnoringModifiers?.lowercased() {
+            switch key {
+            case "r":
+                onRedact?(.sensitiveText)
+                return
+            case "f":
+                onRedact?(.faces)
+                return
+            case "a":
+                onRedact?(.allText)
+                return
+            default:
+                break
+            }
+        }
+        if modifiers == [.command, .option],
+           let key = event.charactersIgnoringModifiers?.lowercased() {
+            switch key {
+            case "c":
+                controller.copySelectedAnnotations()
+                return
+            case "v":
+                controller.pasteAnnotations()
+                return
+            default:
+                break
+            }
+        }
+        if modifiers == [.command],
+           let key = event.charactersIgnoringModifiers?.lowercased() {
+            switch key {
+            case "a":
+                controller.selectAll()
+                return
+            case "d":
+                controller.duplicateSelected()
+                return
+            default:
+                break
+            }
+        }
+        if [123, 124, 125, 126].contains(event.keyCode),
+           !controller.selectedIDs.isEmpty {
+            let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
+            switch event.keyCode {
+            case 123: controller.nudgeSelected(dx: -step, dy: 0)
+            case 124: controller.nudgeSelected(dx: step, dy: 0)
+            case 125: controller.nudgeSelected(dx: 0, dy: step)
+            default: controller.nudgeSelected(dx: 0, dy: -step)
+            }
             return
         }
         if event.modifierFlags.contains(.command),
@@ -518,5 +656,167 @@ final class EditorCanvasView: NSView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    // MARK: - Context menu
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        let selectionCount = controller.selectedIDs.count
+
+        let copy = menuItem(
+            L10n.tr("Copy Annotations", "复制标注"),
+            action: #selector(copyAnnotations)
+        )
+        copy.keyEquivalent = "c"
+        copy.keyEquivalentModifierMask = [.command, .option]
+        copy.isEnabled = selectionCount > 0
+        menu.addItem(copy)
+
+        let paste = menuItem(
+            L10n.tr("Paste Annotations", "粘贴标注"),
+            action: #selector(pasteAnnotations)
+        )
+        paste.keyEquivalent = "v"
+        paste.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(paste)
+
+        let duplicate = menuItem(
+            L10n.tr("Duplicate", "再制"),
+            action: #selector(duplicateAnnotations)
+        )
+        duplicate.keyEquivalent = "d"
+        duplicate.keyEquivalentModifierMask = [.command]
+        duplicate.isEnabled = selectionCount > 0
+        menu.addItem(duplicate)
+
+        let delete = menuItem(
+            L10n.tr("Delete", "删除"),
+            action: #selector(deleteAnnotations)
+        )
+        delete.isEnabled = selectionCount > 0
+        menu.addItem(delete)
+
+        menu.addItem(.separator())
+
+        let selectAll = menuItem(
+            L10n.tr("Select All", "全选"),
+            action: #selector(selectAllAnnotations)
+        )
+        selectAll.keyEquivalent = "a"
+        selectAll.keyEquivalentModifierMask = [.command]
+        menu.addItem(selectAll)
+
+        menu.addItem(.separator())
+        let redactItem = NSMenuItem(
+            title: L10n.tr("Privacy Redaction", "隐私打码"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        let redactMenu = NSMenu()
+        let redactModes: [(String, RedactionMode)] = [
+            (L10n.tr("Sensitive Text", "敏感文本"), .sensitiveText),
+            (L10n.tr("Faces", "人脸"), .faces),
+            (L10n.tr("All Text", "全部文字"), .allText),
+        ]
+        for (title, mode) in redactModes {
+            let item = menuItem(title, action: #selector(redactSelected(_:)))
+            item.tag = mode.rawValue
+            redactMenu.addItem(item)
+        }
+        redactItem.submenu = redactMenu
+        menu.addItem(redactItem)
+
+        if selectionCount >= 2 {
+            menu.addItem(.separator())
+            let alignItem = NSMenuItem(title: L10n.tr("Align", "对齐"), action: nil, keyEquivalent: "")
+            let alignMenu = NSMenu()
+            let alignments: [(String, EditorController.Alignment)] = [
+                (L10n.tr("Left", "左对齐"), .left),
+                (L10n.tr("Center", "水平居中"), .center),
+                (L10n.tr("Right", "右对齐"), .right),
+                (L10n.tr("Top", "顶对齐"), .top),
+                (L10n.tr("Middle", "垂直居中"), .middle),
+                (L10n.tr("Bottom", "底对齐"), .bottom),
+            ]
+            for (index, entry) in alignments.enumerated() {
+                let item = menuItem(entry.0, action: #selector(alignAnnotations(_:)))
+                item.tag = index
+                alignMenu.addItem(item)
+            }
+            alignItem.submenu = alignMenu
+            menu.addItem(alignItem)
+        }
+
+        if selectionCount >= 3 {
+            let distributeItem = NSMenuItem(
+                title: L10n.tr("Distribute", "分布"),
+                action: nil,
+                keyEquivalent: ""
+            )
+            let distributeMenu = NSMenu()
+            let horizontal = menuItem(
+                L10n.tr("Horizontally", "水平分布"),
+                action: #selector(distributeAnnotations(_:))
+            )
+            horizontal.tag = 0
+            distributeMenu.addItem(horizontal)
+            let vertical = menuItem(
+                L10n.tr("Vertically", "垂直分布"),
+                action: #selector(distributeAnnotations(_:))
+            )
+            vertical.tag = 1
+            distributeMenu.addItem(vertical)
+            distributeItem.submenu = distributeMenu
+            menu.addItem(distributeItem)
+        }
+        return menu
+    }
+
+    private func menuItem(_ title: String, action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        return item
+    }
+
+    @objc private func copyAnnotations() { controller.copySelectedAnnotations() }
+    @objc private func pasteAnnotations() { controller.pasteAnnotations() }
+    @objc private func duplicateAnnotations() { controller.duplicateSelected() }
+    @objc private func deleteAnnotations() { controller.deleteSelected() }
+    @objc private func selectAllAnnotations() { controller.selectAll() }
+
+    @objc private func redactSelected(_ sender: NSMenuItem) {
+        guard let mode = RedactionMode(rawValue: sender.tag) else { return }
+        onRedact?(mode)
+    }
+
+    @objc private func alignAnnotations(_ sender: NSMenuItem) {
+        let alignments: [EditorController.Alignment] = [
+            .left, .center, .right, .top, .middle, .bottom,
+        ]
+        guard sender.tag >= 0, sender.tag < alignments.count else { return }
+        controller.alignSelected(alignments[sender.tag])
+    }
+
+    @objc private func distributeAnnotations(_ sender: NSMenuItem) {
+        controller.distributeSelected(horizontal: sender.tag == 0)
+    }
+}
+
+extension EditorCanvasView: NSDraggingSource {
+    func draggingSession(
+        _ session: NSDraggingSession,
+        sourceOperationMaskFor context: NSDraggingContext
+    ) -> NSDragOperation {
+        .copy
+    }
+
+    func draggingSession(
+        _ session: NSDraggingSession,
+        endedAt screenPoint: NSPoint,
+        operation: NSDragOperation
+    ) {
+        ImageDragSupport.removeTemporaryFile(dragOutTemporaryFile)
+        dragOutTemporaryFile = nil
     }
 }

@@ -20,11 +20,17 @@ final class EditorController {
                 cropDraft = nil
                 startPoint = nil
             }
+            if tool != .polygon, !polygonPoints.isEmpty {
+                polygonPoints.removeAll()
+                draft = nil
+            }
             changed()
         }
     }
     var style = AnnotationStyle()
-    private(set) var selectedID: UUID?
+    private(set) var selectedIDs: Set<UUID> = []
+    /// Convenience for the single-selection UI paths (style panel, toolbar).
+    var selectedID: UUID? { selectedIDs.count == 1 ? selectedIDs.first : nil }
     private(set) var draft: Annotation?
     private(set) var cropDraft: CGRect?
     /// Shows readout sizes in logical points (÷backingScale, "pt") instead of
@@ -35,6 +41,9 @@ final class EditorController {
 
     private var startPoint: CGPoint?
     private var freehandPoints: [CGPoint] = []
+    private var polygonPoints: [CGPoint] = []
+
+    var isPolygonInProgress: Bool { !polygonPoints.isEmpty }
     private var moveState: DocumentState?
     private var moveOrigin: CGPoint?
     /// Identifies the style-edit run whose pre-edit state is already on the
@@ -51,15 +60,25 @@ final class EditorController {
     }
 
     func setSelected(id: UUID?) {
-        selectedID = id
+        selectedIDs = id.map { [$0] } ?? []
         styleEditKey = nil
         changed()
     }
 
-    /// The style of the selected annotation, if any; the toolbar mirrors it.
+    /// The topmost selected annotation's style; multi-selection edits apply to
+    /// every selected annotation.
     var selectedStyle: AnnotationStyle? {
-        guard let selectedID else { return nil }
-        return document.annotations.first { $0.id == selectedID }?.style
+        selectedAnnotations.last?.style
+    }
+
+    var selectedKind: AnnotationKind? {
+        selectedAnnotations.last?.kind
+    }
+
+    var selectedAnnotations: [Annotation] {
+        document.annotations
+            .filter { selectedIDs.contains($0.id) }
+            .sorted { $0.zIndex < $1.zIndex }
     }
 
     /// Applies a style change to the selected annotation and to the default
@@ -70,17 +89,75 @@ final class EditorController {
     }
 
     func setColor(_ color: RGBA) {
-        applyStyleEdit { $0.color = color }
+        applyStyleEdit { style in
+            style.color = color
+            if style.fillColor != nil {
+                style.fillColor = RGBA(
+                    red: color.red,
+                    green: color.green,
+                    blue: color.blue,
+                    alpha: 0.25
+                )
+            }
+        }
+    }
+
+    func setLineStyle(_ lineStyle: AnnotationLineStyle) {
+        applyStyleEdit { $0.lineStyle = lineStyle }
+    }
+
+    func setArrowStyle(_ arrowStyle: AnnotationArrowStyle) {
+        applyStyleEdit { $0.arrowStyle = arrowStyle }
+    }
+
+    func setFillEnabled(_ enabled: Bool) {
+        applyStyleEdit { style in
+            style.fillColor = enabled
+                ? RGBA(
+                    red: style.color.red,
+                    green: style.color.green,
+                    blue: style.color.blue,
+                    alpha: 0.25
+                )
+                : nil
+        }
+    }
+
+    func setFontSize(_ size: CGFloat) {
+        applyStyleEdit { $0.fontSize = min(160, max(8, size)) }
+    }
+
+    func setFontName(_ name: String?) {
+        applyStyleEdit { $0.fontName = name }
+    }
+
+    func setFontBold(_ bold: Bool) {
+        applyStyleEdit { $0.fontBold = bold }
+    }
+
+    func setTextAlignment(_ alignment: AnnotationTextAlignment) {
+        applyStyleEdit { $0.textAlignment = alignment }
+    }
+
+    /// nil removes the background; a color enables it.
+    func setTextBackground(_ color: RGBA?) {
+        applyStyleEdit { $0.textBackground = color }
+    }
+
+    func setTextOutline(_ color: RGBA?) {
+        applyStyleEdit { $0.textOutline = color }
     }
 
     private func applyStyleEdit(_ mutate: (inout AnnotationStyle) -> Void) {
-        let key = selectedID.map { "annotation:\($0.uuidString)" } ?? "defaults"
+        let key = selectedIDs.isEmpty
+            ? "defaults"
+            : "annotations:" + selectedIDs.map(\.uuidString).sorted().joined(separator: ",")
         if styleEditKey != key {
             recordState(document.state)
             styleEditKey = key
         }
-        if let selectedID,
-           let index = document.annotations.firstIndex(where: { $0.id == selectedID }) {
+        for index in document.annotations.indices
+        where selectedIDs.contains(document.annotations[index].id) {
             mutate(&document.annotations[index].style)
         }
         mutate(&style)
@@ -97,23 +174,61 @@ final class EditorController {
     /// Begins a gesture at `point`, expressed in original image coordinates.
     /// `tolerance` is the select-tool hit radius in image points; callers that
     /// display a zoomed canvas pass `8 / zoom` to keep it constant on screen.
-    func begin(at point: CGPoint, tolerance: CGFloat = 8) {
+    func begin(at point: CGPoint, tolerance: CGFloat = 8, extendSelection: Bool = false) {
         switch tool {
         case .select:
             if let hit = AnnotationHitTester.topmost(in: document.annotations, at: point, tolerance: tolerance) {
-                selectedID = hit.id
-                moveState = document.state
-                moveOrigin = point
+                if extendSelection {
+                    if selectedIDs.contains(hit.id) {
+                        selectedIDs.remove(hit.id)
+                    } else {
+                        selectedIDs.insert(hit.id)
+                    }
+                    if selectedIDs.contains(hit.id) {
+                        moveState = document.state
+                        moveOrigin = point
+                    } else {
+                        moveState = nil
+                        moveOrigin = nil
+                    }
+                } else {
+                    if !selectedIDs.contains(hit.id) {
+                        selectedIDs = [hit.id]
+                    }
+                    moveState = document.state
+                    moveOrigin = point
+                }
             } else {
-                selectedID = nil
+                if !extendSelection {
+                    selectedIDs.removeAll()
+                }
+                moveState = nil
+                moveOrigin = nil
             }
-        case .arrow, .rectangle, .ellipse, .line, .highlight, .pixelate, .blur, .spotlight:
+        case .polygon:
+            if polygonPoints.last != point {
+                polygonPoints.append(point)
+            }
+            draft = Annotation(
+                kind: .polygon,
+                geometry: .polygon(points: polygonPoints),
+                style: style,
+                zIndex: nextZIndex
+            )
+            changed()
+            return
+        case .arrow, .rectangle, .ellipse, .line, .measure, .highlight, .pixelate, .blur, .spotlight:
             startPoint = point
             draft = makeAnnotation(from: point, to: point)
-        case .freehand:
+        case .freehand, .pixelateBrush:
             startPoint = point
             freehandPoints = [point]
-            draft = Annotation(kind: .freehand, geometry: .path(points: [point]), style: style, zIndex: nextZIndex)
+            draft = Annotation(
+                kind: tool == .pixelateBrush ? .pixelateBrush : .freehand,
+                geometry: .path(points: [point]),
+                style: style,
+                zIndex: nextZIndex
+            )
         case .counter:
             // Click places a badge with the next step number; no drag.
             counterValue += 1
@@ -147,14 +262,19 @@ final class EditorController {
     }
 
     func drag(to point: CGPoint) {
-        if tool == .select, let selectedID, let moveOrigin,
-           let index = document.annotations.firstIndex(where: { $0.id == selectedID }) {
+        if tool == .select, !selectedIDs.isEmpty, let moveOrigin {
             if let moveState {
                 recordState(moveState)
                 self.moveState = nil
             }
             let delta = CGPoint(x: point.x - moveOrigin.x, y: point.y - moveOrigin.y)
-            document.annotations[index].geometry = translated(document.annotations[index].geometry, by: delta)
+            for index in document.annotations.indices
+            where selectedIDs.contains(document.annotations[index].id) {
+                document.annotations[index].geometry = translated(
+                    document.annotations[index].geometry,
+                    by: delta
+                )
+            }
             self.moveOrigin = point
             changed()
             return
@@ -162,12 +282,12 @@ final class EditorController {
 
         guard let startPoint else { return }
         switch tool {
-        case .freehand:
+        case .freehand, .pixelateBrush:
             freehandPoints.append(point)
             draft?.geometry = .path(points: freehandPoints)
         case .crop:
             cropDraft = normalizedRect(from: startPoint, to: point)
-        case .arrow, .rectangle, .ellipse, .line, .highlight, .pixelate, .blur, .spotlight:
+        case .arrow, .rectangle, .ellipse, .line, .measure, .highlight, .pixelate, .blur, .spotlight:
             draft = makeAnnotation(from: startPoint, to: point)
         default:
             break
@@ -187,7 +307,7 @@ final class EditorController {
         }
 
         switch tool {
-        case .select:
+        case .select, .polygon:
             return
         case .crop:
             commitCropDraft()
@@ -224,6 +344,34 @@ final class EditorController {
         return true
     }
 
+    /// Closes the in-progress polygon. Requires at least three vertices.
+    @discardableResult
+    func commitPolygon() -> Bool {
+        guard polygonPoints.count >= 3 else { return false }
+        recordState(document.state)
+        let id = UUID()
+        document.annotations.append(Annotation(
+            id: id,
+            kind: .polygon,
+            geometry: .polygon(points: polygonPoints),
+            style: style,
+            zIndex: nextZIndex
+        ))
+        selectedIDs = [id]
+        styleEditKey = nil
+        polygonPoints.removeAll()
+        draft = nil
+        changed()
+        return true
+    }
+
+    func cancelPolygon() {
+        guard !polygonPoints.isEmpty else { return }
+        polygonPoints.removeAll()
+        draft = nil
+        changed()
+    }
+
     /// Abandons the in-progress crop draft (Escape).
     func cancelCropDraft() {
         guard cropDraft != nil else { return }
@@ -256,7 +404,7 @@ final class EditorController {
         document = EditDocument(image: resized, backingScale: document.backingScale * factor)
         document.annotations = carried
         history.reset()
-        selectedID = nil
+        selectedIDs.removeAll()
         onCropChanged?()
         changed()
     }
@@ -284,11 +432,186 @@ final class EditorController {
     }
 
     func deleteSelected() {
-        guard let selectedID,
-              let index = document.annotations.firstIndex(where: { $0.id == selectedID }) else { return }
+        guard !selectedIDs.isEmpty else { return }
         recordState(document.state)
-        document.annotations.remove(at: index)
-        self.selectedID = nil
+        document.annotations.removeAll { selectedIDs.contains($0.id) }
+        selectedIDs.removeAll()
+        changed()
+    }
+
+    func selectAll() {
+        selectedIDs = Set(document.annotations.map(\.id))
+        styleEditKey = nil
+        changed()
+    }
+
+    /// Adds one pixelate annotation per detected region in a single undo step.
+    /// The block size scales with the region so text and faces both become
+    /// unreadable instead of merely blurred.
+    func addRedactions(_ rects: [CGRect]) {
+        guard !rects.isEmpty else { return }
+        recordState(document.state)
+        var z = nextZIndex
+        var newIDs: Set<UUID> = []
+        for rect in rects {
+            var redactionStyle = style
+            redactionStyle.pixelBlockSize = max(
+                8,
+                min(40, min(rect.width, rect.height) / 4)
+            )
+            redactionStyle.opacity = 1
+            let id = UUID()
+            document.annotations.append(Annotation(
+                id: id,
+                kind: .pixelate,
+                geometry: .rect(rect),
+                style: redactionStyle,
+                zIndex: z
+            ))
+            z += 1
+            newIDs.insert(id)
+        }
+        selectedIDs = newIDs
+        styleEditKey = nil
+        changed()
+    }
+
+    /// Duplicates the selection, offset slightly and placed on top.
+    func duplicateSelected() {
+        let originals = selectedAnnotations
+        guard !originals.isEmpty else { return }
+        recordState(document.state)
+        var z = nextZIndex
+        var duplicates: Set<UUID> = []
+        for original in originals {
+            let id = UUID()
+            document.annotations.append(Annotation(
+                id: id,
+                kind: original.kind,
+                geometry: translated(original.geometry, by: CGPoint(x: 12, y: 12)),
+                style: original.style,
+                zIndex: z
+            ))
+            z += 1
+            duplicates.insert(id)
+        }
+        selectedIDs = duplicates
+        styleEditKey = nil
+        changed()
+    }
+
+    private static var annotationClipboard: [Annotation] = []
+
+    func copySelectedAnnotations() {
+        let selection = selectedAnnotations
+        guard !selection.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        Self.annotationClipboard = selection
+    }
+
+    func pasteAnnotations() {
+        guard !Self.annotationClipboard.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        recordState(document.state)
+        var z = nextZIndex
+        var pasted: Set<UUID> = []
+        for original in Self.annotationClipboard {
+            let id = UUID()
+            document.annotations.append(Annotation(
+                id: id,
+                kind: original.kind,
+                geometry: translated(original.geometry, by: CGPoint(x: 12, y: 12)),
+                style: original.style,
+                zIndex: z
+            ))
+            z += 1
+            pasted.insert(id)
+        }
+        selectedIDs = pasted
+        styleEditKey = nil
+        changed()
+    }
+
+    /// Moves every selected annotation by the same delta. Used by the arrow
+    /// keys; callers coalesce repeated presses only if they want to.
+    func nudgeSelected(dx: CGFloat, dy: CGFloat) {
+        guard !selectedIDs.isEmpty else { return }
+        recordState(document.state)
+        for index in document.annotations.indices
+        where selectedIDs.contains(document.annotations[index].id) {
+            document.annotations[index].geometry = translated(
+                document.annotations[index].geometry,
+                by: CGPoint(x: dx, y: dy)
+            )
+        }
+        changed()
+    }
+
+    enum Alignment {
+        case left, center, right, top, middle, bottom
+    }
+
+    func alignSelected(_ alignment: Alignment) {
+        let selection = selectedAnnotations
+        guard selection.count >= 2 else { return }
+        let union = selection.dropFirst().reduce(selection[0].bounds) {
+            $0.union($1.bounds)
+        }
+        recordState(document.state)
+        for index in document.annotations.indices
+        where selectedIDs.contains(document.annotations[index].id) {
+            let bounds = document.annotations[index].bounds
+            let dx: CGFloat
+            let dy: CGFloat
+            switch alignment {
+            case .left: dx = union.minX - bounds.minX; dy = 0
+            case .center: dx = union.midX - bounds.midX; dy = 0
+            case .right: dx = union.maxX - bounds.maxX; dy = 0
+            case .top: dx = 0; dy = union.minY - bounds.minY
+            case .middle: dx = 0; dy = union.midY - bounds.midY
+            case .bottom: dx = 0; dy = union.maxY - bounds.maxY
+            }
+            document.annotations[index].geometry = translated(
+                document.annotations[index].geometry,
+                by: CGPoint(x: dx, y: dy)
+            )
+        }
+        changed()
+    }
+
+    /// Spaces three or more annotations evenly between the outermost ones.
+    func distributeSelected(horizontal: Bool) {
+        var selection = selectedAnnotations
+        guard selection.count >= 3 else { return }
+        selection.sort {
+            horizontal
+                ? $0.bounds.midX < $1.bounds.midX
+                : $0.bounds.midY < $1.bounds.midY
+        }
+        let first = selection[0].bounds
+        let last = selection[selection.count - 1].bounds
+        let step = horizontal
+            ? (last.midX - first.midX) / CGFloat(selection.count - 1)
+            : (last.midY - first.midY) / CGFloat(selection.count - 1)
+        guard step != 0 else { return }
+        recordState(document.state)
+        for (position, annotation) in selection.enumerated() where position > 0 && position < selection.count - 1 {
+            guard let index = document.annotations.firstIndex(where: { $0.id == annotation.id }) else { continue }
+            let bounds = document.annotations[index].bounds
+            let target = (horizontal ? first.midX : first.midY) + step * CGFloat(position)
+            let current = horizontal ? bounds.midX : bounds.midY
+            document.annotations[index].geometry = translated(
+                document.annotations[index].geometry,
+                by: horizontal
+                    ? CGPoint(x: target - current, y: 0)
+                    : CGPoint(x: 0, y: target - current)
+            )
+        }
+        selectedIDs = Set(selection.map(\.id))
         changed()
     }
 
@@ -305,7 +628,7 @@ final class EditorController {
     private func applyRestored(_ state: DocumentState) {
         let previousCrop = document.cropRect
         document.apply(state)
-        selectedID = nil
+        selectedIDs.removeAll()
         styleEditKey = nil
         if document.cropRect != previousCrop {
             onCropChanged?()
@@ -343,6 +666,8 @@ final class EditorController {
             return Annotation(kind: .arrow, geometry: .line(start: start, end: end), style: style, zIndex: nextZIndex)
         case .line:
             return Annotation(kind: .line, geometry: .line(start: start, end: end), style: style, zIndex: nextZIndex)
+        case .measure:
+            return Annotation(kind: .measure, geometry: .line(start: start, end: end), style: style, zIndex: nextZIndex)
         case .highlight:
             var highlightStyle = style
             highlightStyle.color = .yellow
@@ -371,6 +696,8 @@ final class EditorController {
             return hypot(end.x - start.x, end.y - start.y) >= 2
         case .path(let points):
             return points.count >= 2
+        case .polygon(let points):
+            return points.count >= 3
         case .text(_, _, let value):
             return !value.isEmpty
         case .badge, .lens:
@@ -390,6 +717,10 @@ final class EditorController {
             )
         case .path(let points):
             return .path(points: points.map { CGPoint(x: $0.x + delta.x, y: $0.y + delta.y) })
+        case .polygon(let points):
+            return .polygon(points: points.map {
+                CGPoint(x: $0.x + delta.x, y: $0.y + delta.y)
+            })
         case .text(let origin, let width, let value):
             return .text(origin: CGPoint(x: origin.x + delta.x, y: origin.y + delta.y), width: width, value: value)
         case .badge(let center, let value):

@@ -54,7 +54,7 @@ struct EditorProbe {
             // Measure the toolbar floor with the real readout strings — the
             // size label ("2022×5175 px") is much wider than the placeholder.
             let probeToolbar = EditorToolbarView(
-                onTool: { _ in }, onUndo: {}, onRedo: {},
+                onTool: { _ in }, onUndo: {}, onRedo: {}, onRedact: { _ in },
                 onRecognize: {}, onPin: {}, onCopy: {}, onSave: {}, onShowOptions: {}
             )
             probeToolbar.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: fitZoom)
@@ -359,6 +359,95 @@ struct EditorProbe {
             check("size readout is clickable", false, "size button not found")
         }
         arrowEditor.close()
+
+        // --- Case 9: multi-select, duplication, alignment, and text layout.
+        let multiEditor = makeEditor(image: makeImage(width: 500, height: 400))
+        let multi = multiEditor.controller
+        multi.tool = .rectangle
+        multi.begin(at: CGPoint(x: 40, y: 40))
+        multi.drag(to: CGPoint(x: 140, y: 120))
+        multi.end(at: CGPoint(x: 140, y: 120))
+        multi.begin(at: CGPoint(x: 240, y: 220))
+        multi.drag(to: CGPoint(x: 340, y: 300))
+        multi.end(at: CGPoint(x: 340, y: 300))
+        check("multi: two annotations committed",
+              multi.document.annotations.count == 2,
+              "count \(multi.document.annotations.count)")
+
+        multi.tool = .select
+        multi.setSelected(id: multi.document.annotations[0].id)
+        multi.begin(at: CGPoint(x: 290, y: 260), extendSelection: true)
+        check("multi: shift-click extends selection",
+              multi.selectedIDs.count == 2,
+              "selected \(multi.selectedIDs.count)")
+
+        let beforeBounds = multi.document.annotations.map(\.bounds)
+        multi.drag(to: CGPoint(x: 300, y: 270))
+        let afterBounds = multi.document.annotations.map(\.bounds)
+        check("multi: drag moves every selected annotation",
+              zip(beforeBounds, afterBounds).allSatisfy { abs($1.minX - $0.minX - 10) < 0.01 },
+              "before \(beforeBounds) after \(afterBounds)")
+        multi.end(at: CGPoint(x: 300, y: 270))
+
+        multi.alignSelected(.left)
+        let lefts = multi.document.annotations.map(\.bounds.minX)
+        check("multi: align left",
+              abs(lefts[0] - lefts[1]) < 0.01,
+              "lefts \(lefts)")
+
+        multi.duplicateSelected()
+        check("multi: duplicate adds a second copy",
+              multi.document.annotations.count == 4 && multi.selectedIDs.count == 2,
+              "count \(multi.document.annotations.count), selected \(multi.selectedIDs.count)")
+
+        multi.copySelectedAnnotations()
+        multi.pasteAnnotations()
+        check("multi: copy and paste annotations",
+              multi.document.annotations.count == 6 && multi.selectedIDs.count == 2,
+              "count \(multi.document.annotations.count), selected \(multi.selectedIDs.count)")
+
+        multi.deleteSelected()
+        check("multi: delete removes the pasted pair",
+              multi.document.annotations.count == 4,
+              "count \(multi.document.annotations.count)")
+
+        multi.tool = .text
+        multi.style.fontSize = 18
+        multi.commitText(
+            String(repeating: "wrap ", count: 30),
+            at: CGPoint(x: 20, y: 20),
+            width: 120
+        )
+        if case .text = multi.document.annotations.last?.geometry {
+            let height = multi.document.annotations.last?.bounds.height ?? 0
+            check("text: wrapped annotation grows beyond one line",
+                  height > 18 * 1.4 * 2,
+                  "height \(height)")
+        } else {
+            check("text: annotation committed", false, "last annotation is not text")
+        }
+        multiEditor.close()
+
+        // --- Case 10: drag-out payload carries both a file URL and PNG data.
+        if let payload = ImageDragSupport.makePayload(
+            image: makeImage(width: 80, height: 60),
+            suggestedName: "probe.png"
+        ) {
+            let fileExists = FileManager.default.fileExists(
+                atPath: payload.temporaryFile.path
+            )
+            let pasteboard = payload.item.item as? NSPasteboardItem
+            check("drag: temporary PNG written", fileExists, payload.temporaryFile.path)
+            check("drag: pasteboard offers a file URL",
+                  pasteboard?.types.contains(.fileURL) == true,
+                  "types \(pasteboard?.types.map(\.rawValue) ?? [])")
+            check("drag: pasteboard offers PNG data",
+                  pasteboard?.types.contains(.png) == true,
+                  "types \(pasteboard?.types.map(\.rawValue) ?? [])")
+            ImageDragSupport.removeTemporaryFile(payload.temporaryFile)
+        } else {
+            check("drag: payload created", false, "makePayload returned nil")
+        }
         print("probe done")
     }
 

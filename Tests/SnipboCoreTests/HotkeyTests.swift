@@ -43,6 +43,14 @@ struct HotkeyTests {
         #expect(!QuitShortcut.matches(keyCode: 13, modifiers: [.command]))
     }
 
+    @Test func testCloseWindowShortcutIsCommandWOnly() {
+        #expect(CloseWindowShortcut.matches(keyCode: 13, modifiers: [.command]))
+        #expect(!CloseWindowShortcut.matches(keyCode: 13, modifiers: [.command, .shift]))
+        #expect(!CloseWindowShortcut.matches(keyCode: 13, modifiers: [.command, .option]))
+        #expect(!CloseWindowShortcut.matches(keyCode: 13, modifiers: []))
+        #expect(!CloseWindowShortcut.matches(keyCode: 12, modifiers: [.command]))
+    }
+
     @Test func testGlobalShortcutRequiresCommandOptionOrControl() {
         #expect(Hotkey(keyCode: 0, modifiers: [.command]).isGlobalShortcut)
         #expect(Hotkey(keyCode: 0, modifiers: [.option]).isGlobalShortcut)

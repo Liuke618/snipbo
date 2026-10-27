@@ -19,6 +19,7 @@ import SnipboCore
 /// its return value instead.
 final class ScrollFrameProcessor: @unchecked Sendable {
     private let maxHeight: Int
+    private let autoScroll: Bool
     private let onProgress: @MainActor @Sendable (Int) -> Void
     private let onFinish: @Sendable (Result<ScrollingCaptureResult, Error>) -> Void
 
@@ -39,13 +40,16 @@ final class ScrollFrameProcessor: @unchecked Sendable {
     private var effectiveMaxHeight = 0
     private var reportedHeight = 0
     private var reason: ScrollingCaptureReason = .stopped
+    private var consecutiveNoStitch = 0
 
     init(
         maxHeight: Int,
+        autoScroll: Bool = false,
         onProgress: @MainActor @Sendable @escaping (Int) -> Void,
         onFinish: @Sendable @escaping (Result<ScrollingCaptureResult, Error>) -> Void
     ) {
         self.maxHeight = maxHeight
+        self.autoScroll = autoScroll
         self.onProgress = onProgress
         self.onFinish = onFinish
     }
@@ -159,7 +163,25 @@ final class ScrollFrameProcessor: @unchecked Sendable {
             // started mid-document still ends up whole.
             stitched = prependFrame(image, composite: current, stripHeight: stripHeight)
         }
-        guard stitched else { return }
+        guard stitched else {
+            // Auto-scroll keeps posting wheel events, so a long run with no
+            // new content means the viewport reached its end (or the pointer
+            // is not over a scrollable area). Finish instead of scrolling
+            // forever.
+            if autoScroll {
+                consecutiveNoStitch += 1
+                if consecutiveNoStitch >= 25 {
+                    // Reaching the end of the document looks identical to never
+                    // scrolling; only discard the capture when nothing was
+                    // ever appended.
+                    let endReason: ScrollingCaptureReason = appended ? .stopped : .noMovement
+                    reason = endReason
+                    finishWithImage(current, reason: endReason)
+                }
+            }
+            return
+        }
+        consecutiveNoStitch = 0
         appended = true
         report(current.height)
         if current.reachedLimit {

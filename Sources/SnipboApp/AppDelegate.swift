@@ -15,6 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The close callback removes exactly the editor that closed, so one
     /// editor closing cannot drop another one.
     private var historyEditors: [EditorWindowController] = []
+    /// URLs delivered by LaunchServices before the app finished launching.
+    private var pendingURLs: [URL] = []
+    private var didFinishLaunching = false
     private lazy var historyStore = HistoryStore(
         baseDirectory: AppPaths.historyDirectory,
         maxItems: settings.historyMaxItems,
@@ -23,6 +26,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var recentMenuController = RecentMenuController(
         history: historyStore,
         openEntry: { [weak self] entry in self?.openHistoryEntry(entry) }
+    )
+    private lazy var pinsMenuController = PinsMenuController(
+        pins: { PinBoard.shared.managedPins() },
+        showPin: { PinBoard.shared.showPin(id: $0) },
+        closePin: { PinBoard.shared.closePin(id: $0) },
+        closeAll: { PinBoard.shared.closeAll() }
+    )
+    private lazy var regionPresetsController = RegionPresetsMenuController(
+        store: lastRegionStore,
+        capture: { [weak self] preset in
+            self?.captureCoordinator.startPresetRegionCapture(preset)
+        }
     )
     private lazy var lastRegionStore = LastRegionStore()
     private lazy var captureCoordinator = CaptureCoordinator(
@@ -34,14 +49,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         L10n.setLanguage(settings.uiLanguage)
+        applyAppearance(settings.appearance)
+        ImageDragSupport.cleanup()
+        PinBoard.shared.restore()
         let coordinator = captureCoordinator
         let recentController = recentMenuController
+        let pinsController = pinsMenuController
+        let presetsController = regionPresetsController
         statusItemController = StatusItemController(
             onCapture: { command in coordinator.start(command) },
             onSettings: { [weak self] in self?.showSettings() },
             onHistoryBrowser: { [weak self] in self?.showHistoryBrowser() },
             hotkeyFor: { [weak self] mode in self?.settings.hotkey(for: mode) },
             recentMenu: recentController.menu,
+            pinsMenu: pinsController.menu,
+            presetsMenu: presetsController.menu,
             lastRegionAvailable: { coordinator.canCaptureLastRegion() },
             onQuit: { NSApp.terminate(nil) }
         )
@@ -58,9 +80,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // The status-menu key equivalents only fire while that menu is open,
         // the capture overlay is a screen-saver-level window, and the app has
-        // no main menu to route ⌘Q. Handle both chords locally whenever Snipbo
-        // is frontmost instead of registering global chords that would steal
-        // them from other apps.
+        // no main menu to route ⌘Q, ⌘W or ⌘,. Handle these chords locally
+        // whenever Snipbo is frontmost instead of registering global chords
+        // that would steal them from other apps.
         localShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             return self.handleLocalShortcut(event) ? nil : event
@@ -82,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.applyModeHotkeys(newSettings)
             self.syncLoginItem(newSettings)
             L10n.setLanguage(newSettings.uiLanguage)
+            self.applyAppearance(newSettings.appearance)
             if newSettings.uiLanguage != self.appliedLanguage {
                 self.appliedLanguage = newSettings.uiLanguage
                 // The menu shows localized titles and per-mode key equivalents;
@@ -119,6 +142,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+
+        didFinishLaunching = true
+        let urls = pendingURLs
+        pendingURLs.removeAll()
+        for url in urls {
+            handleURL(url)
+        }
     }
 
     private var registeredModeHotkeys: [String: Hotkey] = [:]
@@ -131,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "allScreens": return L10n.tr("All screens", "全部屏幕")
         case "timedRegion": return L10n.tr("Timed region", "延时区域")
         case "timedScreen": return L10n.tr("Timed screen", "延时屏幕")
+        case "timedWindow": return L10n.tr("Timed window", "延时窗口")
         case "lastRegion": return L10n.tr("Last region", "上次区域")
         case "scrolling": return L10n.tr("Scrolling", "滚动")
         default: return mode
@@ -145,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "allScreens": return .allScreens
         case "timedRegion": return .timedRegion
         case "timedScreen": return .timedScreen
+        case "timedWindow": return .timedWindow
         case "lastRegion": return .lastRegion
         case "scrolling": return .scrolling
         default: return nil
@@ -198,8 +230,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var appliedLoginItem: Bool?
     private var appliedLanguage: AppLanguage?
+    private var appliedAppearance: AppAppearance?
     private var appliedHistoryMaxItems: Int?
     private var appliedHistoryMaxBytes: Int64?
+
+    private func applyAppearance(_ appearance: AppAppearance) {
+        guard appliedAppearance != appearance else { return }
+        appliedAppearance = appearance
+        switch appearance {
+        case .system:
+            NSApp.appearance = nil
+        case .light:
+            NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark:
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
 
     /// Applies launch-at-login only when the desired state changes, so a
     /// Settings window left open cannot re-register on every keystroke.
@@ -263,6 +309,113 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    // MARK: - URL commands
+
+    /// Supports `snipbo://capture?mode=region&action=copy`,
+    /// `snipbo://settings`, and `snipbo://history`. Shortcuts, Raycast, and the
+    /// bundled `snipbo` CLI all use these URLs.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard didFinishLaunching else {
+            pendingURLs.append(contentsOf: urls)
+            return
+        }
+        for url in urls {
+            handleURL(url)
+        }
+    }
+
+    private func handleURL(_ url: URL) {
+        guard url.scheme?.lowercased() == "snipbo" else { return }
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let host = (url.host ?? "").lowercased()
+        let query = Dictionary(
+            (components?.queryItems ?? []).compactMap { item in
+                item.value.map { (item.name.lowercased(), $0.lowercased()) }
+            },
+            uniquingKeysWith: { _, last in last }
+        )
+
+        switch host {
+        case "capture", "":
+            let mode = query["mode"] ?? "region"
+            if mode == "record-stop" {
+                captureCoordinator.stopRecordingForAutomation()
+                return
+            }
+            if mode == "record-cancel" {
+                captureCoordinator.cancelRecordingForAutomation()
+                return
+            }
+            if mode == "app-windows" || mode == "appwindows" {
+                captureCoordinator.startAppWindowsCapture(appName: query["app"])
+                return
+            }
+            if mode == "record-region" || mode == "record-screen" {
+                let format = query["format"].flatMap(RecordingFormat.init(rawValue:))
+                if mode == "record-region" {
+                    captureCoordinator.startRecordRegion(formatOverride: format)
+                } else {
+                    captureCoordinator.startRecordScreen(formatOverride: format)
+                }
+                return
+            }
+            guard let command = Self.command(forURLMode: mode) else {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = L10n.tr("Unknown capture mode", "未知截图模式")
+                alert.informativeText = mode
+                alert.runModal()
+                return
+            }
+            captureCoordinator.start(
+                command,
+                actionsOverride: Self.actions(from: query["action"])
+            )
+        case "history":
+            showHistoryBrowser()
+        case "settings", "preferences":
+            showSettings()
+        default:
+            showSettings()
+        }
+    }
+
+    private static func command(forURLMode mode: String) -> CaptureCommand? {
+        switch mode {
+        case "region": return .region
+        case "window": return .window
+        case "app-windows", "appwindows": return .appWindows
+        case "screen": return .screen
+        case "all", "allscreens", "all-screens": return .allScreens
+        case "timed-region", "timedregion": return .timedRegion
+        case "timed-screen", "timedscreen": return .timedScreen
+        case "timed-window", "timedwindow": return .timedWindow
+        case "last", "lastregion", "last-region": return .lastRegion
+        case "scroll", "scrolling": return .scrolling
+        case "scroll-horizontal", "scrollhorizontal": return .scrollingHorizontal
+        case "scroll-auto", "scrollauto": return .scrollingAuto
+        case "record-region", "recordregion": return .recordRegion
+        case "record-screen", "recordscreen": return .recordScreen
+        default: return nil
+        }
+    }
+
+    private static func actions(from token: String?) -> CaptureActions? {
+        guard let token, !token.isEmpty else { return nil }
+        var actions = CaptureActions()
+        for piece in token.split(separator: ",") {
+            switch piece.trimmingCharacters(in: .whitespacesAndNewlines) {
+            case "editor", "edit": actions.openEditor = true
+            case "copy": actions.copy = true
+            case "save": actions.save = true
+            case "pin": actions.pin = true
+            default: break
+            }
+        }
+        guard !actions.isEmpty else { return nil }
+        return actions
+    }
+
     private func showSettings() {
         if settingsWindowController == nil {
             settingsWindowController = SettingsWindowController(model: settingsModel)
@@ -270,7 +423,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindowController?.show()
     }
 
-    /// Handles ⌘Q and ⌘, while Snipbo is frontmost. For ⌘, capture must be
+    /// Handles ⌘Q, ⌘W and ⌘, while Snipbo is frontmost. For ⌘, capture must be
     /// cancelled first: its overlay sits above normal windows. While Settings
     /// itself is key, ⌘, is left alone so the hotkey recorder can capture it
     /// as a chord; ⌘Q still quits.
@@ -282,10 +435,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return true
         }
+        if CloseWindowShortcut.matches(keyCode: keyCode, modifiers: modifiers) {
+            // While a hotkey recorder is armed it owns the next chord, so ⌘W
+            // has to stay bindable as a capture shortcut.
+            if (NSApp.keyWindow?.firstResponder as? HotkeyRecorderNSView)?.isRecording == true {
+                return false
+            }
+            return closeKeyWindow()
+        }
         if settingsWindowController?.window?.isKeyWindow == true { return false }
         guard SettingsShortcut.matches(keyCode: keyCode, modifiers: modifiers) else { return false }
         captureCoordinator.cancelActiveCapture()
         showSettings()
+        return true
+    }
+
+    /// Routes ⌘W to the focused window. The capture overlay and the floating
+    /// controls are higher-level panels whose lifecycle the coordinator owns,
+    /// so those keep Escape as their only dismissal.
+    private func closeKeyWindow() -> Bool {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
+              window.level == .normal else { return false }
+        window.performClose(nil)
         return true
     }
 
@@ -328,12 +499,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSLog("Snipbo: could not open the recent screenshot at %@", url.path)
                 return
             }
+            let snapshot = await self.historyStore.document(for: entry.id)
+            var document = EditDocument(
+                image: payload.cgImage,
+                backingScale: snapshot?.backingScale ?? 1
+            )
+            if let snapshot {
+                let bounds = CGRect(
+                    x: 0,
+                    y: 0,
+                    width: payload.cgImage.width,
+                    height: payload.cgImage.height
+                )
+                let crop = snapshot.cropRect.intersection(bounds).integral
+                if crop.width >= 1, crop.height >= 1 {
+                    document.cropRect = crop
+                }
+                document.annotations = snapshot.annotations
+            }
             let identifier = UUID()
             let editor = EditorWindowController(
-                document: EditDocument(image: payload.cgImage),
+                document: document,
                 settingsProvider: { [weak self] in self?.settings ?? .default },
                 history: self.historyStore,
                 identifier: identifier,
+                historyEntryID: entry.id,
                 onClose: { [weak self] in
                     self?.historyEditors.removeAll { $0.identifier == identifier }
                 }

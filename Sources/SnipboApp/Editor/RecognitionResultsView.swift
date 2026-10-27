@@ -9,10 +9,10 @@ final class RecognitionResultsView: NSView {
     var onCopy: ((String) -> Void)?
     var onClose: (() -> Void)?
 
-    private let titleLabel = NSTextField(labelWithString: "Recognition")
+    private let titleLabel = NSTextField(labelWithString: L10n.tr("Recognition", "识别"))
     private let statusLabel = NSTextField(labelWithString: "")
-    private let closeButton = NSButton(title: "Close", target: nil, action: nil)
-    private let copyButton = NSButton(title: "Copy All", target: nil, action: nil)
+    private let closeButton = NSButton(title: L10n.tr("Close", "关闭"), target: nil, action: nil)
+    private let copyButton = NSButton(title: L10n.tr("Copy All", "复制全部"), target: nil, action: nil)
     private let scrollView = NSScrollView()
     private let textView = NSTextView(frame: .zero)
 
@@ -96,7 +96,10 @@ final class RecognitionResultsView: NSView {
     func show(_ result: RecognitionResult, removeLineBreaks: Bool) {
         let text = result.plainText(removeLineBreaks: removeLineBreaks)
         textView.string = text
-        statusLabel.stringValue = "\(result.textBlocks.count) text blocks · \(result.barcodes.count) barcodes"
+        statusLabel.stringValue = L10n.tr(
+            "\(result.textBlocks.count) text blocks · \(result.barcodes.count) barcodes",
+            "\(result.textBlocks.count) 段文字 · \(result.barcodes.count) 个条码"
+        )
         copyButton.isEnabled = !text.isEmpty
     }
 

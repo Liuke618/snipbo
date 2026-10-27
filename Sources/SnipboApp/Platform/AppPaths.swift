@@ -9,4 +9,8 @@ enum AppPaths {
     static var historyDirectory: URL {
         applicationSupport.appendingPathComponent("History", isDirectory: true)
     }
+
+    static var pinsDirectory: URL {
+        applicationSupport.appendingPathComponent("Pins", isDirectory: true)
+    }
 }

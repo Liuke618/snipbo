@@ -53,6 +53,10 @@ final class HotkeyRecorderNSView: NSView {
     var onChange: ((Hotkey) -> Void)?
     private var recording = false
 
+    /// Whether the view is waiting for the next chord. The app-level ⌘W handler
+    /// stands down while this is true so ⌘W stays bindable.
+    var isRecording: Bool { recording }
+
     override var acceptsFirstResponder: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: 220, height: 32) }
 
@@ -68,13 +72,13 @@ final class HotkeyRecorderNSView: NSView {
         let text: String
         let textColor: NSColor
         if recording {
-            text = "Press a shortcut…"
+            text = L10n.tr("Press a shortcut…", "按下快捷键…")
             textColor = .labelColor
         } else if let hotkey {
             text = hotkey.displayString
             textColor = .labelColor
         } else {
-            text = "Off — record to enable"
+            text = L10n.tr("Off — record to enable", "未设置 — 点击录制")
             textColor = .secondaryLabelColor
         }
         let attributes: [NSAttributedString.Key: Any] = [

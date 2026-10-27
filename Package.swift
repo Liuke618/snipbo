@@ -55,6 +55,10 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "Snipbo", targets: ["SnipboApp"]),
+        // Lowercase "snipbo" would collide with "Snipbo" on a case-insensitive
+        // filesystem, so the SwiftPM product keeps the -cli suffix. The build
+        // script installs it as dist/snipbo.
+        .executable(name: "snipbo-cli", targets: ["SnipboCLI"]),
         .library(name: "SnipboCore", targets: ["SnipboCore"]),
     ],
     targets: [
@@ -65,6 +69,10 @@ let package = Package(
         .executableTarget(
             name: "SnipboApp",
             dependencies: ["SnipboCore"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .executableTarget(
+            name: "SnipboCLI",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(

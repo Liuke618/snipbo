@@ -25,21 +25,52 @@ enum HistoryRecorder {
     static let logger = Logger(subsystem: "local.snipbo.app", category: "History")
 
     /// Launches an asynchronous history record when history is enabled. When it
-    /// is disabled this returns without scheduling any work.
+    /// is disabled the returned task resolves to nil without scheduling work.
+    /// The entry id lets an editor attach its editable document to the same
+    /// history record once the write completes.
+    @discardableResult
     static func record(
         _ image: CGImage,
         source: CaptureSource,
         settings: AppSettings,
         history: HistoryStore
-    ) {
-        guard settings.historyEnabled else { return }
+    ) -> Task<HistoryEntry?, Never> {
+        guard settings.historyEnabled else {
+            return Task { nil }
+        }
         let imageData = ImageData(image)
-        Task {
+        return Task {
             do {
                 let entry = try await history.record(image: imageData, source: source)
                 // The write has completed, so the Recent menu can already show
                 // the new entry when the user opens it next.
                 NotificationCenter.default.post(name: .snipboHistoryDidChange, object: entry)
+                if settings.historySearchEnabled {
+                    // Index locally so the history browser can search by text.
+                    // This is a separate task: recording must not wait on Vision.
+                    Task {
+                        guard let result = try? await RecognitionService.shared.recognize(
+                            imageData,
+                            languages: settings.ocrLanguages
+                        ) else { return }
+                        let text = result.plainText
+                        guard !text.isEmpty else { return }
+                        do {
+                            try await history.updateOCR(id: entry.id, text: text)
+                            var updated = entry
+                            updated.ocrText = text
+                            NotificationCenter.default.post(
+                                name: .snipboHistoryDidChange,
+                                object: updated
+                            )
+                        } catch {
+                            logger.error(
+                                "Failed to index history text: \(error.localizedDescription, privacy: .public)"
+                            )
+                        }
+                    }
+                }
+                return entry
             } catch {
                 logger.error(
                     "Failed to record a history entry: \(error.localizedDescription, privacy: .public)"
@@ -51,6 +82,7 @@ enum HistoryRecorder {
                         "截图未能加入历史。"
                     )
                 )
+                return nil
             }
         }
     }

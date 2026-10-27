@@ -9,6 +9,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let onHistoryBrowser: () -> Void
     private let hotkeyFor: (String) -> Hotkey?
     private let recentMenu: NSMenu
+    private let pinsMenu: NSMenu
+    private let presetsMenu: NSMenu
     private let lastRegionAvailable: () -> Bool
     private let onQuit: () -> Void
     private var lastRegionItem: NSMenuItem?
@@ -19,6 +21,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         onHistoryBrowser: @escaping () -> Void,
         hotkeyFor: @escaping (String) -> Hotkey?,
         recentMenu: NSMenu,
+        pinsMenu: NSMenu,
+        presetsMenu: NSMenu,
         lastRegionAvailable: @escaping () -> Bool,
         onQuit: @escaping () -> Void
     ) {
@@ -27,6 +31,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.onHistoryBrowser = onHistoryBrowser
         self.hotkeyFor = hotkeyFor
         self.recentMenu = recentMenu
+        self.pinsMenu = pinsMenu
+        self.presetsMenu = presetsMenu
         self.lastRegionAvailable = lastRegionAvailable
         self.onQuit = onQuit
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -90,6 +96,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let windowItem = makeItem(L10n.tr("Capture Window", "窗口截图"), icon: "app-window", action: #selector(captureWindow))
         applyKeyEquivalent(windowItem, mode: "window")
         menu.addItem(windowItem)
+        menu.addItem(makeItem(
+            L10n.tr("Capture App Windows", "应用全部窗口"),
+            icon: "layers",
+            action: #selector(captureAppWindows)
+        ))
 
         let screenItem = makeItem(L10n.tr("Capture Screen", "屏幕截图"), icon: "monitor", action: #selector(captureScreen))
         applyKeyEquivalent(screenItem, mode: "screen")
@@ -108,6 +119,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let timedScreenSub = makeItem(L10n.tr("Screen", "屏幕"), action: #selector(captureTimedScreen))
         applyKeyEquivalent(timedScreenSub, mode: "timedScreen")
         timedMenu.addItem(timedScreenSub)
+        let timedWindowSub = makeItem(L10n.tr("Window", "窗口"), action: #selector(captureTimedWindow))
+        applyKeyEquivalent(timedWindowSub, mode: "timedWindow")
+        timedMenu.addItem(timedWindowSub)
         timedItem.submenu = timedMenu
         menu.addItem(timedItem)
 
@@ -115,10 +129,60 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         applyKeyEquivalent(lastRegionItem, mode: "lastRegion")
         self.lastRegionItem = lastRegionItem
         menu.addItem(lastRegionItem)
+        let presetsItem = NSMenuItem(
+            title: L10n.tr("Region Presets", "区域预设"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        presetsItem.image = Self.icon("bookmark", size: 16)
+            ?? NSImage(systemSymbolName: "bookmark", accessibilityDescription: nil)
+        presetsItem.submenu = presetsMenu
+        menu.addItem(presetsItem)
 
-        let scrollingItem = makeItem(L10n.tr("Scrolling Capture", "滚动截图"), icon: "unfold-vertical", action: #selector(captureScrolling))
-        applyKeyEquivalent(scrollingItem, mode: "scrolling")
+        let scrollingItem = NSMenuItem(
+            title: L10n.tr("Scrolling Capture", "滚动截图"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        scrollingItem.image = Self.icon("unfold-vertical", size: 16)
+        let scrollingMenu = NSMenu()
+        let verticalItem = makeItem(
+            L10n.tr("Vertical", "纵向"),
+            action: #selector(captureScrolling)
+        )
+        applyKeyEquivalent(verticalItem, mode: "scrolling")
+        scrollingMenu.addItem(verticalItem)
+        scrollingMenu.addItem(makeItem(
+            L10n.tr("Horizontal", "横向"),
+            action: #selector(captureScrollingHorizontal)
+        ))
+        scrollingMenu.addItem(makeItem(
+            L10n.tr("Auto-scroll", "自动滚动"),
+            action: #selector(captureScrollingAuto)
+        ))
+        scrollingItem.submenu = scrollingMenu
         menu.addItem(scrollingItem)
+
+        let recordItem = NSMenuItem(
+            title: L10n.tr("Record", "录制"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        recordItem.image = NSImage(
+            systemSymbolName: "record.circle",
+            accessibilityDescription: nil
+        )
+        let recordMenu = NSMenu()
+        recordMenu.addItem(makeItem(
+            L10n.tr("Record Region…", "录制区域…"),
+            action: #selector(recordRegion)
+        ))
+        recordMenu.addItem(makeItem(
+            L10n.tr("Record Screen", "录制屏幕"),
+            action: #selector(recordScreen)
+        ))
+        recordItem.submenu = recordMenu
+        menu.addItem(recordItem)
 
         menu.addItem(.separator())
         let recentItem = NSMenuItem(title: L10n.tr("Recent", "最近截图"), action: nil, keyEquivalent: "")
@@ -127,6 +191,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(recentItem)
         let historyItem = makeItem(L10n.tr("History Browser…", "历史浏览…"), icon: "images", action: #selector(openHistoryBrowser))
         menu.addItem(historyItem)
+        let pinsItem = NSMenuItem(
+            title: L10n.tr("Pins", "贴图"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        pinsItem.image = Self.icon("pin", size: 16)
+        pinsItem.submenu = pinsMenu
+        menu.addItem(pinsItem)
 
         menu.addItem(.separator())
         let settingsItem = makeItem(L10n.tr("Settings…", "设置…"), icon: "settings", action: #selector(openSettings))
@@ -168,12 +240,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func captureRegion() { onCapture(.region) }
     @objc private func captureWindow() { onCapture(.window) }
+    @objc private func captureAppWindows() { onCapture(.appWindows) }
     @objc private func captureScreen() { onCapture(.screen) }
     @objc private func captureAllScreens() { onCapture(.allScreens) }
     @objc private func captureTimedRegion() { onCapture(.timedRegion) }
     @objc private func captureTimedScreen() { onCapture(.timedScreen) }
+    @objc private func captureTimedWindow() { onCapture(.timedWindow) }
     @objc private func captureLastRegion() { onCapture(.lastRegion) }
     @objc private func captureScrolling() { onCapture(.scrolling) }
+    @objc private func captureScrollingHorizontal() { onCapture(.scrollingHorizontal) }
+    @objc private func captureScrollingAuto() { onCapture(.scrollingAuto) }
+    @objc private func recordRegion() { onCapture(.recordRegion) }
+    @objc private func recordScreen() { onCapture(.recordScreen) }
     @objc private func openSettings() { onSettings() }
     @objc private func openHistoryBrowser() { onHistoryBrowser() }
     @objc private func quit() { onQuit() }

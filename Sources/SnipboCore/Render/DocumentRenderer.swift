@@ -57,6 +57,12 @@ public enum DocumentRenderer {
         source: CGImage
     ) {
         switch annotation.kind {
+        case .measure:
+            drawMeasure(annotation, in: context, canvasHeight: canvasHeight, crop: crop)
+            return
+        case .pixelateBrush:
+            drawPixelateBrush(annotation, in: context, canvasHeight: canvasHeight, crop: crop, source: source)
+            return
         case .pixelate:
             drawPixelate(annotation, in: context, canvasHeight: canvasHeight, crop: crop, source: source)
             return
@@ -79,11 +85,20 @@ public enum DocumentRenderer {
         switch annotation.geometry {
         case .rect(let rect):
             let cgRect = convert(rect, canvasHeight: canvasHeight, crop: crop)
+            context.setAlpha(annotation.style.opacity)
+            if let fill = annotation.style.fillColor {
+                context.setFillColor(color(fill))
+                if annotation.kind == .ellipse {
+                    context.fillEllipse(in: cgRect)
+                } else {
+                    context.fill(cgRect)
+                }
+            }
             context.setStrokeColor(color(annotation.style.color))
             context.setLineWidth(annotation.style.lineWidth)
-            context.setAlpha(annotation.style.opacity)
             context.setLineCap(.round)
             context.setLineJoin(.round)
+            applyDash(annotation.style, to: context)
             if annotation.kind == .ellipse {
                 context.strokeEllipse(in: cgRect)
             } else {
@@ -94,11 +109,16 @@ public enum DocumentRenderer {
             let endCG = convert(end, canvasHeight: canvasHeight, crop: crop)
             context.setAlpha(annotation.style.opacity)
             if annotation.kind == .arrow {
-                drawTaperedArrow(from: startCG, to: endCG, in: context, style: annotation.style)
+                if annotation.style.arrowStyle == .simple {
+                    drawSimpleArrow(from: startCG, to: endCG, in: context, style: annotation.style)
+                } else {
+                    drawTaperedArrow(from: startCG, to: endCG, in: context, style: annotation.style)
+                }
             } else {
                 context.setStrokeColor(color(annotation.style.color))
                 context.setLineWidth(annotation.style.lineWidth)
                 context.setLineCap(.round)
+                applyDash(annotation.style, to: context)
                 context.move(to: startCG)
                 context.addLine(to: endCG)
                 context.strokePath()
@@ -115,6 +135,27 @@ public enum DocumentRenderer {
                 context.addLine(to: convert(point, canvasHeight: canvasHeight, crop: crop))
             }
             context.strokePath()
+        case .polygon(let points):
+            guard let first = points.first, points.count >= 3 else { return }
+            let path = CGMutablePath()
+            path.move(to: convert(first, canvasHeight: canvasHeight, crop: crop))
+            for point in points.dropFirst() {
+                path.addLine(to: convert(point, canvasHeight: canvasHeight, crop: crop))
+            }
+            path.closeSubpath()
+            context.setAlpha(annotation.style.opacity)
+            if let fill = annotation.style.fillColor {
+                context.addPath(path)
+                context.setFillColor(color(fill))
+                context.fillPath()
+            }
+            context.addPath(path)
+            context.setStrokeColor(color(annotation.style.color))
+            context.setLineWidth(annotation.style.lineWidth)
+            context.setLineCap(.round)
+            context.setLineJoin(.round)
+            applyDash(annotation.style, to: context)
+            context.strokePath()
         case .text:
             drawText(annotation, in: context, canvasHeight: canvasHeight, crop: crop)
         case .badge, .lens:
@@ -129,22 +170,130 @@ public enum DocumentRenderer {
         canvasHeight: CGFloat,
         crop: CGRect
     ) {
-        guard case .text(let origin, _, let value) = annotation.geometry, !value.isEmpty else { return }
-        let font = CTFontCreateUIFontForLanguage(.system, annotation.style.fontSize, nil)
-            ?? CTFontCreateWithName("Helvetica" as CFString, annotation.style.fontSize, nil)
-        let attributes: [NSAttributedString.Key: Any] = [
-            NSAttributedString.Key(kCTFontAttributeName as String): font,
-            NSAttributedString.Key(kCTForegroundColorAttributeName as String): color(annotation.style.color),
-        ]
-        let attributed = NSAttributedString(string: value, attributes: attributes)
-        let line = CTLineCreateWithAttributedString(attributed)
-        var ascent: CGFloat = 0
-        _ = CTLineGetTypographicBounds(line, &ascent, nil, nil)
+        guard case .text(let origin, let width, let value) = annotation.geometry,
+              !value.isEmpty else { return }
+        let style = annotation.style
+        let layoutSize = TextLayout.size(value: value, width: width, style: style)
         let topLeft = convert(origin, canvasHeight: canvasHeight, crop: crop)
         context.saveGState()
-        context.setAlpha(annotation.style.opacity)
-        context.textPosition = CGPoint(x: topLeft.x, y: topLeft.y - ascent)
-        CTLineDraw(line, context)
+        context.setAlpha(style.opacity)
+        // Move the origin to the text box's top-left. CoreText lays the frame
+        // out downward from y = 0, which matches the annotation's top-left
+        // origin in the unflipped render context.
+        context.translateBy(x: topLeft.x, y: topLeft.y)
+
+        if let background = style.textBackground {
+            let pad: CGFloat = 3
+            let rect = CGRect(
+                x: -pad,
+                y: -layoutSize.height - pad,
+                width: layoutSize.width + pad * 2,
+                height: layoutSize.height + pad * 2
+            )
+            context.setFillColor(color(background))
+            context.addPath(CGPath(
+                roundedRect: rect,
+                cornerWidth: 4,
+                cornerHeight: 4,
+                transform: nil
+            ))
+            context.fillPath()
+        }
+
+        let attributed = TextLayout.attributedString(value, width: width, style: style)
+        let framesetter = CTFramesetterCreateWithAttributedString(attributed)
+        let path = CGPath(
+            rect: CGRect(
+                x: 0,
+                y: -layoutSize.height,
+                width: layoutSize.width,
+                height: layoutSize.height
+            ),
+            transform: nil
+        )
+        let frame = CTFramesetterCreateFrame(framesetter, CFRangeMake(0, 0), path, nil)
+        CTFrameDraw(frame, context)
+        context.restoreGState()
+    }
+
+    /// Pixelates inside a round brush stroke, so users can scrub over a face
+    /// or serial number instead of boxing it.
+    private static func drawPixelateBrush(
+        _ annotation: Annotation,
+        in context: CGContext,
+        canvasHeight: CGFloat,
+        crop: CGRect,
+        source: CGImage
+    ) {
+        guard case .path(let points) = annotation.geometry, !points.isEmpty else {
+            return
+        }
+        let style = annotation.style
+        let brushRadius = max(4, style.lineWidth * 3)
+        context.saveGState()
+        if points.count == 1, let first = points.first {
+            let center = convert(first, canvasHeight: canvasHeight, crop: crop)
+            context.addEllipse(in: CGRect(
+                x: center.x - brushRadius,
+                y: center.y - brushRadius,
+                width: brushRadius * 2,
+                height: brushRadius * 2
+            ))
+        } else {
+            let path = CGMutablePath()
+            path.move(to: convert(points[0], canvasHeight: canvasHeight, crop: crop))
+            for point in points.dropFirst() {
+                path.addLine(to: convert(point, canvasHeight: canvasHeight, crop: crop))
+            }
+            let stroked = path.copy(
+                strokingWithWidth: brushRadius * 2,
+                lineCap: .round,
+                lineJoin: .round,
+                miterLimit: 10
+            )
+            context.addPath(stroked)
+        }
+        context.clip()
+
+        let pixelRect = crop.integral
+        guard pixelRect.width >= 1, pixelRect.height >= 1,
+              let sourceCrop = source.cropping(to: pixelRect) else {
+            context.restoreGState()
+            return
+        }
+        // Keep a few blocks across the brush so the stroke still reads as
+        // pixelation instead of a flat eraser band.
+        let blockSize = max(2, min(style.pixelBlockSize, max(4, brushRadius * 0.6)))
+        let smallWidth = max(1, Int((pixelRect.width / blockSize).rounded(.up)))
+        let smallHeight = max(1, Int((pixelRect.height / blockSize).rounded(.up)))
+        guard let smallContext = CGContext(
+            data: nil,
+            width: smallWidth,
+            height: smallHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            context.restoreGState()
+            return
+        }
+        // Average while downscaling so a block carries the content's color,
+        // then upscale without smoothing for the mosaic look.
+        smallContext.interpolationQuality = .high
+        smallContext.draw(
+            sourceCrop,
+            in: CGRect(x: 0, y: 0, width: smallWidth, height: smallHeight)
+        )
+        guard let smallImage = smallContext.makeImage() else {
+            context.restoreGState()
+            return
+        }
+        context.interpolationQuality = .none
+        context.draw(
+            smallImage,
+            in: convert(crop, canvasHeight: canvasHeight, crop: crop)
+        )
         context.restoreGState()
     }
 
@@ -305,6 +454,136 @@ public enum DocumentRenderer {
         context.setStrokeColor(color(annotation.style.color))
         context.setLineWidth(max(1, annotation.style.lineWidth))
         context.strokeEllipse(in: circle)
+    }
+
+    private static func applyDash(
+        _ style: AnnotationStyle,
+        to context: CGContext
+    ) {
+        if style.lineStyle == .dashed {
+            let width = max(1, style.lineWidth)
+            context.setLineDash(
+                phase: 0,
+                lengths: [max(4, width * 2.2), max(3, width * 1.6)]
+            )
+        } else {
+            context.setLineDash(phase: 0, lengths: [])
+        }
+    }
+
+    /// Classic line arrow with a two-stroke head, for users who prefer it to
+    /// the solid tapered shape.
+    private static func drawSimpleArrow(
+        from start: CGPoint,
+        to end: CGPoint,
+        in context: CGContext,
+        style: AnnotationStyle
+    ) {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let distance = hypot(dx, dy)
+        guard distance > 1 else { return }
+        context.setStrokeColor(color(style.color))
+        context.setLineWidth(max(2, style.lineWidth))
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        applyDash(style, to: context)
+        context.move(to: start)
+        context.addLine(to: end)
+        context.strokePath()
+
+        context.setLineDash(phase: 0, lengths: [])
+        let angle = atan2(dy, dx)
+        let headLength = max(10, style.lineWidth * 3.5)
+        let spread = CGFloat.pi / 7
+        let head1 = CGPoint(
+            x: end.x - headLength * cos(angle - spread),
+            y: end.y - headLength * sin(angle - spread)
+        )
+        let head2 = CGPoint(
+            x: end.x - headLength * cos(angle + spread),
+            y: end.y - headLength * sin(angle + spread)
+        )
+        context.move(to: head1)
+        context.addLine(to: end)
+        context.addLine(to: head2)
+        context.strokePath()
+    }
+
+    /// Distance ruler: a line with end ticks and a pixel-distance badge.
+    private static func drawMeasure(
+        _ annotation: Annotation,
+        in context: CGContext,
+        canvasHeight: CGFloat,
+        crop: CGRect
+    ) {
+        guard case .line(let start, let end) = annotation.geometry else { return }
+        let a = convert(start, canvasHeight: canvasHeight, crop: crop)
+        let b = convert(end, canvasHeight: canvasHeight, crop: crop)
+        let dx = b.x - a.x
+        let dy = b.y - a.y
+        let distance = hypot(dx, dy)
+        guard distance > 1 else { return }
+        let style = annotation.style
+        let nx = -dy / distance
+        let ny = dx / distance
+
+        context.saveGState()
+        context.setAlpha(style.opacity)
+        context.setStrokeColor(color(style.color))
+        context.setLineWidth(max(1, style.lineWidth))
+        context.setLineCap(.round)
+        applyDash(style, to: context)
+        context.move(to: a)
+        context.addLine(to: b)
+        context.strokePath()
+
+        context.setLineDash(phase: 0, lengths: [])
+        let tick = max(6, style.lineWidth * 2.5)
+        context.move(to: CGPoint(x: a.x - nx * tick, y: a.y - ny * tick))
+        context.addLine(to: CGPoint(x: a.x + nx * tick, y: a.y + ny * tick))
+        context.move(to: CGPoint(x: b.x - nx * tick, y: b.y - ny * tick))
+        context.addLine(to: CGPoint(x: b.x + nx * tick, y: b.y + ny * tick))
+        context.strokePath()
+
+        let fontSize = max(11, style.fontSize * 0.7)
+        let font = CTFontCreateUIFontForLanguage(.system, fontSize, nil)
+            ?? CTFontCreateWithName("Helvetica" as CFString, fontSize, nil)
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String):
+                CGColor(red: 1, green: 1, blue: 1, alpha: 1),
+        ]
+        let text = "\(Int(distance.rounded())) px"
+        let line = CTLineCreateWithAttributedString(
+            NSAttributedString(string: text, attributes: attributes)
+        )
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        let textWidth = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, nil))
+        let badgeHeight = ascent + descent + 4
+        let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+        let offset: CGFloat = 12
+        let badgeY = mid.y + offset + badgeHeight <= canvasHeight
+            ? mid.y + offset
+            : mid.y - offset - badgeHeight
+        let badge = CGRect(
+            x: mid.x - textWidth / 2 - 4,
+            y: badgeY,
+            width: textWidth + 8,
+            height: badgeHeight
+        )
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.7))
+        context.addPath(CGPath(
+            roundedRect: badge,
+            cornerWidth: 3,
+            cornerHeight: 3,
+            transform: nil
+        ))
+        context.fillPath()
+        context.textPosition = CGPoint(x: badge.minX + 4, y: badge.minY + 2 + descent)
+        CTLineDraw(line, context)
+        context.restoreGState()
     }
 
     /// Shottr-style solid tapered arrow: rounded tail, a shaft that narrows

@@ -78,3 +78,12 @@ public enum QuitShortcut {
         Hotkey(keyCode: keyCode, modifiers: modifiers) == hotkey
     }
 }
+
+/// The standard close chord, handled locally for the same reason as ⌘Q.
+public enum CloseWindowShortcut {
+    public static let hotkey = Hotkey(keyCode: 13, modifiers: [.command])
+
+    public static func matches(keyCode: UInt32, modifiers: HotkeyModifiers) -> Bool {
+        Hotkey(keyCode: keyCode, modifiers: modifiers) == hotkey
+    }
+}

@@ -11,16 +11,25 @@ private final class ScrollingControlPanel: NSPanel {
 final class ScrollingControlController {
     private let panel: ScrollingControlPanel
     private let label = NSTextField(labelWithString: L10n.tr("Scrolling… 0 px", "滚动中… 0 px"))
+    private let autoScroll: Bool
     private var shownHeight = 0
     private var keyMonitor: Any?
     private let onStop: () -> Void
     private let onCancel: () -> Void
 
-    init(onStop: @escaping () -> Void, onCancel: @escaping () -> Void) {
+    init(
+        autoScroll: Bool = false,
+        onStop: @escaping () -> Void,
+        onCancel: @escaping () -> Void
+    ) {
         self.onStop = onStop
         self.onCancel = onCancel
+        self.autoScroll = autoScroll
+        if autoScroll {
+            label.stringValue = L10n.tr("Auto-scrolling… 0 px", "自动滚动中… 0 px")
+        }
 
-        let size = CGSize(width: 280, height: 64)
+        let size = CGSize(width: 300, height: autoScroll ? 80 : 64)
         let screen = NSScreen.screens.first(where: {
             $0.frame.contains(NSEvent.mouseLocation)
         }) ?? NSScreen.main
@@ -65,15 +74,35 @@ final class ScrollingControlController {
         cancel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(cancel)
 
-        NSLayoutConstraint.activate([
+        let hint = NSTextField(labelWithString: L10n.tr(
+            "Keep the pointer over the content",
+            "请把指针放在要滚动的内容上"
+        ))
+        hint.font = .systemFont(ofSize: 10)
+        hint.textColor = NSColor.white.withAlphaComponent(0.65)
+        hint.translatesAutoresizingMaskIntoConstraints = false
+        hint.isHidden = !autoScroll
+        content.addSubview(hint)
+
+        var constraints = [
             label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
-            label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
             label.trailingAnchor.constraint(lessThanOrEqualTo: cancel.leadingAnchor, constant: -10),
             cancel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
             cancel.centerYAnchor.constraint(equalTo: content.centerYAnchor),
             stop.trailingAnchor.constraint(equalTo: cancel.leadingAnchor, constant: -6),
             stop.centerYAnchor.constraint(equalTo: content.centerYAnchor),
-        ])
+            hint.leadingAnchor.constraint(equalTo: label.leadingAnchor),
+            hint.trailingAnchor.constraint(lessThanOrEqualTo: cancel.leadingAnchor, constant: -10),
+        ]
+        if autoScroll {
+            constraints.append(contentsOf: [
+                label.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
+                hint.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 2),
+            ])
+        } else {
+            constraints.append(label.centerYAnchor.constraint(equalTo: content.centerYAnchor))
+        }
+        NSLayoutConstraint.activate(constraints)
         panel.contentView = content
     }
 
@@ -93,7 +122,9 @@ final class ScrollingControlController {
         // backwards.
         guard height > shownHeight else { return }
         shownHeight = height
-        label.stringValue = L10n.tr("Scrolling… \(height) px", "滚动中… \(height) px")
+        label.stringValue = autoScroll
+            ? L10n.tr("Auto-scrolling… \(height) px", "自动滚动中… \(height) px")
+            : L10n.tr("Scrolling… \(height) px", "滚动中… \(height) px")
     }
 
     func close() {

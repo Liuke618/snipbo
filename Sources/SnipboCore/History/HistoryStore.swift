@@ -152,6 +152,90 @@ public actor HistoryStore {
         return entry
     }
 
+    /// Stores locally recognized text for search. Entries recorded before
+    /// indexing existed stay nil until re-indexed.
+    public func updateOCR(id: UUID, text: String) throws {
+        try updateEntry(id: id) { entry in
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            entry.ocrText = trimmed.isEmpty ? nil : trimmed
+        }
+    }
+
+    public func setTags(id: UUID, tags: [String]) throws {
+        try updateEntry(id: id) { entry in
+            entry.tags = Self.normalizedTags(tags)
+        }
+    }
+
+    public func setFavorite(id: UUID, isFavorite: Bool) throws {
+        try updateEntry(id: id) { entry in
+            entry.isFavorite = isFavorite
+        }
+    }
+
+    /// Persists the editor's crop and annotations next to the original PNG.
+    /// Unknown ids are ignored so a deleted capture cannot resurrect a file.
+    public func saveDocument(_ snapshot: DocumentSnapshot, for id: UUID) throws {
+        ensureLoaded()
+        guard entriesValue.contains(where: { $0.id == id }) else { return }
+        let data = try encoder.encode(snapshot)
+        try data.write(to: documentURL(for: id), options: .atomic)
+    }
+
+    public func document(for id: UUID) -> DocumentSnapshot? {
+        ensureLoaded()
+        guard entriesValue.contains(where: { $0.id == id }) else { return nil }
+        guard let data = try? Data(contentsOf: documentURL(for: id)) else { return nil }
+        return try? decoder.decode(DocumentSnapshot.self, from: data)
+    }
+
+    public func removeDocument(for id: UUID) {
+        try? fileManager.removeItem(at: documentURL(for: id))
+    }
+
+    public nonisolated func documentURL(for id: UUID) -> URL {
+        baseDirectory.appendingPathComponent(Self.documentFileName(for: id))
+    }
+
+    private nonisolated static func documentFileName(for id: UUID) -> String {
+        "\(id.uuidString)-document.json"
+    }
+
+    private func updateEntry(
+        id: UUID,
+        _ mutate: (inout HistoryEntry) -> Void
+    ) throws {
+        ensureLoaded()
+        guard let index = entriesValue.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        let previous = entriesValue[index]
+        mutate(&entriesValue[index])
+        guard entriesValue[index] != previous else { return }
+        do {
+            try saveIndex(entriesValue)
+        } catch {
+            entriesValue[index] = previous
+            throw error
+        }
+    }
+
+    private static func normalizedTags(_ tags: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for raw in tags {
+            var tag = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            while tag.hasPrefix("#") { tag.removeFirst() }
+            tag = String(tag.prefix(24))
+            guard !tag.isEmpty else { continue }
+            let key = tag.lowercased()
+            guard seen.insert(key).inserted else { continue }
+            result.append(tag)
+            if result.count >= 10 { break }
+        }
+        return result
+    }
+
     public func remove(id: UUID) throws {
         ensureLoaded()
         guard let index = entriesValue.firstIndex(where: { $0.id == id }) else { return }
@@ -271,6 +355,7 @@ public actor HistoryStore {
     private func removeFiles(for entry: HistoryEntry) {
         try? fileManager.removeItem(at: imageURL(for: entry))
         try? fileManager.removeItem(at: thumbnailURL(for: entry))
+        try? fileManager.removeItem(at: documentURL(for: entry.id))
     }
 
     // MARK: - Startup reconciliation
@@ -399,7 +484,13 @@ public actor HistoryStore {
         let recovered = recoverEntries(in: baseDirectory, fileManager: fileManager)
         guard !recovered.isEmpty else {
             // No index and no recognizable images: keep unknown files for a
-            // later diagnosis instead of sweeping the directory.
+            // later diagnosis, but remove editable snapshots whose capture is
+            // gone (they cannot be opened without the original image).
+            _ = removeOrphanFiles(
+                referencedBy: [],
+                in: baseDirectory,
+                fileManager: fileManager
+            )
             return LoadedState(
                 entries: [],
                 indexNeedsRewrite: false,
@@ -527,6 +618,15 @@ public actor HistoryStore {
         for url in contents {
             let name = url.lastPathComponent
             guard name != indexFileName else { continue }
+            if let documentID = documentID(from: name) {
+                guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else {
+                    continue
+                }
+                guard !entries.contains(where: { $0.id == documentID }) else { continue }
+                try? fileManager.removeItem(at: url)
+                removedAny = true
+                continue
+            }
             // Only the UUID-named images this store writes are ours to remove.
             // A user file or a quarantined corrupt index must survive.
             guard isAppGeneratedImageFileName(name) else { continue }
@@ -555,6 +655,12 @@ public actor HistoryStore {
     private static func imageID(from name: String) -> UUID? {
         guard name.hasSuffix(".png"), !name.hasSuffix("-thumb.png") else { return nil }
         return UUID(uuidString: String(name.dropLast(4)))
+    }
+
+    private static func documentID(from name: String) -> UUID? {
+        let suffix = "-document.json"
+        guard name.hasSuffix(suffix) else { return nil }
+        return UUID(uuidString: String(name.dropLast(suffix.count)))
     }
 
     private static func isAppGeneratedImageFileName(_ name: String) -> Bool {
