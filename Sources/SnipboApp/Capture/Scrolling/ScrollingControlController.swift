@@ -51,6 +51,11 @@ final class ScrollingControlController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.hasShadow = true
         panel.isReleasedWhenClosed = false
+        // The bar floats over arbitrary screen content, so it is appearance-
+        // independent: forcing dark keeps the .hudWindow material a dark plate
+        // under the light system appearance too, which is what the white label,
+        // pill, cancel text and hint are designed against.
+        panel.appearance = NSAppearance(named: .darkAqua)
 
         let content = NSView(frame: CGRect(origin: .zero, size: size))
         let background = MaterialBackgroundView(

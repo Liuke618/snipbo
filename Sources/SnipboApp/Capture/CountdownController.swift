@@ -29,6 +29,11 @@ final class CountdownController {
             height: size.height
         )
         window = SelectionOverlayWindow(screenFrame: frame)
+        // The number floats over arbitrary screen content, so it is appearance-
+        // independent: forcing dark keeps the .hudWindow material a dark plate
+        // under the light system appearance too, which is what the white digit
+        // is designed against. This sets the countdown's own window only.
+        window.appearance = NSAppearance(named: .darkAqua)
 
         let content = NSView(frame: CGRect(origin: .zero, size: size))
         content.wantsLayer = true
