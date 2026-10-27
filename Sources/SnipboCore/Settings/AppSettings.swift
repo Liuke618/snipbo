@@ -41,6 +41,14 @@ public enum RecordingFormat: String, Codable, Sendable, CaseIterable {
     }
 }
 
+/// Top-level entries of the status-bar menu that the user can hide. Settings,
+/// the customization submenu, and Quit are always shown.
+public enum StatusMenuItem: String, Codable, Sendable, CaseIterable {
+    case region, window, appWindows, screen, allScreens
+    case timed, lastRegion, presets, scrolling, record
+    case recent, history, pins
+}
+
 public enum SelectionAspectRatio: String, Codable, Sendable, CaseIterable {
     case free, square, fourThree, sixteenNine
 
@@ -137,6 +145,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Hides the menu bar icon. Settings can still be reopened from
     /// Spotlight or Finder, which activates the app and shows Settings.
     public var hideMenuBarIcon: Bool
+    /// Status-menu entries the user chose to hide.
+    public var hiddenStatusItems: Set<StatusMenuItem>
     /// Removes stored screenshots when the app quits.
     public var clearHistoryOnQuit: Bool
     /// Per-mode capture actions. Modes without an entry use the legacy
@@ -220,6 +230,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case recordingMaxSeconds
         case recordingGIFMaxWidth
         case hideMenuBarIcon
+        case hiddenStatusItems
         case clearHistoryOnQuit
         case modeActions
         case targetFileSizeKB
@@ -269,6 +280,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         recordingMaxSeconds: Int = 120,
         recordingGIFMaxWidth: Int = 800,
         hideMenuBarIcon: Bool = false,
+        hiddenStatusItems: Set<StatusMenuItem> = [],
         clearHistoryOnQuit: Bool = false,
         modeActions: [String: CaptureActions] = [:],
         targetFileSizeKB: Int = 0,
@@ -316,6 +328,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.recordingMaxSeconds = recordingMaxSeconds
         self.recordingGIFMaxWidth = recordingGIFMaxWidth
         self.hideMenuBarIcon = hideMenuBarIcon
+        self.hiddenStatusItems = hiddenStatusItems
         self.clearHistoryOnQuit = clearHistoryOnQuit
         self.modeActions = modeActions
         self.targetFileSizeKB = targetFileSizeKB
@@ -389,6 +402,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
             ?? fallback.recordingGIFMaxWidth
         hideMenuBarIcon = try container.decodeIfPresent(Bool.self, forKey: .hideMenuBarIcon)
             ?? fallback.hideMenuBarIcon
+        hiddenStatusItems = Set(
+            try container.decodeIfPresent([StatusMenuItem].self, forKey: .hiddenStatusItems)
+                ?? Array(fallback.hiddenStatusItems)
+        )
         clearHistoryOnQuit = try container.decodeIfPresent(Bool.self, forKey: .clearHistoryOnQuit)
             ?? fallback.clearHistoryOnQuit
         modeActions = try container.decodeIfPresent(
@@ -469,6 +486,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         recordingMaxSeconds: 120,
         recordingGIFMaxWidth: 800,
         hideMenuBarIcon: false,
+        hiddenStatusItems: [],
         clearHistoryOnQuit: false,
         modeActions: [:],
         targetFileSizeKB: 0,

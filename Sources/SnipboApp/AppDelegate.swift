@@ -65,7 +65,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pinsMenu: pinsController.menu,
             presetsMenu: presetsController.menu,
             lastRegionAvailable: { coordinator.canCaptureLastRegion() },
-            onQuit: { NSApp.terminate(nil) }
+            onQuit: { NSApp.terminate(nil) },
+            hiddenStatusItems: { [weak self] in self?.settings.hiddenStatusItems ?? [] },
+            onToggleStatusItem: { [weak self] id in
+                guard let self else { return }
+                var hidden = self.settings.hiddenStatusItems
+                if hidden.contains(id) {
+                    hidden.remove(id)
+                } else {
+                    hidden.insert(id)
+                }
+                self.settingsModel.settings.hiddenStatusItems = hidden
+            }
         )
         statusItemController?.setIconHidden(settings.hideMenuBarIcon)
         var handlers: [UInt32: @MainActor () -> Void] = [:]

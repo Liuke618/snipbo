@@ -26,6 +26,22 @@ struct AppSettingsTests {
         #expect(decoded == settings)
     }
 
+    @Test func testHiddenStatusItemsRoundTripAndLegacyFallback() throws {
+        var settings = AppSettings.default
+        settings.hiddenStatusItems = [.record, .pins]
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(decoded.hiddenStatusItems == [.record, .pins])
+
+        var object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        object.removeValue(forKey: "hiddenStatusItems")
+        let legacy = try JSONSerialization.data(withJSONObject: object)
+        let migrated = try JSONDecoder().decode(AppSettings.self, from: legacy)
+        #expect(migrated.hiddenStatusItems.isEmpty)
+    }
+
     @Test func testLegacyPayloadWithoutPhaseTwoFieldsUsesDefaults() throws {
         let current = try JSONEncoder().encode(AppSettings.default)
         var object = try #require(
