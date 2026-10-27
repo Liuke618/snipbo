@@ -337,6 +337,7 @@ struct HistoryBrowserView: View {
                     }
                 }
                 .labelsHidden()
+                .controlSize(.small)
                 .frame(width: 108)
 
                 Picker("", selection: $model.dateFilter) {
@@ -345,6 +346,7 @@ struct HistoryBrowserView: View {
                     }
                 }
                 .labelsHidden()
+                .controlSize(.small)
                 .frame(width: 98)
 
                 Toggle(L10n.tr("Favorites", "收藏"), isOn: $model.favoritesOnly)
@@ -359,6 +361,7 @@ struct HistoryBrowserView: View {
                 Button(L10n.tr("Clear All", "全部清空")) {
                     confirmClearAll()
                 }
+                .controlSize(.small)
                 .disabled(model.entries.isEmpty)
             }
             .padding(12)
@@ -485,7 +488,7 @@ private struct HistoryCard: View {
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.card)
                     .fill(Color(nsColor: .textBackgroundColor))
                 if let thumbnail {
                     Image(nsImage: thumbnail)
@@ -511,11 +514,17 @@ private struct HistoryCard: View {
         }
         .padding(8)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.panel)
                 .fill(Color(nsColor: .controlBackgroundColor))
                 .shadow(
-                    color: .black.opacity(isHovered ? 0.13 : 0.06),
-                    radius: isHovered ? 14 : 2,
+                    color: .black.opacity(
+                        isHovered
+                            ? Double(DesignTokens.Shadow.cardHoverOpacity)
+                            : Double(DesignTokens.Shadow.cardOpacity)
+                    ),
+                    radius: isHovered
+                        ? DesignTokens.Shadow.cardHoverRadius
+                        : DesignTokens.Shadow.cardRadius,
                     y: isHovered ? 4 : 1
                 )
         )
@@ -527,7 +536,7 @@ private struct HistoryCard: View {
                     .padding(7)
             }
         }
-        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.panel))
         .onHover { hover.isHovered = $0 }
         .onDrag(dragProvider)
         .onTapGesture(count: 2, perform: onOpen)

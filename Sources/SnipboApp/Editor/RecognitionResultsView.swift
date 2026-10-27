@@ -38,8 +38,8 @@ final class RecognitionResultsView: NSView {
             edge.widthAnchor.constraint(equalToConstant: 1),
         ])
 
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        statusLabel.font = .systemFont(ofSize: 11)
+        titleLabel.font = DesignTokens.titleFont
+        statusLabel.font = DesignTokens.metaFont
         statusLabel.textColor = .secondaryLabelColor
 
         closeButton.controlSize = .small

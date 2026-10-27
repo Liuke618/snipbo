@@ -66,7 +66,7 @@ final class SelectionOverlayView: NSView {
             let dim = NSBezierPath(rect: bounds)
             dim.append(NSBezierPath(rect: selection.rect))
             dim.windingRule = .evenOdd
-            NSColor.black.withAlphaComponent(0.45).setFill()
+            NSColor.black.withAlphaComponent(DesignTokens.overlayDim).setFill()
             dim.fill()
 
             NSColor.white.setStroke()
@@ -76,7 +76,7 @@ final class SelectionOverlayView: NSView {
             drawHandles()
             drawSizeLabel()
         } else {
-            NSColor.black.withAlphaComponent(0.45).setFill()
+            NSColor.black.withAlphaComponent(DesignTokens.overlayDim).setFill()
             NSBezierPath(rect: bounds).fill()
             drawCrosshair()
         }
@@ -105,7 +105,7 @@ final class SelectionOverlayView: NSView {
             let handle = NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5)
             NSColor.white.setFill()
             handle.fill()
-            NSColor.black.withAlphaComponent(0.4).setStroke()
+            NSColor.black.withAlphaComponent(DesignTokens.overlayHandleStroke).setStroke()
             handle.lineWidth = 0.5
             handle.stroke()
         }
@@ -161,7 +161,7 @@ final class SelectionOverlayView: NSView {
         outline.lineWidth = 1
         outline.stroke()
         // A hairline black ring keeps the lens visible over light content.
-        NSColor.black.withAlphaComponent(0.2).setStroke()
+        NSColor.black.withAlphaComponent(DesignTokens.overlayLensRing).setStroke()
         let outer = NSBezierPath(ovalIn: frame.insetBy(dx: -1, dy: -1))
         outer.lineWidth = 1
         outer.stroke()

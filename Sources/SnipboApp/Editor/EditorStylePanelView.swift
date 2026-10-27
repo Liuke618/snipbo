@@ -516,8 +516,8 @@ final class EditorStylePanelView: NSView {
         super.layout()
         layer?.shadowPath = CGPath(
             roundedRect: bounds,
-            cornerWidth: 10,
-            cornerHeight: 10,
+            cornerWidth: DesignTokens.Radius.panel,
+            cornerHeight: DesignTokens.Radius.panel,
             transform: nil
         )
     }

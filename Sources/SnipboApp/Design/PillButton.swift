@@ -61,6 +61,6 @@ final class PillButton: HoverButton {
     override var washColor: NSColor { .white }
     override var washRadius: CGFloat { bounds.height / 2 }
     override var washInset: CGFloat { 0 }
-    override var hoverAlpha: CGFloat { DesignTokens.Alpha.pressed }
+    override var hoverAlpha: CGFloat { DesignTokens.Alpha.pillHover }
     override var pressedAlpha: CGFloat { DesignTokens.Alpha.pillPress }
 }

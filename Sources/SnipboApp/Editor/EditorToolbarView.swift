@@ -105,7 +105,7 @@ final class EditorToolbarView: NSView {
         }
         let toolsStack = NSStackView(views: buttons)
         toolsStack.orientation = .horizontal
-        toolsStack.spacing = 4
+        toolsStack.spacing = DesignTokens.Spacing.icon
 
         super.init(frame: NSRect(x: 0, y: 0, width: 800, height: Self.height))
 
@@ -140,7 +140,7 @@ final class EditorToolbarView: NSView {
         redoButton.image = EditorToolbarView.icon("redo-2")
         redoButton.toolTip = L10n.tr("Redo (⇧⌘Z)", "重做 (⇧⌘Z)")
 
-        zoomLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        zoomLabel.font = DesignTokens.readoutFont
         zoomLabel.textColor = .secondaryLabelColor
         // Fixed width: the zoom digits change on every pinch tick, and letting
         // the label resize would shift the icons beside it.
