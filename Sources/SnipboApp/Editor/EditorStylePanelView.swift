@@ -399,7 +399,8 @@ final class EditorStylePanelView: NSView {
             colorWell.heightAnchor.constraint(equalToConstant: 24),
             hexLabel.widthAnchor.constraint(equalToConstant: 54),
             widthSlider.widthAnchor.constraint(equalToConstant: 100),
-            sizeValueLabel.widthAnchor.constraint(equalToConstant: 20),
+            // Wide enough for "23.5" and the three-digit text sizes.
+            sizeValueLabel.widthAnchor.constraint(equalToConstant: 34),
             fontSizeSlider.widthAnchor.constraint(equalToConstant: 100),
             fontPopup.widthAnchor.constraint(equalToConstant: 118),
             boldButton.widthAnchor.constraint(equalToConstant: 32),
