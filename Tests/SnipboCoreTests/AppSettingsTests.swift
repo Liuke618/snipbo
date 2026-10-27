@@ -540,4 +540,19 @@ struct AppSettingsTests {
         // An unsupported first preference falls through to the next supported one.
         #expect(AppLanguage.system.resolve(["ja", "zh-TW"]) == "zh-Hans")
     }
+
+    @Test func autoCheckUpdatesDefaultsTrueAndDecodesFromLegacy() throws {
+        // 缺键的旧档解码后为 true(默认开)。
+        let legacy = #"{"saveDirectory":"/tmp","format":"png"}"#
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: Data(legacy.utf8))
+        #expect(decoded.autoCheckUpdates == true)
+        var settings = AppSettings.default
+        #expect(settings.autoCheckUpdates == true)
+        settings.autoCheckUpdates = false
+        let roundtrip = try JSONDecoder().decode(
+            AppSettings.self,
+            from: JSONEncoder().encode(settings)
+        )
+        #expect(roundtrip.autoCheckUpdates == false)
+    }
 }

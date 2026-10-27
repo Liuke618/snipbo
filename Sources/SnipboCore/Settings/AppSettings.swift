@@ -147,6 +147,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var hideMenuBarIcon: Bool
     /// Status-menu entries the user chose to hide.
     public var hiddenStatusItems: Set<StatusMenuItem>
+    /// 启动时是否静默检查一次更新。手动检查不受它影响。
+    public var autoCheckUpdates: Bool
     /// Removes stored screenshots when the app quits.
     public var clearHistoryOnQuit: Bool
     /// Per-mode capture actions. Modes without an entry use the legacy
@@ -248,6 +250,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case selectionAspectRatio
         case selectionFixedWidth
         case selectionFixedHeight
+        case autoCheckUpdates
     }
 
     public init(
@@ -297,7 +300,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         selectionSnapToWindows: Bool = true,
         selectionAspectRatio: SelectionAspectRatio = .free,
         selectionFixedWidth: Int = 0,
-        selectionFixedHeight: Int = 0
+        selectionFixedHeight: Int = 0,
+        autoCheckUpdates: Bool = true
     ) {
         self.hotkey = hotkey
         self.saveDirectory = saveDirectory
@@ -346,6 +350,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.selectionAspectRatio = selectionAspectRatio
         self.selectionFixedWidth = selectionFixedWidth
         self.selectionFixedHeight = selectionFixedHeight
+        self.autoCheckUpdates = autoCheckUpdates
     }
 
     /// Decodes missing fields defensively so payloads written by earlier
@@ -450,6 +455,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             Int.self,
             forKey: .selectionFixedHeight
         ) ?? fallback.selectionFixedHeight
+        autoCheckUpdates = try container.decodeIfPresent(Bool.self, forKey: .autoCheckUpdates) ?? true
     }
 
     public static let defaultSaveDirectory = FileManager.default
