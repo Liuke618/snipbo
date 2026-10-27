@@ -95,30 +95,30 @@ final class SelectionOverlayView: NSView {
             CGPoint(x: selection.rect.minX, y: selection.rect.maxY),
             CGPoint(x: selection.rect.minX, y: selection.rect.midY),
         ]
-        NSColor.white.setFill()
         for point in points {
-            NSBezierPath(rect: CGRect(
+            let rect = CGRect(
                 x: point.x - size / 2,
                 y: point.y - size / 2,
                 width: size,
                 height: size
-            )).fill()
+            )
+            let handle = NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5)
+            NSColor.white.setFill()
+            handle.fill()
+            NSColor.black.withAlphaComponent(0.4).setStroke()
+            handle.lineWidth = 0.5
+            handle.stroke()
         }
     }
 
     private func drawSizeLabel() {
         let text = "\(Int(selection.rect.width)) × \(Int(selection.rect.height))"
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.white,
-            .backgroundColor: NSColor.black.withAlphaComponent(0.7),
-        ]
-        let size = (text as NSString).size(withAttributes: attributes)
+        let size = PillLabel.size(for: text)
         let origin = CGPoint(
             x: min(max(selection.rect.minX, 4), bounds.width - size.width - 4),
             y: max(selection.rect.minY - size.height - 6, 4)
         )
-        (text as NSString).draw(at: origin, withAttributes: attributes)
+        PillLabel.draw(text, at: origin)
     }
 
     private func drawCrosshair() {
@@ -160,6 +160,11 @@ final class SelectionOverlayView: NSView {
         let outline = NSBezierPath(ovalIn: frame)
         outline.lineWidth = 1
         outline.stroke()
+        // A hairline black ring keeps the lens visible over light content.
+        NSColor.black.withAlphaComponent(0.2).setStroke()
+        let outer = NSBezierPath(ovalIn: frame.insetBy(dx: -1, dy: -1))
+        outer.lineWidth = 1
+        outer.stroke()
     }
 
     override func mouseDown(with event: NSEvent) {
