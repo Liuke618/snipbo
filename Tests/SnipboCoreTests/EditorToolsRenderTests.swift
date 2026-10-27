@@ -151,6 +151,37 @@ struct EditorToolsRenderTests {
         #expect(arrowLine.red > 180)
     }
 
+    @Test func testDashedTaperedArrowBreaksTheShaft() throws {
+        // A dark base separates the painted shaft from the background; a white
+        // one leaves both at red 255.
+        let base = try makeSolidBase(gray: 30)
+        func painted(_ dashed: Bool) throws -> Int {
+            var document = EditDocument(image: base)
+            document.annotations = [Annotation(
+                kind: .arrow,
+                geometry: .line(start: CGPoint(x: 4, y: 20), end: CGPoint(x: 36, y: 20)),
+                style: AnnotationStyle(
+                    color: .red,
+                    lineWidth: 4,
+                    lineStyle: dashed ? .dashed : .solid
+                ),
+                zIndex: 1
+            )]
+            let rendered = try #require(DocumentRenderer.render(document))
+            var count = 0
+            for x in 6..<24 {
+                if let pixel = rendered.pixel(atX: x, y: 20), pixel.red > 180 {
+                    count += 1
+                }
+            }
+            return count
+        }
+        let solid = try painted(false)
+        let dashed = try painted(true)
+        #expect(solid == 18)
+        #expect(dashed < solid)
+    }
+
     @Test func testPolygonFillsAndHitsInside() throws {
         let base = try makeSolidBase(gray: 255)
         var document = EditDocument(image: base)

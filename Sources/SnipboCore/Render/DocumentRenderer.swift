@@ -111,6 +111,8 @@ public enum DocumentRenderer {
             if annotation.kind == .arrow {
                 if annotation.style.arrowStyle == .simple {
                     drawSimpleArrow(from: startCG, to: endCG, in: context, style: annotation.style)
+                } else if annotation.style.lineStyle == .dashed {
+                    drawDashedTaperedArrow(from: startCG, to: endCG, in: context, style: annotation.style)
                 } else {
                     drawTaperedArrow(from: startCG, to: endCG, in: context, style: annotation.style)
                 }
@@ -612,6 +614,49 @@ public enum DocumentRenderer {
     /// toward the head, and a solid triangular head, all one filled shape. The
     /// old stroked shaft + separate head triangle made a wide stroke poke out
     /// of the head like a misaligned blob.
+    /// A tapered arrow with a dashed shaft. The head stays solid so the
+    /// direction still reads; only the body breaks into dashes.
+    private static func drawDashedTaperedArrow(
+        from start: CGPoint,
+        to end: CGPoint,
+        in context: CGContext,
+        style: AnnotationStyle
+    ) {
+        let dx = end.x - start.x, dy = end.y - start.y
+        let distance = hypot(dx, dy)
+        guard distance > 1 else { return }
+        let ux = dx / distance, uy = dy / distance
+        let nx = -uy, ny = ux
+        let width = max(2, style.lineWidth)
+        let headLength = min(max(12, width * 3.4), distance * 0.55)
+        let headHalf = headLength * 0.52
+        let base = CGPoint(x: end.x - ux * headLength, y: end.y - uy * headLength)
+
+        context.setStrokeColor(color(style.color))
+        context.setLineWidth(width)
+        context.setLineCap(.round)
+        applyDash(style, to: context)
+        context.move(to: start)
+        context.addLine(to: base)
+        context.strokePath()
+
+        context.setLineDash(phase: 0, lengths: [])
+        context.setFillColor(color(style.color))
+        let head = CGMutablePath()
+        head.move(to: CGPoint(x: base.x + nx * headHalf, y: base.y + ny * headHalf))
+        head.addLine(to: end)
+        head.addLine(to: CGPoint(x: base.x - nx * headHalf, y: base.y - ny * headHalf))
+        head.closeSubpath()
+        context.addPath(head)
+        context.fillPath()
+        context.fillEllipse(in: CGRect(
+            x: start.x - width / 2,
+            y: start.y - width / 2,
+            width: width,
+            height: width
+        ))
+    }
+
     private static func drawTaperedArrow(
         from start: CGPoint,
         to end: CGPoint,
