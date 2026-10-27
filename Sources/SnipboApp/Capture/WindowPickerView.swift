@@ -57,37 +57,29 @@ final class WindowPickerView: NSView {
         let rect = target.rect.intersection(bounds)
         guard !rect.isNull, rect.width > 0, rect.height > 0 else { return }
 
-        NSColor.white.withAlphaComponent(0.08).setFill()
-        NSBezierPath(rect: rect).fill()
+        NSColor.white.withAlphaComponent(0.06).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
         NSColor.white.setStroke()
-        let border = NSBezierPath(rect: rect.insetBy(dx: 1, dy: 1))
-        border.lineWidth = 2
+        let border = NSBezierPath(
+            roundedRect: rect.insetBy(dx: 0.75, dy: 0.75),
+            xRadius: 6,
+            yRadius: 6
+        )
+        border.lineWidth = 1.5
         border.stroke()
 
         drawTitle(target.window.displayTitle, above: rect)
     }
 
     private func drawTitle(_ text: String, above rect: CGRect) {
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.white,
-        ]
-        let size = (text as NSString).size(withAttributes: attributes)
+        let size = PillLabel.size(for: text)
         let origin = CGPoint(
-            x: max(rect.minX + 6, 6),
-            y: rect.minY - size.height - 10 >= 6
-                ? rect.minY - size.height - 10
-                : rect.minY + 6
+            x: max(rect.minX + 4, 4),
+            y: rect.minY - size.height - 7 >= 4
+                ? rect.minY - size.height - 7
+                : rect.minY + 4
         )
-        let background = CGRect(
-            x: origin.x - 5,
-            y: origin.y - 3,
-            width: size.width + 10,
-            height: size.height + 6
-        )
-        NSColor.black.withAlphaComponent(0.75).setFill()
-        NSBezierPath(roundedRect: background, xRadius: 4, yRadius: 4).fill()
-        (text as NSString).draw(at: origin, withAttributes: attributes)
+        PillLabel.draw(text, at: origin)
     }
 
     override func mouseMoved(with event: NSEvent) {
