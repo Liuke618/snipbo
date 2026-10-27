@@ -40,7 +40,15 @@ final class EditorStylePanelView: NSView {
         target: nil,
         action: nil
     )
-    private let arrowPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let arrowStyleControl = NSSegmentedControl(
+        images: [
+            EditorStylePanelView.arrowIcon(filled: true),
+            EditorStylePanelView.arrowIcon(filled: false),
+        ],
+        trackingMode: .selectOne,
+        target: nil,
+        action: nil
+    )
     private let textRow = NSStackView()
     private let shapeRow = NSStackView()
     private let paletteRow = NSStackView()
@@ -76,6 +84,58 @@ final class EditorStylePanelView: NSView {
         ("Menlo", "Menlo-Regular"),
         ("Georgia", "Georgia"),
     ]
+
+    /// Two hand-drawn 16 pt template images, so the arrow-head control shows
+    /// the shape it changes instead of naming it.
+    private static func arrowIcon(filled: Bool) -> NSImage {
+        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: true) { _ in
+            let tail = CGPoint(x: 2.5, y: 13.5)
+            let tip = CGPoint(x: 13.5, y: 2.5)
+            let length = hypot(tip.x - tail.x, tip.y - tail.y)
+            let dx = (tip.x - tail.x) / length
+            let dy = (tip.y - tail.y) / length
+            let normalX = -dy
+            let normalY = dx
+            func point(at distance: CGFloat, offset: CGFloat) -> CGPoint {
+                CGPoint(
+                    x: tip.x - dx * distance + normalX * offset,
+                    y: tip.y - dy * distance + normalY * offset
+                )
+            }
+
+            NSColor.black.set()
+            if filled {
+                let shaft = NSBezierPath()
+                shaft.move(to: tail)
+                shaft.line(to: point(at: 4, offset: 0))
+                shaft.lineWidth = 2.2
+                shaft.lineCapStyle = .round
+                shaft.stroke()
+
+                let head = NSBezierPath()
+                head.move(to: tip)
+                head.line(to: point(at: 6.5, offset: 3.2))
+                head.line(to: point(at: 6.5, offset: -3.2))
+                head.close()
+                head.fill()
+            } else {
+                let path = NSBezierPath()
+                path.move(to: tail)
+                path.line(to: tip)
+                path.move(to: tip)
+                path.line(to: point(at: 5.2, offset: 3.4))
+                path.move(to: tip)
+                path.line(to: point(at: 5.2, offset: -3.4))
+                path.lineWidth = 1.6
+                path.lineCapStyle = .round
+                path.lineJoinStyle = .round
+                path.stroke()
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
 
     init(
         onColor: @escaping (RGBA) -> Void,
@@ -166,10 +226,10 @@ final class EditorStylePanelView: NSView {
         fillButton.controlSize = .small
         fillButton.toolTip = L10n.tr("Fill shape", "填充形状")
 
-        arrowPopup.addItem(withTitle: L10n.tr("Tapered", "实心箭头"))
-        arrowPopup.addItem(withTitle: L10n.tr("Simple", "线框箭头"))
-        arrowPopup.controlSize = .small
-        arrowPopup.toolTip = L10n.tr("Arrow style", "箭头样式")
+        arrowStyleControl.controlSize = .small
+        arrowStyleControl.selectedSegment = 0
+        arrowStyleControl.setToolTip(L10n.tr("Filled arrow head", "实心箭头"), forSegment: 0)
+        arrowStyleControl.setToolTip(L10n.tr("Outline arrow head", "线框箭头"), forSegment: 1)
 
         colorWell.target = self
         colorWell.action = #selector(colorChanged)
@@ -189,8 +249,8 @@ final class EditorStylePanelView: NSView {
         lineStyleControl.action = #selector(lineStyleChanged)
         fillButton.target = self
         fillButton.action = #selector(fillChanged)
-        arrowPopup.target = self
-        arrowPopup.action = #selector(arrowStyleChanged)
+        arrowStyleControl.target = self
+        arrowStyleControl.action = #selector(arrowStyleChanged)
 
         let topRow = NSStackView(views: [
             colorWell, hexLabel, widthSlider, fontSizeSlider,
@@ -214,7 +274,7 @@ final class EditorStylePanelView: NSView {
         shapeRow.spacing = 8
         shapeRow.addArrangedSubview(lineStyleControl)
         shapeRow.addArrangedSubview(fillButton)
-        shapeRow.addArrangedSubview(arrowPopup)
+        shapeRow.addArrangedSubview(arrowStyleControl)
         shapeRow.isHidden = true
 
         paletteRow.orientation = .horizontal
@@ -260,7 +320,7 @@ final class EditorStylePanelView: NSView {
             boldButton.widthAnchor.constraint(equalToConstant: 32),
             alignmentControl.widthAnchor.constraint(equalToConstant: 92),
             lineStyleControl.widthAnchor.constraint(equalToConstant: 104),
-            arrowPopup.widthAnchor.constraint(equalToConstant: 104),
+            arrowStyleControl.widthAnchor.constraint(equalToConstant: 56),
         ])
     }
 
@@ -283,7 +343,8 @@ final class EditorStylePanelView: NSView {
     func syncStyleControls(
         style: AnnotationStyle,
         isText: Bool,
-        showsShapeOptions: Bool
+        showsShapeOptions: Bool,
+        showsArrowStyle: Bool
     ) {
         widthSlider.doubleValue = style.lineWidth
         fontSizeSlider.doubleValue = style.fontSize
@@ -305,12 +366,13 @@ final class EditorStylePanelView: NSView {
         backgroundButton.state = style.textBackground != nil ? .on : .off
         lineStyleControl.selectedSegment = style.lineStyle == .dashed ? 1 : 0
         fillButton.state = style.fillColor != nil ? .on : .off
-        arrowPopup.selectItem(at: style.arrowStyle == .simple ? 1 : 0)
+        arrowStyleControl.selectedSegment = style.arrowStyle == .simple ? 1 : 0
 
         widthSlider.isHidden = isText
         fontSizeSlider.isHidden = !isText
         textRow.isHidden = !isText
         shapeRow.isHidden = !showsShapeOptions
+        arrowStyleControl.isHidden = !showsArrowStyle
         let target: CGFloat = (isText || showsShapeOptions) ? 112 : 72
         if heightConstraint.constant != target {
             heightConstraint.constant = target
@@ -356,7 +418,7 @@ final class EditorStylePanelView: NSView {
     }
 
     @objc private func arrowStyleChanged() {
-        onArrowStyle(arrowPopup.indexOfSelectedItem == 1 ? .simple : .tapered)
+        onArrowStyle(arrowStyleControl.selectedSegment == 1 ? .simple : .tapered)
     }
 }
 

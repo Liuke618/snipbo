@@ -272,10 +272,15 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let shapeSelected = controller.selectedKind.map { shapeKinds.contains($0) } ?? false
         let showsShapeOptions = !isText
             && (shapeTools.contains(controller.tool) || shapeSelected)
+        // Only arrows have a head style: show the control for an arrow
+        // selection, or while the arrow tool draws without a selection.
+        let showsArrowStyle = controller.selectedKind == .arrow
+            || (controller.selectedStyle == nil && controller.tool == .arrow)
         stylePanel?.syncStyleControls(
             style: editedStyle,
             isText: isText,
-            showsShapeOptions: showsShapeOptions
+            showsShapeOptions: showsShapeOptions,
+            showsArrowStyle: showsArrowStyle
         )
         stylePanel?.isHidden = controller.selectedStyle == nil
             && (controller.tool == .select || controller.tool == .crop)
