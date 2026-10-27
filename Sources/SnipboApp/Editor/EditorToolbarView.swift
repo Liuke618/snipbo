@@ -20,7 +20,7 @@ extension NSColor {
 @MainActor
 final class EditorToolbarView: NSView {
     /// Shottr-style standalone tool buttons, one per `EditorTool`.
-    private var toolButtons: [ToolButton] = []
+    private var toolButtons: [HoverButton] = []
     private let redactButton = NSButton()
     private let recognizeButton = NSButton()
     private let pinButton = NSButton()
@@ -30,7 +30,7 @@ final class EditorToolbarView: NSView {
     private let redoButton = NSButton()
     /// The size readout doubles as the resize entry point: clicking the size
     /// that sits just before the zoom percentage opens the image options.
-    private let sizeButton = NSButton()
+    private let sizeButton = ReadoutPillButton()
     private let zoomLabel = NSTextField(labelWithString: "100%")
 
     /// Loads a bundled Lucide SVG as a monochrome template image.
@@ -85,10 +85,10 @@ final class EditorToolbarView: NSView {
         // text buttons when Lucide icons are not bundled (harness contexts).
         // Buttons are fully built before `super.init`; target/action, which
         // capture self, are attached afterwards.
-        let allIcons = EditorTool.allCases.map { EditorToolbarView.icon($0.iconName, size: 15) }
+        let allIcons = EditorTool.allCases.map { EditorToolbarView.icon($0.iconName, size: 16) }
         let iconsUsable = allIcons.allSatisfy { $0 != nil }
-        let buttons: [ToolButton] = EditorTool.allCases.enumerated().map { index, tool in
-            let button = ToolButton(frame: .zero)
+        let buttons: [HoverButton] = EditorTool.allCases.enumerated().map { index, tool in
+            let button = HoverButton(frame: .zero)
             button.tag = index
             if iconsUsable, let image = allIcons[index] {
                 button.image = image
@@ -145,11 +145,9 @@ final class EditorToolbarView: NSView {
         zoomLabel.alignment = .right
         zoomLabel.widthAnchor.constraint(equalToConstant: 40).isActive = true
 
-        sizeButton.isBordered = false
-        sizeButton.imagePosition = .noImage
-        sizeButton.setButtonType(.momentaryChange)
-        sizeButton.focusRingType = .none
         sizeButton.attributedTitle = Self.readoutTitle("0×0 px")
+        sizeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 96).isActive = true
+        sizeButton.heightAnchor.constraint(equalToConstant: 22).isActive = true
         sizeButton.toolTip = L10n.tr(
             "Resize image · logical-point readouts",
             "调整图像大小 · 逻辑点读数"
@@ -184,8 +182,14 @@ final class EditorToolbarView: NSView {
         sizeButton.target = self
         sizeButton.action = #selector(showOptions)
 
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        let background = MaterialBackgroundView(material: .headerView)
+        addSubview(background, positioned: .below, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            background.leadingAnchor.constraint(equalTo: leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: trailingAnchor),
+            background.topAnchor.constraint(equalTo: topAnchor),
+            background.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
         // Leading: window actions + tools. Trailing: recognize, undo/redo, and
         // the size/zoom readouts. The spacer stretches so the trailing group
@@ -194,13 +198,13 @@ final class EditorToolbarView: NSView {
             copyButton, saveButton, pinButton, Self.separator(), toolsStack,
         ])
         leading.orientation = .horizontal
-        leading.spacing = 6
+        leading.spacing = DesignTokens.Spacing.tight
         let trailing = NSStackView(views: [
             redactButton, recognizeButton, undoButton, redoButton, Self.separator(),
             sizeButton, zoomLabel,
         ])
         trailing.orientation = .horizontal
-        trailing.spacing = 6
+        trailing.spacing = DesignTokens.Spacing.tight
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
         spacer.setContentCompressionResistancePriority(.init(1), for: .horizontal)
@@ -247,7 +251,7 @@ final class EditorToolbarView: NSView {
     /// Matches the readout typography while staying clickable.
     private static func readoutTitle(_ text: String) -> NSAttributedString {
         NSAttributedString(string: text, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+            .font: DesignTokens.readoutFont,
             .foregroundColor: NSColor.secondaryLabelColor,
         ])
     }
@@ -313,57 +317,29 @@ final class EditorToolbarView: NSView {
     @objc private func redo() { onRedo() }
 }
 
-/// Borderless tool button that paints its own rounded background when hovered
-/// or selected — the Shottr toolbar look. The icon stays a template so it
-/// follows the appearance.
+/// The size readout as a compact capsule; clicking it still opens the image
+/// options popover.
 @MainActor
-private final class ToolButton: NSButton {
-    var showsSelected = false {
-        didSet { needsDisplay = true }
-    }
-    private var isHovered = false
-    private var trackingArea: NSTrackingArea?
-
+private final class ReadoutPillButton: NSButton {
     override init(frame: NSRect) {
         super.init(frame: frame)
         isBordered = false
-        imagePosition = .imageOnly
+        imagePosition = .noImage
         setButtonType(.momentaryChange)
+        focusRingType = .none
         wantsLayer = true
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHovered = true
-        needsDisplay = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovered = false
-        needsDisplay = true
-    }
-
     override func draw(_ dirtyRect: NSRect) {
-        if showsSelected || isHovered {
-            NSColor.labelColor.withAlphaComponent(showsSelected ? 0.16 : 0.09).setFill()
-            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6).fill()
-        }
+        NSColor.labelColor.withAlphaComponent(0.06).setFill()
+        NSBezierPath(
+            roundedRect: bounds,
+            xRadius: DesignTokens.Radius.control,
+            yRadius: DesignTokens.Radius.control
+        ).fill()
         super.draw(dirtyRect)
     }
 }

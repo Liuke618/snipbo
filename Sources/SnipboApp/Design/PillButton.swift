@@ -55,7 +55,14 @@ final class PillButton: NSButton {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let alpha = isHovered ? DesignTokens.Alpha.pressed : DesignTokens.Alpha.pillOnDark
+        let alpha: CGFloat
+        if isHighlighted {
+            alpha = DesignTokens.Alpha.pillPress
+        } else if isHovered {
+            alpha = DesignTokens.Alpha.pressed
+        } else {
+            alpha = DesignTokens.Alpha.pillOnDark
+        }
         NSColor.white.withAlphaComponent(alpha).setFill()
         NSBezierPath(
             roundedRect: bounds,

@@ -25,6 +25,8 @@ enum DesignTokens {
         static let pressed: CGFloat = 0.22
         /// Capsule buttons on dark HUD surfaces.
         static let pillOnDark: CGFloat = 0.16
+        /// Capsule press on dark HUD surfaces.
+        static let pillPress: CGFloat = 0.28
     }
 
     enum Shadow {

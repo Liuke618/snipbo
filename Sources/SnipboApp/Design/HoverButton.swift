@@ -48,8 +48,15 @@ class HoverButton: NSButton {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        if showsSelected || isHovered {
-            let alpha = showsSelected ? DesignTokens.Alpha.selected : DesignTokens.Alpha.hover
+        if isHighlighted || showsSelected || isHovered {
+            let alpha: CGFloat
+            if isHighlighted {
+                alpha = DesignTokens.Alpha.pressed
+            } else if showsSelected {
+                alpha = DesignTokens.Alpha.selected
+            } else {
+                alpha = DesignTokens.Alpha.hover
+            }
             NSColor.labelColor.withAlphaComponent(alpha).setFill()
             NSBezierPath(
                 roundedRect: bounds.insetBy(dx: 1, dy: 1),
