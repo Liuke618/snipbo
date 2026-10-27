@@ -28,9 +28,7 @@ final class RecognitionResultsView: NSView {
             background.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        let edge = NSView()
-        edge.wantsLayer = true
-        edge.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        let edge = SeparatorEdgeView(frame: .zero)
         edge.translatesAutoresizingMaskIntoConstraints = false
         addSubview(edge)
         NSLayoutConstraint.activate([
@@ -129,5 +127,22 @@ final class RecognitionResultsView: NSView {
 
     @objc private func closeAction() {
         onClose?()
+    }
+}
+
+/// The panel's 1pt leading edge. `separatorColor` is a semantic colour, so it is
+/// resolved on every display instead of being baked into the layer's
+/// `backgroundColor` once at init, where it would keep the previous appearance's
+/// value after a light/dark switch.
+@MainActor
+private final class SeparatorEdgeView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.separatorColor.setFill()
+        bounds.fill()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 }

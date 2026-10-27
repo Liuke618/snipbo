@@ -1,23 +1,51 @@
 import AppKit
 
 /// Capsule button for dark HUD surfaces (recording / scrolling controls).
+///
+/// `filled` is the primary action: a white capsule that is visible at rest.
+/// `plain` is the quiet second action (Cancel): the same 22pt capsule geometry
+/// and the same hover/press washes, but no resting background and a dimmed
+/// title. Both styles keep the full capsule as the hit target — a borderless
+/// `NSButton` sized to its title would otherwise shrink the clickable area.
 @MainActor
-final class PillButton: NSButton {
-    private var isHovered = false
-    private var trackingArea: NSTrackingArea?
+final class PillButton: HoverButton {
+    enum Style {
+        case filled
+        case plain
 
-    init(title: String, target: AnyObject?, action: Selector?) {
+        var titleColor: NSColor {
+            switch self {
+            case .filled: return .white
+            case .plain: return NSColor.white.withAlphaComponent(0.62)
+            }
+        }
+
+        /// A plain pill has no resting background; only the washes show.
+        var restAlpha: CGFloat? {
+            switch self {
+            case .filled: return DesignTokens.Alpha.pillOnDark
+            case .plain: return nil
+            }
+        }
+    }
+
+    private static let titleFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+
+    init(
+        title: String,
+        target: AnyObject?,
+        action: Selector?,
+        style: Style = .filled
+    ) {
         super.init(frame: .zero)
         self.target = target
         self.action = action
-        isBordered = false
-        setButtonType(.momentaryChange)
-        focusRingType = .none
+        imagePosition = .noImage
         attributedTitle = NSAttributedString(string: title, attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-            .foregroundColor: NSColor.white,
+            .font: Self.titleFont,
+            .foregroundColor: style.titleColor,
         ])
-        wantsLayer = true
+        baseFillAlpha = style.restAlpha
     }
 
     @available(*, unavailable)
@@ -25,50 +53,14 @@ final class PillButton: NSButton {
 
     override var intrinsicContentSize: NSSize {
         let text = (title as NSString).size(withAttributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .font: Self.titleFont,
         ])
         return NSSize(width: text.width + 24, height: 22)
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHovered = true
-        needsDisplay = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovered = false
-        needsDisplay = true
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let alpha: CGFloat
-        if isHighlighted {
-            alpha = DesignTokens.Alpha.pillPress
-        } else if isHovered {
-            alpha = DesignTokens.Alpha.pressed
-        } else {
-            alpha = DesignTokens.Alpha.pillOnDark
-        }
-        NSColor.white.withAlphaComponent(alpha).setFill()
-        NSBezierPath(
-            roundedRect: bounds,
-            xRadius: bounds.height / 2,
-            yRadius: bounds.height / 2
-        ).fill()
-        super.draw(dirtyRect)
-    }
+    override var washColor: NSColor { .white }
+    override var washRadius: CGFloat { bounds.height / 2 }
+    override var washInset: CGFloat { 0 }
+    override var hoverAlpha: CGFloat { DesignTokens.Alpha.pressed }
+    override var pressedAlpha: CGFloat { DesignTokens.Alpha.pillPress }
 }

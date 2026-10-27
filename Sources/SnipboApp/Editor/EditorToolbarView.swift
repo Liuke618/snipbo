@@ -99,6 +99,8 @@ final class EditorToolbarView: NSView {
             }
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
             button.toolTip = tool.hotKeyLetter.map { "\(tool.title) (\($0.uppercased()))" } ?? tool.title
+            // Icon-only buttons would otherwise be announced as "button".
+            button.setAccessibilityLabel(tool.title)
             return button
         }
         let toolsStack = NSStackView(views: buttons)
@@ -315,31 +317,4 @@ final class EditorToolbarView: NSView {
     @objc private func saveAction() { onSave() }
     @objc private func undo() { onUndo() }
     @objc private func redo() { onRedo() }
-}
-
-/// The size readout as a compact capsule; clicking it still opens the image
-/// options popover.
-@MainActor
-private final class ReadoutPillButton: NSButton {
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        isBordered = false
-        imagePosition = .noImage
-        setButtonType(.momentaryChange)
-        focusRingType = .none
-        wantsLayer = true
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.labelColor.withAlphaComponent(0.06).setFill()
-        NSBezierPath(
-            roundedRect: bounds,
-            xRadius: DesignTokens.Radius.control,
-            yRadius: DesignTokens.Radius.control
-        ).fill()
-        super.draw(dirtyRect)
-    }
 }

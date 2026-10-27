@@ -51,19 +51,14 @@ final class ScrollingControlController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.hasShadow = true
         panel.isReleasedWhenClosed = false
-        // The bar floats over arbitrary screen content, so it is appearance-
-        // independent: forcing dark keeps the .hudWindow material a dark plate
-        // under the light system appearance too, which is what the white label,
-        // pill, cancel text and hint are designed against.
-        panel.appearance = NSAppearance(named: .darkAqua)
 
+        // The bar floats over arbitrary screen content, so its plate is a fixed
+        // dark fill rather than a material: inside a transparent borderless panel
+        // a material has nothing to blur and renders as an opaque plate that is
+        // light in the light appearance. The fixed plate keeps the white label,
+        // pill, cancel text and hint readable under any system appearance.
         let content = NSView(frame: CGRect(origin: .zero, size: size))
-        let background = MaterialBackgroundView(
-            material: .hudWindow,
-            cornerRadius: DesignTokens.Radius.panel
-        )
-        background.layer?.borderWidth = 1
-        background.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+        let background = HudBackgroundView(cornerRadius: DesignTokens.Radius.hud)
         content.addSubview(background)
         NSLayoutConstraint.activate([
             background.leadingAnchor.constraint(equalTo: content.leadingAnchor),
@@ -74,6 +69,9 @@ final class ScrollingControlController {
 
         label.textColor = .white
         label.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        // A label that cannot fit the bar ends with "…" rather than being cut
+        // off under the Stop pill.
+        label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(label)
 
@@ -85,11 +83,12 @@ final class ScrollingControlController {
         stop.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stop)
 
-        let cancel = NSButton(title: L10n.tr("Cancel", "取消"), target: self, action: #selector(cancelAction))
-        cancel.isBordered = false
-        cancel.font = .systemFont(ofSize: 11)
-        cancel.contentTintColor = NSColor.white.withAlphaComponent(0.62)
-        cancel.focusRingType = .none
+        let cancel = PillButton(
+            title: L10n.tr("Cancel", "取消"),
+            target: self,
+            action: #selector(cancelAction),
+            style: .plain
+        )
         cancel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(cancel)
 
@@ -105,7 +104,10 @@ final class ScrollingControlController {
 
         var constraints = [
             label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: cancel.leadingAnchor, constant: -10),
+            // Bound to the Stop pill rather than to Cancel: the capsule sits in
+            // front of the label, so a long localized string truncates with "…"
+            // before it instead of being clipped by the pill.
+            label.trailingAnchor.constraint(lessThanOrEqualTo: stop.leadingAnchor, constant: -10),
             cancel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
             cancel.centerYAnchor.constraint(equalTo: content.centerYAnchor),
             stop.trailingAnchor.constraint(equalTo: cancel.leadingAnchor, constant: -6),

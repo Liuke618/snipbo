@@ -74,7 +74,10 @@ final class WindowPickerView: NSView {
     private func drawTitle(_ text: String, above rect: CGRect) {
         let size = PillLabel.size(for: text)
         let origin = CGPoint(
-            x: max(rect.minX + 4, 4),
+            // Clamped on both axes like the selection size pill: a title on a
+            // window at the right edge must stay inside the screen instead of
+            // running off it.
+            x: min(max(rect.minX + 4, 4), bounds.width - size.width - 4),
             y: rect.minY - size.height - 7 >= 4
                 ? rect.minY - size.height - 7
                 : rect.minY + 4

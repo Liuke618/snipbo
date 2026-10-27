@@ -135,6 +135,10 @@ struct SettingsView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .textSelection(.enabled)
+                            // The visible path is truncated and selectable, so
+                            // copying yields "…/…"; the tooltip carries the full
+                            // path.
+                            .help(model.settings.saveDirectory)
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)

@@ -29,19 +29,18 @@ final class CountdownController {
             height: size.height
         )
         window = SelectionOverlayWindow(screenFrame: frame)
-        // The number floats over arbitrary screen content, so it is appearance-
-        // independent: forcing dark keeps the .hudWindow material a dark plate
-        // under the light system appearance too, which is what the white digit
-        // is designed against. This sets the countdown's own window only.
-        window.appearance = NSAppearance(named: .darkAqua)
 
         let content = NSView(frame: CGRect(origin: .zero, size: size))
         content.wantsLayer = true
 
-        let background = MaterialBackgroundView(
-            material: .hudWindow,
-            cornerRadius: 16
-        )
+        // The number floats over arbitrary screen content, so the plate is a
+        // fixed dark fill rather than a material: inside a transparent
+        // borderless window a material has nothing to blur and renders as an
+        // opaque plate that is light in the light appearance. The fixed fill
+        // keeps the white digit readable under any system appearance, and the
+        // window stays appearance-independent (the selection overlay shares this
+        // window class).
+        let background = HudBackgroundView(cornerRadius: DesignTokens.Radius.hudLarge)
         content.addSubview(background)
         NSLayoutConstraint.activate([
             background.leadingAnchor.constraint(equalTo: content.leadingAnchor),
