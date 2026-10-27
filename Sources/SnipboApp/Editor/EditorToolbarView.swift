@@ -141,7 +141,7 @@ final class EditorToolbarView: NSView {
         redoButton.toolTip = L10n.tr("Redo (⇧⌘Z)", "重做 (⇧⌘Z)")
 
         zoomLabel.font = DesignTokens.readoutFont
-        zoomLabel.textColor = .secondaryLabelColor
+        zoomLabel.textColor = DesignTokens.Color.textSecondary
         // Fixed width: the zoom digits change on every pinch tick, and letting
         // the label resize would shift the icons beside it.
         zoomLabel.alignment = .right
@@ -184,7 +184,7 @@ final class EditorToolbarView: NSView {
         sizeButton.target = self
         sizeButton.action = #selector(showOptions)
 
-        let background = MaterialBackgroundView(material: .headerView)
+        let background = MaterialBackgroundView(bottomHairline: true)
         addSubview(background, positioned: .below, relativeTo: nil)
         NSLayoutConstraint.activate([
             background.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -195,7 +195,9 @@ final class EditorToolbarView: NSView {
 
         // Leading: window actions + tools. Trailing: recognize, undo/redo, and
         // the size/zoom readouts. The spacer stretches so the trailing group
-        // hugs the right edge at any window width.
+        // hugs the right edge at any window width. The leading inset clears
+        // the traffic lights, which sit inside this strip since the window is
+        // full-size-content (72 ≈ 3 buttons + system padding + breathing room).
         let leading = NSStackView(views: [
             copyButton, saveButton, pinButton, Self.separator(), toolsStack,
         ])
@@ -219,7 +221,7 @@ final class EditorToolbarView: NSView {
         addSubview(spacer)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: Self.height),
-            leading.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            leading.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 72),
             leading.centerYAnchor.constraint(equalTo: centerYAnchor),
             trailing.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             trailing.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -232,6 +234,13 @@ final class EditorToolbarView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// The transparent title bar leaves no native drag strip, so the toolbar
+    /// itself drags the window. Controls inside the bar are hit first and
+    /// never get here, and the canvas below keeps handling its own clicks.
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
 
     /// Thin vertical separator for the toolbar groups.
     private static func separator() -> NSView {
@@ -254,7 +263,7 @@ final class EditorToolbarView: NSView {
     private static func readoutTitle(_ text: String) -> NSAttributedString {
         NSAttributedString(string: text, attributes: [
             .font: DesignTokens.readoutFont,
-            .foregroundColor: NSColor.secondaryLabelColor,
+            .foregroundColor: DesignTokens.Color.textSecondary,
         ])
     }
 

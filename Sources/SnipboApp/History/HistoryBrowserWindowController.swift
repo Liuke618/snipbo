@@ -16,6 +16,7 @@ final class HistoryBrowserWindowController: NSWindowController {
         )
         window.title = L10n.tr("Screenshot History", "截图历史")
         window.isReleasedWhenClosed = false
+        window.backgroundColor = DesignTokens.Color.canvasBase
         window.contentViewController = NSHostingController(
             rootView: HistoryBrowserView(model: model, openInEditor: openInEditor)
         )
@@ -489,7 +490,7 @@ private struct HistoryCard: View {
         VStack(spacing: 6) {
             ZStack {
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.card)
-                    .fill(Color(nsColor: .textBackgroundColor))
+                    .fill(Color(nsColor: DesignTokens.Color.surface))
                 if let thumbnail {
                     Image(nsImage: thumbnail)
                         .resizable()
@@ -515,7 +516,7 @@ private struct HistoryCard: View {
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: DesignTokens.Radius.panel)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(Color(nsColor: DesignTokens.Color.raised))
                 .shadow(
                     color: .black.opacity(
                         isHovered
@@ -527,6 +528,14 @@ private struct HistoryCard: View {
                         : DesignTokens.Shadow.cardRadius,
                     y: isHovered ? 4 : 1
                 )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.panel)
+                .strokeBorder(
+                    Color(nsColor: DesignTokens.Color.accent),
+                    lineWidth: 1
+                )
+                .opacity(isHovered ? 0.55 : 0)
         )
         .overlay(alignment: .topTrailing) {
             if entry.isFavorite {

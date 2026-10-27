@@ -19,7 +19,7 @@ final class RecognitionResultsView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
 
-        let background = MaterialBackgroundView(material: .sidebar)
+        let background = MaterialBackgroundView()
         addSubview(background)
         NSLayoutConstraint.activate([
             background.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -40,7 +40,7 @@ final class RecognitionResultsView: NSView {
 
         titleLabel.font = DesignTokens.titleFont
         statusLabel.font = DesignTokens.metaFont
-        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.textColor = DesignTokens.Color.textSecondary
 
         closeButton.controlSize = .small
         copyButton.controlSize = .small
@@ -130,19 +130,11 @@ final class RecognitionResultsView: NSView {
     }
 }
 
-/// The panel's 1pt leading edge. `separatorColor` is a semantic colour, so it is
-/// resolved on every display instead of being baked into the layer's
-/// `backgroundColor` once at init, where it would keep the previous appearance's
-/// value after a light/dark switch.
+/// The panel's 1pt leading edge, painted from the token stroke.
 @MainActor
 private final class SeparatorEdgeView: NSView {
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.separatorColor.setFill()
+        DesignTokens.Color.stroke.setFill()
         bounds.fill()
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        needsDisplay = true
     }
 }

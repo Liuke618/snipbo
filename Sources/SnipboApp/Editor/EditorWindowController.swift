@@ -71,7 +71,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         self.onClose = onClose
         let window = NSWindow(
             contentRect: CGRect(x: 0, y: 0, width: 1000, height: 720),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -121,6 +121,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             self.window?.makeFirstResponder(self.canvas)
         }
         window.title = "Snipbo"
+        // Shottr-style chrome: no separate title-bar strip — the toolbar fills
+        // the top of the window and hosts the traffic lights at its left edge.
+        // The title stays set so Mission Control still names the window.
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.backgroundColor = DesignTokens.Color.canvasBase
         window.center()
         window.delegate = self
         controller.canvas = canvas
@@ -143,7 +149,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = true
-        scrollView.backgroundColor = .windowBackgroundColor
+        scrollView.backgroundColor = DesignTokens.Color.canvasBase
         scrollView.documentView = canvas
 
         let body = bodyView
@@ -217,9 +223,32 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
         window?.layoutIfNeeded()
+        centerTrafficLights()
         fitToWindow()
         installKeyMonitor()
         window?.makeFirstResponder(canvas)
+    }
+
+    /// Vertically centers the native traffic-light buttons in the toolbar
+    /// strip. With `.fullSizeContentView` the buttons stay in the system
+    /// titlebar layer, whose default centering follows the hidden 28pt title
+    /// bar rather than the 36pt toolbar; AppKit also re-lays them out on
+    /// key-state changes, so the fix is reapplied from the delegate callbacks.
+    private func centerTrafficLights() {
+        guard let window else { return }
+        let buttons = [
+            window.standardWindowButton(.closeButton),
+            window.standardWindowButton(.miniaturizeButton),
+            window.standardWindowButton(.zoomButton),
+        ].compactMap { $0 }
+        for button in buttons {
+            guard let container = button.superview else { continue }
+            let height = button.bounds.height
+            let targetY = (EditorToolbarView.height - height) / 2
+            button.frame.origin.y = container.isFlipped
+                ? targetY
+                : container.bounds.height - targetY - height
+        }
     }
 
     /// Opens the window hugging the capture's displayed size: the image is
@@ -338,7 +367,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidResize(_ notification: Notification) {
+        centerTrafficLights()
         clampStylePanel()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        centerTrafficLights()
+    }
+
+    func windowDidBecomeMain(_ notification: Notification) {
+        centerTrafficLights()
     }
 
     /// Debounces snapshot writes while the user draws or adjusts a crop.

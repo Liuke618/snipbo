@@ -37,14 +37,16 @@ class HoverButton: NSButton {
 
     // MARK: Paint hooks
 
-    /// Colour of every background wash.
-    var washColor: NSColor { .labelColor }
+    /// Colour of the hover and press washes.
+    var washColor: NSColor { .white }
+    /// Colour of the selected wash; the violet accent marks the active tool.
+    var selectedWashColor: NSColor { DesignTokens.Color.accentSoft }
     /// Corner radius of the wash; capsules override with half the height.
     var washRadius: CGFloat { DesignTokens.Radius.control }
     /// How far the wash sits inside the bounds.
     var washInset: CGFloat { 1 }
     var hoverAlpha: CGFloat { DesignTokens.Alpha.hover }
-    var selectedAlpha: CGFloat { DesignTokens.Alpha.selected }
+    var selectedAlpha: CGFloat = 1
     var pressedAlpha: CGFloat { DesignTokens.Alpha.pressed }
 
     // MARK: Tracking
@@ -83,19 +85,19 @@ class HoverButton: NSButton {
     // MARK: Drawing
 
     override func draw(_ dirtyRect: NSRect) {
-        let alpha: CGFloat?
+        let wash: (color: NSColor, alpha: CGFloat)?
         if isHighlighted {
-            alpha = pressedAlpha
+            wash = (washColor, pressedAlpha)
         } else if showsSelected {
-            alpha = selectedAlpha
+            wash = (selectedWashColor, selectedAlpha)
         } else if isHovered {
-            alpha = hoverAlpha
+            wash = (washColor, hoverAlpha)
         } else {
-            alpha = baseFillAlpha
+            wash = baseFillAlpha.map { (washColor, $0) }
         }
 
-        if let alpha {
-            washColor.withAlphaComponent(alpha).setFill()
+        if let wash {
+            wash.color.withAlphaComponent(wash.alpha).setFill()
             NSBezierPath(
                 roundedRect: bounds.insetBy(dx: washInset, dy: washInset),
                 xRadius: washRadius,

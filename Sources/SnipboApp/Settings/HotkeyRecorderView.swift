@@ -63,9 +63,9 @@ final class HotkeyRecorderNSView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let rect = bounds.insetBy(dx: 1, dy: 1)
         let path = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
-        NSColor.controlBackgroundColor.setFill()
+        DesignTokens.Color.raised.setFill()
         path.fill()
-        NSColor.separatorColor.setStroke()
+        DesignTokens.Color.stroke.setStroke()
         path.lineWidth = 1
         path.stroke()
 
@@ -73,13 +73,13 @@ final class HotkeyRecorderNSView: NSView {
         let textColor: NSColor
         if recording {
             text = L10n.tr("Press a shortcut…", "按下快捷键…")
-            textColor = .labelColor
+            textColor = DesignTokens.Color.textPrimary
         } else if let hotkey {
             text = hotkey.displayString
-            textColor = .labelColor
+            textColor = DesignTokens.Color.textPrimary
         } else {
             text = L10n.tr("Off — record to enable", "未设置 — 点击录制")
-            textColor = .secondaryLabelColor
+            textColor = DesignTokens.Color.textSecondary
         }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 13),

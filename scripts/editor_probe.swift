@@ -520,14 +520,16 @@ struct EditorProbe {
     }
 
     /// Bounding box (bottom-up bitmap coordinates) of "blue" pixels: the
-    /// stripes drawn by makeImage stand out against the light-gray fill.
+    /// stripes drawn by makeImage stand out against the light-gray fill. The
+    /// 0.65 threshold keeps the violet selected-tool wash in the toolbar
+    /// (blue−red ≈ 0.51) out of the box.
     static func blueBounds(_ rep: NSBitmapImageRep) -> (minX: Int, maxX: Int, minY: Int, maxY: Int) {
         var minX = Int.max, maxX = -1, minY = Int.max, maxY = -1
         for y in 0..<rep.pixelsHigh {
             for x in 0..<rep.pixelsWide {
                 guard let r = rep.colorAt(x: x, y: y) else { continue }
                 let red = r.redComponent, blue = r.blueComponent
-                if blue - red > 0.25 {
+                if blue - red > 0.65 {
                     minX = min(minX, x); maxX = max(maxX, x)
                     minY = min(minY, y); maxY = max(maxY, y)
                 }
@@ -545,7 +547,7 @@ struct EditorProbe {
         )!
         context.setFillColor(CGColor(red: 0.95, green: 0.95, blue: 0.95, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-        context.setFillColor(CGColor(red: 0.2, green: 0.4, blue: 0.8, alpha: 1))
+        context.setFillColor(CGColor(red: 0.1, green: 0.35, blue: 0.9, alpha: 1))
         // Stripes touch both edges so the blue bounding box equals the canvas.
         for row in stride(from: 0, to: height, by: 80) {
             context.fill(CGRect(x: 0, y: row, width: width, height: 40))

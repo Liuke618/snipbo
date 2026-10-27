@@ -37,7 +37,9 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             tabBar
-            Divider()
+            Rectangle()
+                .fill(Color(nsColor: DesignTokens.Color.stroke))
+                .frame(height: 1)
             Group {
                 switch tabModel.tab {
                 case .general: generalTab
@@ -52,7 +54,7 @@ struct SettingsView: View {
             }
             // Fixed content height: switching tabs swaps rows in place instead
             // of resizing the window, which read as constant jumpy resizing.
-            // 536 pt fits the tallest tab (General with appearance and quality).
+            // 536 pt fits the tallest tab (General with folder and quality).
             .padding(20)
             .frame(width: 560, height: 536, alignment: .top)
         }
@@ -72,6 +74,7 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
+        .background(Color(nsColor: DesignTokens.Color.surface))
     }
 
     private func tabButton(_ item: SettingsTab) -> some View {
@@ -90,9 +93,13 @@ struct SettingsView: View {
             .frame(width: 60, height: 48)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.primary.opacity(selected ? 0.08 : (hovered ? 0.06 : 0)))
+                    .fill(
+                        selected
+                            ? Color(nsColor: DesignTokens.Color.accentSoft)
+                            : (hovered ? Color.white.opacity(0.06) : .clear)
+                    )
             )
-            .foregroundColor(selected ? .accentColor : .secondary)
+            .foregroundColor(selected ? Color(nsColor: DesignTokens.Color.accent) : .secondary)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -109,17 +116,6 @@ struct SettingsView: View {
                     Text(L10n.tr("Follow System", "跟随系统")).tag(AppLanguage.system)
                     Text("English").tag(AppLanguage.english)
                     Text("简体中文").tag(AppLanguage.chinese)
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(width: 160)
-            }
-
-            SettingsRow(L10n.tr("Appearance", "外观"), labelWidth: labelWidth) {
-                Picker("", selection: $model.settings.appearance) {
-                    Text(L10n.tr("Follow System", "跟随系统")).tag(AppAppearance.system)
-                    Text(L10n.tr("Light", "浅色")).tag(AppAppearance.light)
-                    Text(L10n.tr("Dark", "深色")).tag(AppAppearance.dark)
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
@@ -225,6 +221,8 @@ struct SettingsView: View {
                             tabModel.showsStatusMenuItems = true
                         }
                         .buttonStyle(.link)
+                        // Link buttons draw with the system accent otherwise.
+                        .tint(Color(nsColor: DesignTokens.Color.accent))
                         .font(.system(size: 11))
                     }
                 }

@@ -312,7 +312,7 @@ private final class PinContentView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
+        DesignTokens.Color.canvasBase.setFill()
         bounds.fill()
         NSImage(cgImage: image, size: bounds.size).draw(
             in: bounds,

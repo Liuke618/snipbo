@@ -7,7 +7,11 @@ import SnipboCore
 /// over the canvas, so growing it never reflows the editor.
 @MainActor
 final class EditorStylePanelView: NSView {
-    private let effect = NSVisualEffectView()
+    private let effect = MaterialBackgroundView(
+        cornerRadius: DesignTokens.Radius.panel,
+        fill: DesignTokens.Color.raised,
+        stroke: true
+    )
     private let colorWell = NSColorWell()
     private let hexLabel = NSTextField(labelWithString: "#FF0000")
     private let widthSlider = NSSlider(value: 3, minValue: 1, maxValue: 24, target: nil, action: nil)
@@ -123,8 +127,8 @@ final class EditorStylePanelView: NSView {
 
     private static func wellFill(forFocus focused: Bool) -> NSColor {
         focused
-            ? NSColor.controlAccentColor.withAlphaComponent(0.3)
-            : NSColor.labelColor.withAlphaComponent(0.07)
+            ? DesignTokens.Color.accent.withAlphaComponent(0.28)
+            : NSColor.white.withAlphaComponent(0.06)
     }
 
     @objc private func sizeFieldCommitted() {
@@ -283,14 +287,7 @@ final class EditorStylePanelView: NSView {
         layer?.shadowRadius = DesignTokens.Shadow.panelRadius
         layer?.shadowOffset = CGSize(width: 0, height: -2)
 
-        effect.material = .popover
-        effect.blendingMode = .withinWindow
-        effect.state = .active
-        effect.wantsLayer = true
-        effect.layer?.cornerRadius = DesignTokens.Radius.panel
         effect.layer?.masksToBounds = true
-        effect.layer?.borderWidth = 1
-        effect.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.45).cgColor
         effect.translatesAutoresizingMaskIntoConstraints = false
         addSubview(effect)
 
@@ -298,10 +295,10 @@ final class EditorStylePanelView: NSView {
         colorWell.colorWellStyle = .minimal
         colorWell.controlSize = .small
         hexLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        hexLabel.textColor = .secondaryLabelColor
+        hexLabel.textColor = DesignTokens.Color.textSecondary
         hexLabel.toolTip = L10n.tr("Press Tab to copy the color", "按 Tab 复制色值")
         sizeField.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        sizeField.textColor = .secondaryLabelColor
+        sizeField.textColor = DesignTokens.Color.textSecondary
         sizeField.alignment = .right
         sizeField.isBordered = false
         sizeField.drawsBackground = false
@@ -320,7 +317,7 @@ final class EditorStylePanelView: NSView {
         sizeField.action = #selector(sizeFieldCommitted)
         sizeField.toolTip = L10n.tr("Type a size, or drag the slider", "可直接输入数值，或拖动滑杆")
         sizeUnitLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        sizeUnitLabel.textColor = .tertiaryLabelColor
+        sizeUnitLabel.textColor = DesignTokens.Color.textTertiary
         sizeUnitLabel.toolTip = L10n.tr("Pixels", "像素")
         // One rounded well holds the number and its unit, so the readout reads
         // as a single editable control rather than a field plus loose text.
@@ -676,17 +673,17 @@ private final class ColorSwatchButton: NSButton {
         let circle = bounds.insetBy(dx: inset, dy: inset)
         NSColor(rgba).setFill()
         NSBezierPath(ovalIn: circle).fill()
-        NSColor.separatorColor.setStroke()
+        DesignTokens.Color.stroke.setStroke()
         let hairline = NSBezierPath(ovalIn: circle)
         hairline.lineWidth = 1
         hairline.stroke()
         if isCurrentColor {
-            NSColor.labelColor.withAlphaComponent(0.85).setStroke()
+            DesignTokens.Color.textPrimary.setStroke()
             let ring = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.75, dy: 0.75))
             ring.lineWidth = 1.5
             ring.stroke()
         } else if isHighlighted {
-            NSColor.controlAccentColor.setStroke()
+            DesignTokens.Color.accent.setStroke()
             let ring = NSBezierPath(ovalIn: circle.insetBy(dx: -0.5, dy: -0.5))
             ring.lineWidth = 2
             ring.stroke()

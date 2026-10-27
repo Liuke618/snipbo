@@ -20,6 +20,7 @@ final class SettingsWindowController: NSWindowController {
         )
         window.title = L10n.tr("Preferences", "偏好设置")
         window.isReleasedWhenClosed = false
+        window.backgroundColor = DesignTokens.Color.canvasBase
         // An explicitly framed hosting view pinned with autoresizing — going
         // through `contentViewController` lets AppKit adopt the hosting view's
         // own sizing, which either resizes the window on every tab switch or
