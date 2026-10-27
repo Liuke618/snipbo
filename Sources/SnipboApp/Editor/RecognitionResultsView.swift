@@ -18,8 +18,27 @@ final class RecognitionResultsView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+        let background = MaterialBackgroundView(material: .sidebar)
+        addSubview(background)
+        NSLayoutConstraint.activate([
+            background.leadingAnchor.constraint(equalTo: leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: trailingAnchor),
+            background.topAnchor.constraint(equalTo: topAnchor),
+            background.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        let edge = NSView()
+        edge.wantsLayer = true
+        edge.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        edge.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(edge)
+        NSLayoutConstraint.activate([
+            edge.leadingAnchor.constraint(equalTo: leadingAnchor),
+            edge.topAnchor.constraint(equalTo: topAnchor),
+            edge.bottomAnchor.constraint(equalTo: bottomAnchor),
+            edge.widthAnchor.constraint(equalToConstant: 1),
+        ])
 
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         statusLabel.font = .systemFont(ofSize: 11)

@@ -279,15 +279,15 @@ final class EditorStylePanelView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.shadowColor = NSColor.black.cgColor
-        layer?.shadowOpacity = 0.28
-        layer?.shadowRadius = 9
+        layer?.shadowOpacity = DesignTokens.Shadow.panelOpacity
+        layer?.shadowRadius = DesignTokens.Shadow.panelRadius
         layer?.shadowOffset = CGSize(width: 0, height: -2)
 
         effect.material = .popover
         effect.blendingMode = .withinWindow
         effect.state = .active
         effect.wantsLayer = true
-        effect.layer?.cornerRadius = 10
+        effect.layer?.cornerRadius = DesignTokens.Radius.panel
         effect.layer?.masksToBounds = true
         effect.layer?.borderWidth = 1
         effect.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.45).cgColor
@@ -325,7 +325,7 @@ final class EditorStylePanelView: NSView {
         // One rounded well holds the number and its unit, so the readout reads
         // as a single editable control rather than a field plus loose text.
         sizeWell.wantsLayer = true
-        sizeWell.layer?.cornerRadius = 6
+        sizeWell.layer?.cornerRadius = DesignTokens.Radius.control
         sizeWell.layer?.backgroundColor = Self.wellFill(forFocus: false).cgColor
         widthSlider.toolTip = L10n.tr(
             "Stroke width — affects the selected annotation, or the next one you draw",
@@ -457,7 +457,7 @@ final class EditorStylePanelView: NSView {
         let stack = NSStackView(views: [topRow, shapeRow, textRow, paletteRow])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 10
+        stack.spacing = DesignTokens.Spacing.tight
         stack.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(stack)
 
