@@ -11,6 +11,7 @@ final class EditorStylePanelView: NSView {
     private let colorWell = NSColorWell()
     private let hexLabel = NSTextField(labelWithString: "#FF0000")
     private let widthSlider = NSSlider(value: 3, minValue: 1, maxValue: 24, target: nil, action: nil)
+    private let sizeValueLabel = NSTextField(labelWithString: "3")
     private let fontSizeSlider = NSSlider(value: 24, minValue: 10, maxValue: 96, target: nil, action: nil)
     private let fontPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let boldButton = NSButton(title: "B", target: nil, action: nil)
@@ -30,7 +31,10 @@ final class EditorStylePanelView: NSView {
         action: nil
     )
     private let lineStyleControl = NSSegmentedControl(
-        labels: ["Solid", "Dashed"],
+        images: [
+            EditorStylePanelView.lineStyleIcon(dashed: false),
+            EditorStylePanelView.lineStyleIcon(dashed: true),
+        ],
         trackingMode: .selectOne,
         target: nil,
         action: nil
@@ -40,15 +44,7 @@ final class EditorStylePanelView: NSView {
         target: nil,
         action: nil
     )
-    private let arrowStyleControl = NSSegmentedControl(
-        images: [
-            EditorStylePanelView.arrowIcon(filled: true),
-            EditorStylePanelView.arrowIcon(filled: false),
-        ],
-        trackingMode: .selectOne,
-        target: nil,
-        action: nil
-    )
+    private let arrowButton = NSButton()
     private let textRow = NSStackView()
     private let shapeRow = NSStackView()
     private let paletteRow = NSStackView()
@@ -62,7 +58,11 @@ final class EditorStylePanelView: NSView {
     private let onLineStyle: (AnnotationLineStyle) -> Void
     private let onFill: (Bool) -> Void
     private let onArrowStyle: (AnnotationArrowStyle) -> Void
-    private var heightConstraint: NSLayoutConstraint!
+    /// Reports how far the user dragged the panel's background, in window
+    /// points; the owner clamps and applies it.
+    var onMove: ((CGSize) -> Void)?
+    private var dragOrigin: NSPoint?
+    private var swatches: [ColorSwatchButton] = []
 
     private static let paletteColors: [RGBA] = [
         RGBA(red: 0.93, green: 0.16, blue: 0.16),
@@ -85,10 +85,67 @@ final class EditorStylePanelView: NSView {
         ("Georgia", "Georgia"),
     ]
 
+    /// Slider values are whole points most of the time; keep one decimal only
+    /// when the user lands between two.
+    private static func widthText(_ value: CGFloat) -> String {
+        let rounded = (value * 10).rounded() / 10
+        if rounded == rounded.rounded() { return String(Int(rounded)) }
+        return String(format: "%.1f", rounded)
+    }
+
+    /// Background clicks move the panel; clicks on inputs keep going to them.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        switch hit {
+        case is NSButton, is NSSlider, is NSPopUpButton, is NSSegmentedControl, is NSColorWell:
+            return hit
+        default:
+            return self
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        dragOrigin = event.locationInWindow
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let origin = dragOrigin else { return }
+        let current = event.locationInWindow
+        onMove?(CGSize(width: current.x - origin.x, height: current.y - origin.y))
+        dragOrigin = current
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        dragOrigin = nil
+    }
+
+    private static func lineStyleIcon(dashed: Bool) -> NSImage {
+        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: true) { _ in
+            NSColor.black.setStroke()
+            let path = NSBezierPath()
+            if dashed {
+                for start in stride(from: CGFloat(1), to: 15, by: 5) {
+                    path.move(to: CGPoint(x: start, y: 8))
+                    path.line(to: CGPoint(x: start + 3, y: 8))
+                }
+            } else {
+                path.move(to: CGPoint(x: 1, y: 8))
+                path.line(to: CGPoint(x: 15, y: 8))
+            }
+            path.lineWidth = 1.8
+            path.lineCapStyle = .round
+            path.stroke()
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
     /// Two hand-drawn 16 pt template images, so the arrow-head control shows
     /// the shape it changes instead of naming it.
-    private static func arrowIcon(filled: Bool) -> NSImage {
-        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: true) { _ in
+    private static func arrowIcon(filled: Bool, chevron: Bool = false) -> NSImage {
+        let size = NSSize(width: chevron ? 26 : 16, height: 16)
+        let image = NSImage(size: size, flipped: true) { _ in
             let tail = CGPoint(x: 2.5, y: 13.5)
             let tip = CGPoint(x: 13.5, y: 2.5)
             let length = hypot(tip.x - tail.x, tip.y - tail.y)
@@ -130,6 +187,16 @@ final class EditorStylePanelView: NSView {
                 path.lineCapStyle = .round
                 path.lineJoinStyle = .round
                 path.stroke()
+            }
+            if chevron {
+                let marker = NSBezierPath()
+                marker.move(to: CGPoint(x: 19.5, y: 6.5))
+                marker.line(to: CGPoint(x: 22, y: 9))
+                marker.line(to: CGPoint(x: 24.5, y: 6.5))
+                marker.lineWidth = 1.4
+                marker.lineCapStyle = .round
+                marker.lineJoinStyle = .round
+                marker.stroke()
             }
             return true
         }
@@ -180,15 +247,20 @@ final class EditorStylePanelView: NSView {
         addSubview(effect)
 
         colorWell.toolTip = L10n.tr("Annotation color", "标注颜色")
+        colorWell.colorWellStyle = .minimal
+        colorWell.controlSize = .small
         hexLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         hexLabel.textColor = .secondaryLabelColor
         hexLabel.toolTip = L10n.tr("Press Tab to copy the color", "按 Tab 复制色值")
+        sizeValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        sizeValueLabel.textColor = .secondaryLabelColor
+        sizeValueLabel.alignment = .center
+        sizeValueLabel.toolTip = L10n.tr("Size", "数值")
         widthSlider.toolTip = L10n.tr(
             "Stroke width — affects the selected annotation, or the next one you draw",
             "线条粗细 — 作用于选中的标注，或接下来绘制的标注"
         )
         widthSlider.isContinuous = true
-        colorWell.controlSize = .small
         widthSlider.controlSize = .small
 
         fontSizeSlider.toolTip = L10n.tr("Text size", "文字大小")
@@ -216,8 +288,8 @@ final class EditorStylePanelView: NSView {
         backgroundButton.controlSize = .small
         backgroundButton.toolTip = L10n.tr("Text background", "文字背景")
 
-        lineStyleControl.setLabel(L10n.tr("Solid", "实线"), forSegment: 0)
-        lineStyleControl.setLabel(L10n.tr("Dashed", "虚线"), forSegment: 1)
+        lineStyleControl.setToolTip(L10n.tr("Solid line", "实线"), forSegment: 0)
+        lineStyleControl.setToolTip(L10n.tr("Dashed line", "虚线"), forSegment: 1)
         lineStyleControl.controlSize = .small
         lineStyleControl.selectedSegment = 0
         lineStyleControl.toolTip = L10n.tr("Line style", "线条样式")
@@ -226,10 +298,20 @@ final class EditorStylePanelView: NSView {
         fillButton.controlSize = .small
         fillButton.toolTip = L10n.tr("Fill shape", "填充形状")
 
-        arrowStyleControl.controlSize = .small
-        arrowStyleControl.selectedSegment = 0
-        arrowStyleControl.setToolTip(L10n.tr("Filled arrow head", "实心箭头"), forSegment: 0)
-        arrowStyleControl.setToolTip(L10n.tr("Outline arrow head", "线框箭头"), forSegment: 1)
+        arrowButton.isBordered = false
+        arrowButton.imagePosition = .imageOnly
+        arrowButton.image = Self.arrowIcon(filled: true, chevron: true)
+        arrowButton.controlSize = .small
+        arrowButton.toolTip = L10n.tr("Arrow head", "箭头样式")
+
+        // The panel is a floating tool window: focus rings on its controls read
+        // as heavy blue boxes against the dark popover material.
+        for control in [
+            colorWell, widthSlider, fontSizeSlider, fontPopup, boldButton,
+            alignmentControl, backgroundButton, lineStyleControl, fillButton, arrowButton,
+        ] as [NSView] {
+            (control as? NSControl)?.focusRingType = .none
+        }
 
         colorWell.target = self
         colorWell.action = #selector(colorChanged)
@@ -249,15 +331,10 @@ final class EditorStylePanelView: NSView {
         lineStyleControl.action = #selector(lineStyleChanged)
         fillButton.target = self
         fillButton.action = #selector(fillChanged)
-        arrowStyleControl.target = self
-        arrowStyleControl.action = #selector(arrowStyleChanged)
+        arrowButton.target = self
+        arrowButton.action = #selector(showArrowMenu)
 
-        let topRow = NSStackView(views: [
-            colorWell, hexLabel, widthSlider, fontSizeSlider,
-        ])
-        topRow.orientation = .horizontal
-        topRow.alignment = .centerY
-        topRow.spacing = 8
+        let topRow = Self.row([colorWell, hexLabel, widthSlider, fontSizeSlider, sizeValueLabel])
 
         textRow.orientation = .horizontal
         textRow.alignment = .centerY
@@ -266,6 +343,7 @@ final class EditorStylePanelView: NSView {
         textRow.addArrangedSubview(boldButton)
         textRow.addArrangedSubview(alignmentControl)
         textRow.addArrangedSubview(backgroundButton)
+        textRow.addArrangedSubview(Self.spacer())
         textRow.isHidden = true
         fontSizeSlider.isHidden = true
 
@@ -274,12 +352,13 @@ final class EditorStylePanelView: NSView {
         shapeRow.spacing = 8
         shapeRow.addArrangedSubview(lineStyleControl)
         shapeRow.addArrangedSubview(fillButton)
-        shapeRow.addArrangedSubview(arrowStyleControl)
+        shapeRow.addArrangedSubview(arrowButton)
+        shapeRow.addArrangedSubview(Self.spacer())
         shapeRow.isHidden = true
 
         paletteRow.orientation = .horizontal
         paletteRow.alignment = .centerY
-        paletteRow.spacing = 4
+        paletteRow.spacing = 6
         for (index, color) in Self.paletteColors.enumerated() {
             let swatch = ColorSwatchButton(color: color)
             swatch.tag = index
@@ -294,34 +373,56 @@ final class EditorStylePanelView: NSView {
             swatch.widthAnchor.constraint(equalToConstant: 18).isActive = true
             swatch.heightAnchor.constraint(equalToConstant: 18).isActive = true
             paletteRow.addArrangedSubview(swatch)
+            swatches.append(swatch)
         }
 
         let stack = NSStackView(views: [topRow, shapeRow, textRow, paletteRow])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
+        stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
         effect.addSubview(stack)
 
-        heightConstraint = heightAnchor.constraint(equalToConstant: 40)
         NSLayoutConstraint.activate([
             effect.leadingAnchor.constraint(equalTo: leadingAnchor),
             effect.trailingAnchor.constraint(equalTo: trailingAnchor),
             effect.topAnchor.constraint(equalTo: topAnchor),
             effect.bottomAnchor.constraint(equalTo: bottomAnchor),
-            heightConstraint,
-            stack.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 10),
-            stack.trailingAnchor.constraint(equalTo: effect.trailingAnchor, constant: -10),
-            stack.centerYAnchor.constraint(equalTo: effect.centerYAnchor),
-            colorWell.widthAnchor.constraint(equalToConstant: 44),
+            stack.leadingAnchor.constraint(equalTo: effect.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: effect.trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: effect.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: effect.bottomAnchor, constant: -12),
+            colorWell.widthAnchor.constraint(equalToConstant: 40),
+            colorWell.heightAnchor.constraint(equalToConstant: 24),
+            hexLabel.widthAnchor.constraint(equalToConstant: 54),
             widthSlider.widthAnchor.constraint(equalToConstant: 100),
+            sizeValueLabel.widthAnchor.constraint(equalToConstant: 20),
             fontSizeSlider.widthAnchor.constraint(equalToConstant: 100),
             fontPopup.widthAnchor.constraint(equalToConstant: 118),
             boldButton.widthAnchor.constraint(equalToConstant: 32),
             alignmentControl.widthAnchor.constraint(equalToConstant: 92),
-            lineStyleControl.widthAnchor.constraint(equalToConstant: 104),
-            arrowStyleControl.widthAnchor.constraint(equalToConstant: 56),
+            lineStyleControl.widthAnchor.constraint(equalToConstant: 62),
+            arrowButton.widthAnchor.constraint(equalToConstant: 30),
+            arrowButton.heightAnchor.constraint(equalToConstant: 24),
         ])
+    }
+
+    /// Absorbs the width the widest row adds, so the other rows stay
+    /// left-aligned instead of spreading their controls apart.
+    private static func spacer() -> NSView {
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+        return spacer
+    }
+
+    private static func row(_ views: [NSView]) -> NSStackView {
+        let row = NSStackView(views: views)
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        row.addArrangedSubview(spacer())
+        return row
     }
 
     @available(*, unavailable)
@@ -348,6 +449,7 @@ final class EditorStylePanelView: NSView {
     ) {
         widthSlider.doubleValue = style.lineWidth
         fontSizeSlider.doubleValue = style.fontSize
+        sizeValueLabel.stringValue = Self.widthText(isText ? style.fontSize : style.lineWidth)
         colorWell.color = NSColor(style.color)
         hexLabel.stringValue = String(
             format: "#%02X%02X%02X",
@@ -366,16 +468,15 @@ final class EditorStylePanelView: NSView {
         backgroundButton.state = style.textBackground != nil ? .on : .off
         lineStyleControl.selectedSegment = style.lineStyle == .dashed ? 1 : 0
         fillButton.state = style.fillColor != nil ? .on : .off
-        arrowStyleControl.selectedSegment = style.arrowStyle == .simple ? 1 : 0
+        arrowButton.image = Self.arrowIcon(filled: style.arrowStyle != .simple, chevron: true)
 
         widthSlider.isHidden = isText
         fontSizeSlider.isHidden = !isText
         textRow.isHidden = !isText
         shapeRow.isHidden = !showsShapeOptions
-        arrowStyleControl.isHidden = !showsArrowStyle
-        let target: CGFloat = (isText || showsShapeOptions) ? 112 : 72
-        if heightConstraint.constant != target {
-            heightConstraint.constant = target
+        arrowButton.isHidden = !showsArrowStyle
+        for swatch in swatches {
+            swatch.isCurrentColor = swatch.rgba == style.color
         }
     }
 
@@ -384,8 +485,15 @@ final class EditorStylePanelView: NSView {
         guard let swatch = sender as? ColorSwatchButton else { return }
         onColor(swatch.rgba)
     }
-    @objc private func widthChanged() { onWidth(widthSlider.doubleValue) }
-    @objc private func fontSizeChanged() { onFontSize(fontSizeSlider.doubleValue) }
+    @objc private func widthChanged() {
+        sizeValueLabel.stringValue = Self.widthText(widthSlider.doubleValue)
+        onWidth(widthSlider.doubleValue)
+    }
+
+    @objc private func fontSizeChanged() {
+        sizeValueLabel.stringValue = Self.widthText(fontSizeSlider.doubleValue)
+        onFontSize(fontSizeSlider.doubleValue)
+    }
 
     @objc private func fontChanged() {
         onFontName(fontPopup.selectedItem?.representedObject as? String)
@@ -417,8 +525,27 @@ final class EditorStylePanelView: NSView {
         onFill(fillButton.state == .on)
     }
 
-    @objc private func arrowStyleChanged() {
-        onArrowStyle(arrowStyleControl.selectedSegment == 1 ? .simple : .tapered)
+    @objc private func showArrowMenu() {
+        let menu = NSMenu()
+        for (filled, title) in [
+            (true, L10n.tr("Filled arrow head", "实心箭头")),
+            (false, L10n.tr("Outline arrow head", "线框箭头")),
+        ] {
+            let item = NSMenuItem(title: title, action: #selector(pickArrowStyle(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = filled
+            item.image = Self.arrowIcon(filled: filled)
+            menu.addItem(item)
+        }
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: 0, y: 0),
+            in: arrowButton
+        )
+    }
+
+    @objc private func pickArrowStyle(_ sender: NSMenuItem) {
+        onArrowStyle((sender.representedObject as? Bool) == false ? .simple : .tapered)
     }
 }
 
@@ -427,6 +554,10 @@ final class EditorStylePanelView: NSView {
 @MainActor
 private final class ColorSwatchButton: NSButton {
     let rgba: RGBA
+    /// Marks the color the panel is currently editing.
+    var isCurrentColor = false {
+        didSet { needsDisplay = true }
+    }
 
     init(color: RGBA) {
         self.rgba = color
@@ -440,19 +571,24 @@ private final class ColorSwatchButton: NSButton {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func draw(_ dirtyRect: NSRect) {
-        let circle = bounds.insetBy(dx: 1, dy: 1)
+        let inset: CGFloat = isCurrentColor ? 3.5 : 2
+        let circle = bounds.insetBy(dx: inset, dy: inset)
         NSColor(rgba).setFill()
         NSBezierPath(ovalIn: circle).fill()
-        if isHighlighted {
+        NSColor.separatorColor.setStroke()
+        let hairline = NSBezierPath(ovalIn: circle)
+        hairline.lineWidth = 1
+        hairline.stroke()
+        if isCurrentColor {
+            NSColor.labelColor.withAlphaComponent(0.85).setStroke()
+            let ring = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.75, dy: 0.75))
+            ring.lineWidth = 1.5
+            ring.stroke()
+        } else if isHighlighted {
             NSColor.controlAccentColor.setStroke()
             let ring = NSBezierPath(ovalIn: circle.insetBy(dx: -0.5, dy: -0.5))
             ring.lineWidth = 2
             ring.stroke()
-        } else {
-            NSColor.separatorColor.setStroke()
-            let outline = NSBezierPath(ovalIn: circle)
-            outline.lineWidth = 1
-            outline.stroke()
         }
     }
 }

@@ -41,6 +41,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private var exportInFlight = false
     private var toolbarView: EditorToolbarView?
     private var stylePanel: EditorStylePanelView?
+    private var stylePanelTopConstraint: NSLayoutConstraint?
+    private var stylePanelTrailingConstraint: NSLayoutConstraint?
+    private var stylePanelLeadingConstraint: NSLayoutConstraint?
+    private var stylePanelPinnedToTrailing = true
     /// Exposed for probes: the floating style panel over the canvas.
     var stylePanelView: EditorStylePanelView? { stylePanel }
 
@@ -111,6 +115,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             }
         )
         self.stylePanel = stylePanel
+        stylePanel.onMove = { [weak self] delta in self?.moveStylePanel(by: delta) }
         window.title = "Snipbo"
         window.center()
         window.delegate = self
@@ -146,6 +151,13 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         body.addSubview(stylePanel)
 
         scrollTrailingConstraint = scrollView.trailingAnchor.constraint(equalTo: body.trailingAnchor)
+        // Anchored to the canvas viewport rather than the window so the panel
+        // moves aside with the canvas when the recognition panel opens, and
+        // floats above the image instead of taking layout space.
+        let stylePanelTop = stylePanel.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12)
+        let stylePanelTrailing = stylePanel.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -12)
+        stylePanelTopConstraint = stylePanelTop
+        stylePanelTrailingConstraint = stylePanelTrailing
         NSLayoutConstraint.activate([
             toolbar.leadingAnchor.constraint(equalTo: body.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: body.trailingAnchor),
@@ -155,11 +167,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             scrollView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: body.bottomAnchor),
             scrollTrailingConstraint,
-            // Anchored to the canvas viewport rather than the window so the
-            // panel moves aside with the canvas when the recognition panel
-            // opens, and floats above the image instead of taking layout space.
-            stylePanel.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12),
-            stylePanel.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -12),
+            stylePanelTop,
+            stylePanelTrailing,
         ])
 
         let contentView = NSView(frame: .zero)
@@ -285,6 +294,47 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         stylePanel?.isHidden = controller.selectedStyle == nil
             && (controller.tool == .select || controller.tool == .crop)
         scheduleDocumentSnapshot()
+    }
+
+    /// The panel starts pinned to the canvas corner. The first drag trades the
+    /// trailing anchor for a leading one, so it keeps whatever spot the user
+    /// drops it on instead of snapping back over the image.
+    private func moveStylePanel(by delta: CGSize) {
+        guard let panel = stylePanel else { return }
+        if stylePanelPinnedToTrailing, let trailing = stylePanelTrailingConstraint {
+            stylePanelPinnedToTrailing = false
+            trailing.isActive = false
+            let leading = panel.leadingAnchor.constraint(
+                equalTo: scrollView.leadingAnchor,
+                constant: panel.frame.minX - scrollView.frame.minX
+            )
+            leading.isActive = true
+            stylePanelLeadingConstraint = leading
+        }
+        guard let leading = stylePanelLeadingConstraint,
+              let top = stylePanelTopConstraint else { return }
+        let viewport = scrollView.frame.size
+        let size = panel.frame.size
+        let maxX = max(8, viewport.width - size.width - 8)
+        let maxY = max(8, viewport.height - size.height - 8)
+        leading.constant = min(max(8, leading.constant + delta.width), maxX)
+        // Window coordinates grow upward, constraint constants downward.
+        top.constant = min(max(8, top.constant - delta.height), maxY)
+    }
+
+    /// Keeps a dragged panel inside the viewport when the window shrinks.
+    private func clampStylePanel() {
+        guard let leading = stylePanelLeadingConstraint,
+              let top = stylePanelTopConstraint,
+              let panel = stylePanel else { return }
+        let viewport = scrollView.frame.size
+        let size = panel.frame.size
+        leading.constant = min(max(8, leading.constant), max(8, viewport.width - size.width - 8))
+        top.constant = min(max(8, top.constant), max(8, viewport.height - size.height - 8))
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        clampStylePanel()
     }
 
     /// Debounces snapshot writes while the user draws or adjusts a crop.
