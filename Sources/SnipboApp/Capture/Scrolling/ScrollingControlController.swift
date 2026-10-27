@@ -53,24 +53,38 @@ final class ScrollingControlController {
         panel.isReleasedWhenClosed = false
 
         let content = NSView(frame: CGRect(origin: .zero, size: size))
-        content.wantsLayer = true
-        content.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.85).cgColor
-        content.layer?.cornerRadius = 12
+        let background = MaterialBackgroundView(
+            material: .hudWindow,
+            cornerRadius: DesignTokens.Radius.panel
+        )
+        background.layer?.borderWidth = 1
+        background.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+        content.addSubview(background)
+        NSLayoutConstraint.activate([
+            background.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            background.topAnchor.constraint(equalTo: content.topAnchor),
+            background.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
 
         label.textColor = .white
         label.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(label)
 
-        let stop = NSButton(title: L10n.tr("Stop", "停止"), target: self, action: #selector(stopAction))
-        stop.bezelStyle = .rounded
-        stop.controlSize = .small
+        let stop = PillButton(
+            title: L10n.tr("Stop", "停止"),
+            target: self,
+            action: #selector(stopAction)
+        )
         stop.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stop)
 
         let cancel = NSButton(title: L10n.tr("Cancel", "取消"), target: self, action: #selector(cancelAction))
-        cancel.bezelStyle = .rounded
-        cancel.controlSize = .small
+        cancel.isBordered = false
+        cancel.font = .systemFont(ofSize: 11)
+        cancel.contentTintColor = NSColor.white.withAlphaComponent(0.62)
+        cancel.focusRingType = .none
         cancel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(cancel)
 

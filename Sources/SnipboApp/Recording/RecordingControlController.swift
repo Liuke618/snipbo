@@ -51,9 +51,19 @@ final class RecordingControlController {
         panel.isReleasedWhenClosed = false
 
         let content = NSView(frame: CGRect(origin: .zero, size: size))
-        content.wantsLayer = true
-        content.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.85).cgColor
-        content.layer?.cornerRadius = 12
+        let background = MaterialBackgroundView(
+            material: .hudWindow,
+            cornerRadius: DesignTokens.Radius.panel
+        )
+        background.layer?.borderWidth = 1
+        background.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+        content.addSubview(background)
+        NSLayoutConstraint.activate([
+            background.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            background.topAnchor.constraint(equalTo: content.topAnchor),
+            background.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
 
         let dot = NSView(frame: CGRect(x: 14, y: 27, width: 9, height: 9))
         dot.wantsLayer = true
@@ -67,13 +77,11 @@ final class RecordingControlController {
         content.addSubview(label)
         updateLabel()
 
-        let stop = NSButton(
+        let stop = PillButton(
             title: L10n.tr("Stop", "停止"),
             target: self,
             action: #selector(stopAction)
         )
-        stop.bezelStyle = .rounded
-        stop.controlSize = .small
         stop.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stop)
 
@@ -82,8 +90,10 @@ final class RecordingControlController {
             target: self,
             action: #selector(cancelAction)
         )
-        cancel.bezelStyle = .rounded
-        cancel.controlSize = .small
+        cancel.isBordered = false
+        cancel.font = .systemFont(ofSize: 11)
+        cancel.contentTintColor = NSColor.white.withAlphaComponent(0.62)
+        cancel.focusRingType = .none
         cancel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(cancel)
 

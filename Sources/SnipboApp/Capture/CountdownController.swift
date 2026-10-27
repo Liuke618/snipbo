@@ -32,8 +32,18 @@ final class CountdownController {
 
         let content = NSView(frame: CGRect(origin: .zero, size: size))
         content.wantsLayer = true
-        content.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.82).cgColor
-        content.layer?.cornerRadius = 18
+
+        let background = MaterialBackgroundView(
+            material: .hudWindow,
+            cornerRadius: 16
+        )
+        content.addSubview(background)
+        NSLayoutConstraint.activate([
+            background.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            background.topAnchor.constraint(equalTo: content.topAnchor),
+            background.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        ])
 
         label.frame = content.bounds
         label.autoresizingMask = [.width, .height]
