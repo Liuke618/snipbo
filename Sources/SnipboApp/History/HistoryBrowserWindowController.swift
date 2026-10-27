@@ -417,77 +417,21 @@ struct HistoryBrowserView: View {
 
     @ViewBuilder
     private func thumbnailCell(_ entry: HistoryEntry) -> some View {
-        VStack(spacing: 6) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(nsColor: .textBackgroundColor))
-                if let image = model.thumbnails[entry.id] {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 150)
-                } else {
-                    Text("…")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(height: 160)
-            Text("\(entry.pixelWidth) × \(entry.pixelHeight) · \(dateFormatter.string(from: entry.createdAt))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            if !entry.tags.isEmpty {
-                Text(entry.tags.map { "#\($0)" }.joined(separator: " "))
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)))
-        .overlay(alignment: .topTrailing) {
-            if entry.isFavorite {
-                Image(systemName: "star.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.yellow)
-                    .padding(7)
-            }
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 8))
-        .onDrag { model.dragProvider(for: entry) }
-        .onTapGesture(count: 2) { openInEditor(entry) }
-        .contextMenu {
-            Button(entry.isFavorite
-                ? L10n.tr("Unfavorite", "取消收藏")
-                : L10n.tr("Favorite", "收藏")) {
-                Task { await model.toggleFavorite(entry) }
-            }
-            Button(L10n.tr("Add Tag…", "添加标签…")) {
-                promptForTag(entry)
-            }
-            if !entry.tags.isEmpty {
-                Menu(L10n.tr("Remove Tag", "移除标签")) {
-                    ForEach(entry.tags, id: \.self) { tag in
-                        Button("#\(tag)") {
-                            Task { await model.removeTag(tag, from: entry) }
-                        }
-                    }
-                }
-                Button(L10n.tr("Clear Tags", "清空标签")) {
-                    Task { await model.clearTags(entry) }
-                }
-            }
-            Divider()
-            Button(L10n.tr("Open in Editor", "在编辑器中打开")) { openInEditor(entry) }
-            Button(L10n.tr("Pin", "贴图")) { Task { await model.pin(entry) } }
-            Button(L10n.tr("Copy", "复制")) { Task { await model.copy(entry) } }
-            Button(L10n.tr("Show in Finder", "在 Finder 中显示")) { Task { await model.reveal(entry) } }
-            Divider()
-            Button(L10n.tr("Delete", "删除"), role: .destructive) {
-                Task { await model.delete(entry) }
-            }
-        }
+        HistoryCard(
+            entry: entry,
+            thumbnail: model.thumbnails[entry.id],
+            dateText: dateFormatter.string(from: entry.createdAt),
+            onOpen: { openInEditor(entry) },
+            onFavorite: { Task { await model.toggleFavorite(entry) } },
+            onAddTag: { promptForTag(entry) },
+            onRemoveTag: { tag in Task { await model.removeTag(tag, from: entry) } },
+            onClearTags: { Task { await model.clearTags(entry) } },
+            onPin: { Task { await model.pin(entry) } },
+            onCopy: { Task { await model.copy(entry) } },
+            onReveal: { Task { await model.reveal(entry) } },
+            onDelete: { Task { await model.delete(entry) } },
+            dragProvider: { model.dragProvider(for: entry) }
+        )
     }
 
     private func promptForTag(_ entry: HistoryEntry) {
@@ -506,6 +450,108 @@ struct HistoryBrowserView: View {
         let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
         Task { await model.addTags(value, to: entry) }
+    }
+}
+
+/// Local hover flag for one card. `@State` is a macro this toolchain cannot
+/// expand (see the note on `HistoryBrowserModel`), so the flag lives in a tiny
+/// `ObservableObject` owned through `@StateObject`.
+@MainActor
+private final class CardHoverState: ObservableObject {
+    @Published var isHovered = false
+}
+
+/// One grid card. Owner of the hover state so the lift effect does not need
+/// global model state.
+private struct HistoryCard: View {
+    let entry: HistoryEntry
+    let thumbnail: NSImage?
+    let dateText: String
+    let onOpen: () -> Void
+    let onFavorite: () -> Void
+    let onAddTag: () -> Void
+    let onRemoveTag: (String) -> Void
+    let onClearTags: () -> Void
+    let onPin: () -> Void
+    let onCopy: () -> Void
+    let onReveal: () -> Void
+    let onDelete: () -> Void
+    let dragProvider: () -> NSItemProvider
+
+    @StateObject private var hover = CardHoverState()
+
+    private var isHovered: Bool { hover.isHovered }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(nsColor: .textBackgroundColor))
+                if let thumbnail {
+                    Image(nsImage: thumbnail)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 150)
+                } else {
+                    Text("…")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(height: 160)
+            Text("\(entry.pixelWidth) × \(entry.pixelHeight) · \(dateText)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            if !entry.tags.isEmpty {
+                Text(entry.tags.map { "#\($0)" }.joined(separator: " "))
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .shadow(
+                    color: .black.opacity(isHovered ? 0.13 : 0.06),
+                    radius: isHovered ? 14 : 2,
+                    y: isHovered ? 4 : 1
+                )
+        )
+        .overlay(alignment: .topTrailing) {
+            if entry.isFavorite {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.yellow)
+                    .padding(7)
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onHover { hover.isHovered = $0 }
+        .onDrag(dragProvider)
+        .onTapGesture(count: 2, perform: onOpen)
+        .contextMenu {
+            Button(entry.isFavorite
+                ? L10n.tr("Unfavorite", "取消收藏")
+                : L10n.tr("Favorite", "收藏"), action: onFavorite)
+            Button(L10n.tr("Add Tag…", "添加标签…"), action: onAddTag)
+            if !entry.tags.isEmpty {
+                Menu(L10n.tr("Remove Tag", "移除标签")) {
+                    ForEach(entry.tags, id: \.self) { tag in
+                        Button("#\(tag)") { onRemoveTag(tag) }
+                    }
+                }
+                Button(L10n.tr("Clear Tags", "清空标签"), action: onClearTags)
+            }
+            Divider()
+            Button(L10n.tr("Open in Editor", "在编辑器中打开"), action: onOpen)
+            Button(L10n.tr("Pin", "贴图"), action: onPin)
+            Button(L10n.tr("Copy", "复制"), action: onCopy)
+            Button(L10n.tr("Show in Finder", "在 Finder 中显示"), action: onReveal)
+            Divider()
+            Button(L10n.tr("Delete", "删除"), role: .destructive, action: onDelete)
+        }
     }
 }
 
