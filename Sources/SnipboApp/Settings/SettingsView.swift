@@ -880,7 +880,7 @@ struct SettingsView: View {
 
     private var groupDivider: some View {
         Divider()
-            .padding(.vertical, 12)
+            .padding(.vertical, 10)
     }
 
     private func openKeyboardShortcuts() {
@@ -1045,7 +1045,7 @@ private struct SettingsRow<Content: View>: View {
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minHeight: 28)
+        .frame(minHeight: 26)
     }
 }
 
