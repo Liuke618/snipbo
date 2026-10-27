@@ -12,6 +12,7 @@ final class EditorStylePanelView: NSView {
     private let hexLabel = NSTextField(labelWithString: "#FF0000")
     private let widthSlider = NSSlider(value: 3, minValue: 1, maxValue: 24, target: nil, action: nil)
     private let sizeValueLabel = NSTextField(labelWithString: "3")
+    private let sizeUnitLabel = NSTextField(labelWithString: "px")
     private let fontSizeSlider = NSSlider(value: 24, minValue: 10, maxValue: 96, target: nil, action: nil)
     private let fontPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let boldButton = NSButton(title: "B", target: nil, action: nil)
@@ -257,8 +258,11 @@ final class EditorStylePanelView: NSView {
         hexLabel.toolTip = L10n.tr("Press Tab to copy the color", "按 Tab 复制色值")
         sizeValueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         sizeValueLabel.textColor = .secondaryLabelColor
-        sizeValueLabel.alignment = .center
+        sizeValueLabel.alignment = .right
         sizeValueLabel.toolTip = L10n.tr("Size", "数值")
+        sizeUnitLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        sizeUnitLabel.textColor = .tertiaryLabelColor
+        sizeUnitLabel.toolTip = L10n.tr("Pixels", "像素")
         widthSlider.toolTip = L10n.tr(
             "Stroke width — affects the selected annotation, or the next one you draw",
             "线条粗细 — 作用于选中的标注，或接下来绘制的标注"
@@ -337,7 +341,12 @@ final class EditorStylePanelView: NSView {
         arrowButton.target = self
         arrowButton.action = #selector(showArrowMenu)
 
-        let topRow = Self.row([colorWell, hexLabel, widthSlider, fontSizeSlider, sizeValueLabel])
+        let sizeReadout = NSStackView(views: [sizeValueLabel, sizeUnitLabel])
+        sizeReadout.orientation = .horizontal
+        sizeReadout.alignment = .firstBaseline
+        sizeReadout.spacing = 3
+
+        let topRow = Self.row([colorWell, hexLabel, widthSlider, fontSizeSlider, sizeReadout])
 
         textRow.orientation = .horizontal
         textRow.alignment = .centerY
