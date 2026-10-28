@@ -12,7 +12,9 @@ public struct UpdateInstaller: Sendable {
     public static func defaultRelaunch(_ url: URL) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = [url.path]
+        // -n 强制启动新实例:不带它时 open 只会把还在运行的旧实例激活到
+        // 前台,替换后的新包永远不会被拉起。
+        process.arguments = ["-n", url.path]
         try? process.run()
     }
 
@@ -66,7 +68,9 @@ public struct UpdateInstaller: Sendable {
         try process.run()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
-            throw UpdateError.requestFailed("ditto exit \(process.terminationStatus)")
+            // 解压属于安装阶段,失败必须报 installFailed;requestFailed
+            // 是检查阶段的错误,会误导用户以为是网络问题。
+            throw UpdateError.installFailed("ditto exit \(process.terminationStatus)")
         }
     }
 

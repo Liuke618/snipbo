@@ -102,9 +102,15 @@ final class UpdateCoordinator: ObservableObject {
         // 非交互路径兜底:检查/下载/安装进行中时一律不回写,
         // 防止未来的调用方重新引入"静默结果覆盖进行中状态"的问题。
         if !interactive, isBusy { return }
+        // 发布资产按新版本命名(Snipbo-<新版本>-arm64.zip),挑选必须用
+        // tag 推导的目标版本(v0.6.0 → 0.6.0),而不是正在运行的版本;
+        // 与 downloadAndInstall 的推导保持一致。
+        let targetVersion = String(
+            release.tagName.dropFirst(release.tagName.hasPrefix("v") ? 1 : 0)
+        )
         switch SemVer.compare(release.tagName, currentVersion) {
         case .orderedDescending:
-            state = UpdatePackage.pick(from: release, runningVersion: currentVersion) != nil
+            state = UpdatePackage.pick(from: release, runningVersion: targetVersion) != nil
                 ? .available(release)
                 : (interactive ? .failed(.noMatchingAsset) : .idle)
         case .orderedSame, .orderedAscending:
@@ -117,17 +123,25 @@ final class UpdateCoordinator: ObservableObject {
 
     /// 下载校验安装重启的完整流水线。每一步失败都清理下载物。
     func downloadAndInstall() {
-        guard case .available(let release) = state,
-              let picked = UpdatePackage.pick(from: release, runningVersion: currentVersion)
+        guard case .available(let release) = state else { return }
+        // 资产按新版本命名,挑选用 tag 推导的目标版本(v0.6.0 → 0.6.0),
+        // 与 assess 保持一致;传当前运行版本会让精确名匹配永远落空。
+        let expectedVersion = String(
+            release.tagName.dropFirst(release.tagName.hasPrefix("v") ? 1 : 0)
+        )
+        guard let picked = UpdatePackage.pick(from: release, runningVersion: expectedVersion)
         else { return }
+        // 绝不安装未经完整性校验的包:release 缺 .sha256 资产即放弃安装。
+        guard let shaAsset = picked.sha256 else {
+            state = .failed(.noMatchingAsset)
+            return
+        }
         guard Self.canInstallInPlace else {
             state = .failed(.notInstalledInApplications)
             return
         }
         state = .installing
         let zipAsset = picked.zip
-        let shaAsset = picked.sha256
-        let expectedVersion = release.tagName.dropFirst(release.tagName.hasPrefix("v") ? 1 : 0)
         let workspace = workspace
         let installer = installer
         Task { [weak self] in
@@ -139,11 +153,9 @@ final class UpdateCoordinator: ObservableObject {
                 let zipData = try await Self.download(zipAsset, progress: { fraction in
                     Task { @MainActor in self.state = .downloading(fraction) }
                 })
-                if let shaAsset {
-                    let (shaData, _) = try await Self.downloadRaw(shaAsset.url)
-                    guard UpdatePackage.verifySHA256(of: zipData, digestText: String(decoding: shaData, as: UTF8.self)) else {
-                        throw UpdateError.checksumMismatch
-                    }
+                let (shaData, _) = try await Self.downloadRaw(shaAsset.url)
+                guard UpdatePackage.verifySHA256(of: zipData, digestText: String(decoding: shaData, as: UTF8.self)) else {
+                    throw UpdateError.checksumMismatch
                 }
                 let zipURL = workspace.appendingPathComponent(zipAsset.name)
                 try zipData.write(to: zipURL)
@@ -151,21 +163,32 @@ final class UpdateCoordinator: ObservableObject {
                 try installer.unzip(zip: zipURL, into: extractDir)
                 let stagedApp = try installer.findStagedApp(
                     in: extractDir,
-                    expectedVersion: String(expectedVersion)
+                    expectedVersion: expectedVersion
                 )
                 self.state = .installing
                 let newBundle = try installer.install(
                     stagedApp: stagedApp,
                     currentBundle: Bundle.main.bundleURL,
                     workspace: workspace,
-                    newVersion: String(expectedVersion)
+                    newVersion: expectedVersion
                 )
                 try installer.relaunch(newBundle: newBundle)
                 NSApp.terminate(nil)
-            } catch let error as UpdateError {
-                self.state = .failed(error)
             } catch {
-                self.state = .failed(.requestFailed(error.localizedDescription))
+                // 失败即清理下载物:zip 与 staged 解压目录。backup 绝不删除——
+                // install() 一旦开始,里面可能已是旧版的唯一副本。
+                let fm = FileManager.default
+                try? fm.removeItem(at: workspace.appendingPathComponent(zipAsset.name))
+                try? fm.removeItem(at: workspace.appendingPathComponent("staged", isDirectory: true))
+                if let error = error as? UpdateError {
+                    self.state = .failed(error)
+                } else {
+                    // 走到这里时安装流水线早已启动(下载/校验/解压/替换),
+                    // 非 UpdateError 的系统错误按 installFailed 上报,而不是
+                    // 误导性的 requestFailed;检查阶段 checkInteractively
+                    // 自己的 catch 仍保持 requestFailed 映射。
+                    self.state = .failed(.installFailed(error.localizedDescription))
+                }
             }
         }
     }

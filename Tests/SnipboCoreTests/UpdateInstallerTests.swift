@@ -132,6 +132,27 @@ struct UpdateInstallerTests {
         }
     }
 
+    @Test func unzipThrowsInstallFailedOnCorruptZip() throws {
+        let root = tmp
+        try makeDir(root)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // 解压失败属于安装阶段:必须报 installFailed,而不是 requestFailed。
+        let zip = root.appendingPathComponent("broken.zip")
+        try Data("not a zip archive".utf8).write(to: zip)
+        let into = root.appendingPathComponent("staged", isDirectory: true)
+        let installer = UpdateInstaller(relaunch: { _ in })
+        do {
+            try installer.unzip(zip: zip, into: into)
+            Issue.record("expected installFailed")
+        } catch {
+            if case .installFailed = error as? UpdateError {
+                // 预期的安装阶段错误分类,无需断言具体退出码。
+            } else {
+                Issue.record("expected installFailed, got \(error)")
+            }
+        }
+    }
+
     @Test func applicationsDirectoryCheck() {
         #expect(UpdateInstaller.isInstalledInApplications(
             URL(fileURLWithPath: "/Applications/Snipbo.app")
