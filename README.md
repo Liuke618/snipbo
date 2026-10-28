@@ -3,7 +3,7 @@
   <h1>Snipbo</h1>
   <p><strong>截完就能发。</strong> 一个常驻菜单栏的 macOS 截图与标注工具，截图、标注、OCR、贴图全部在本机完成。</p>
   <p>
-    <img alt="版本 0.7.0" src="https://img.shields.io/badge/version-0.7.0-35C3F2?style=flat-square">
+    <img alt="版本 0.8.0" src="https://img.shields.io/badge/version-0.8.0-35C3F2?style=flat-square">
     <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14.0%2B-000000?style=flat-square&logo=apple&logoColor=white">
     <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat-square&logo=swift&logoColor=white">
     <img alt="不联网" src="https://img.shields.io/badge/network-none-17915D?style=flat-square">
