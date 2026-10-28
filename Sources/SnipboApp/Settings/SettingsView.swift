@@ -11,6 +11,8 @@ struct SettingsView: View {
     @ObservedObject var model: SettingsModel
 
     private let labelWidth: CGFloat = 190
+    /// Reading width of the centered update panel (heading + notes card).
+    private let updatePanelWidth: CGFloat = 400
     /// Injected from the window controller so the selection survives view
     /// struct re-initialization (and so probes can drive tab switches).
     @ObservedObject private var tabModel: SettingsTabSelection
@@ -803,13 +805,13 @@ struct SettingsView: View {
 
             groupDivider
 
-            // Aligned to the value column, not the pane edge: an orphaned
-            // left-aligned block below a right-aligned label column reads as a
-            // layout bug.
+            // The update panel is centered in the pane: its old value-column
+            // offset left a wide empty gutter on the left while the notes card
+            // was too narrow. The rows above keep the label/value grid.
             updateStatus
-                .padding(.leading, labelWidth + 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
     /// The version row's right-hand action, mirroring the "Choose…" slot on the
@@ -843,13 +845,14 @@ struct SettingsView: View {
     }
 
     /// Result of the last check. The notes card only exists when a release is
-    /// available, and its fixed height keeps the pane from jumping when one
-    /// appears.
+    /// available and fills the remaining pane height, so long notes scroll
+    /// inside a card that uses the space instead of leaving it empty.
     @ViewBuilder
     private var updateStatus: some View {
         switch updates.state {
         case .upToDate:
             statusLine(L10n.tr("You are up to date.", "已是最新版本。"))
+                .padding(.leading, labelWidth + 12)
         case .available(let release):
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
@@ -878,8 +881,11 @@ struct SettingsView: View {
                     ))
                 }
             }
+            .frame(maxWidth: updatePanelWidth)
+            .frame(maxWidth: .infinity, alignment: .center)
         case .failed(let error):
             statusLine(error.localizedDescription, isError: true)
+                .padding(.leading, labelWidth + 12)
         case .idle, .checking, .downloading, .installing:
             // The button in the version row is the progress readout.
             EmptyView()

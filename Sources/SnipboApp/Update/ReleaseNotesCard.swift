@@ -1,7 +1,9 @@
 import SnipboCore
 import SwiftUI
 
-/// Release notes as a fixed-height, scrollable card.
+/// Release notes as a scrollable card that fills the height its parent
+/// proposes. Overlay scrollers stay hidden until a scroll, so a bottom fade
+/// signals that longer notes continue below the fold.
 ///
 /// `ReleaseNotes` does the block splitting; this view only typesets. Inline
 /// Markdown (bold, links) is left in the text on purpose and resolved here by
@@ -20,13 +22,28 @@ struct ReleaseNotesCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.top, 10)
+            // At the end of the scroll the last line sits above the fade.
+            .padding(.bottom, 32)
         }
-        .frame(height: 210)
-        .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.card)
-                .fill(Color(nsColor: DesignTokens.Color.raised))
-        )
+        .scrollIndicators(.visible)
+        .frame(minHeight: 120, maxHeight: .infinity)
+        .background(Color(nsColor: DesignTokens.Color.raised))
+        .overlay(alignment: .bottom) {
+            // Softens the clipped line at the fold and signals that the notes
+            // continue below; overlay scrollers stay hidden until a scroll.
+            LinearGradient(
+                colors: [
+                    Color(nsColor: DesignTokens.Color.raised).opacity(0),
+                    Color(nsColor: DesignTokens.Color.raised),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 24)
+            .allowsHitTesting(false)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.card))
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.Radius.card)
                 .strokeBorder(Color(nsColor: DesignTokens.Color.stroke), lineWidth: 1)

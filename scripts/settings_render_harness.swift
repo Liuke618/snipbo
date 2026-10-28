@@ -45,18 +45,18 @@ final class ReleaseStubProtocol: URLProtocol {
 func driveIntoAvailableState() async {
     let json = """
     {
-      "tag_name": "v0.7.0",
-      "name": "0.7.0",
+      "tag_name": "v99.0.0",
+      "name": "99.0.0",
       "body": "## What is new\\n\\n- Scroll capture now stitches long pages with a live height readout.\\n- The editor gained a polygon tool, measure arrows and a floating style panel.\\n- AVIF and HEIC export, with a quality slider that survives relaunch.\\n- Fixed: the pin window lost its shadow on a secondary display.\\n\\nSee the release page for the full list of 24 changes.",
       "assets": [
         {
-          "name": "Snipbo-0.7.0-arm64.zip",
-          "browser_download_url": "https://example.invalid/Snipbo-0.7.0-arm64.zip",
+          "name": "Snipbo-99.0.0-arm64.zip",
+          "browser_download_url": "https://example.invalid/Snipbo-99.0.0-arm64.zip",
           "size": 4210000
         },
         {
-          "name": "Snipbo-0.7.0-arm64.zip.sha256",
-          "browser_download_url": "https://example.invalid/Snipbo-0.7.0-arm64.zip.sha256",
+          "name": "Snipbo-99.0.0-arm64.zip.sha256",
+          "browser_download_url": "https://example.invalid/Snipbo-99.0.0-arm64.zip.sha256",
           "size": 96
         }
       ]
