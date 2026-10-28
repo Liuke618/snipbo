@@ -14,6 +14,10 @@ struct SettingsView: View {
     /// Injected from the window controller so the selection survives view
     /// struct re-initialization (and so probes can drive tab switches).
     @ObservedObject private var tabModel: SettingsTabSelection
+    /// Stored, not declared inside the tab body: only a stored dynamic property
+    /// is subscribed, so a local `@ObservedObject` would leave the pane showing
+    /// a stale state after a check finishes.
+    @ObservedObject private var updates = UpdateCoordinator.shared
 
     init(model: SettingsModel, tabSelection: SettingsTabSelection = SettingsTabSelection()) {
         self.model = model
@@ -779,14 +783,15 @@ struct SettingsView: View {
     // MARK: - Updates
 
     private var updatesTab: some View {
-        // Local observation: the pane must redraw whenever the coordinator
-        // republishes its state (check / download / install progress).
-        @ObservedObject var updates = UpdateCoordinator.shared
-        return VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 8) {
                 SettingsRow(L10n.tr("Current version", "当前版本"), labelWidth: labelWidth) {
-                    Text(updates.currentVersion)
-                        .monospacedDigit()
+                    HStack(spacing: 8) {
+                        Text(updates.currentVersion)
+                            .monospacedDigit()
+                        Spacer(minLength: 0)
+                        checkForUpdatesButton
+                    }
                 }
                 SettingsRow(L10n.tr("Check for updates on launch", "启动时检查更新"), labelWidth: labelWidth) {
                     Toggle("", isOn: $model.settings.autoCheckUpdates)
@@ -798,78 +803,114 @@ struct SettingsView: View {
 
             groupDivider
 
-            VStack(alignment: .leading, spacing: 8) {
-                Button {
-                    updates.checkInteractively()
-                } label: {
-                    switch updates.state {
-                    case .checking:
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text(L10n.tr("Checking…", "正在检查…"))
-                        }
-                    case .downloading(let fraction):
-                        HStack(spacing: 6) {
-                            ProgressView(value: fraction)
-                                .frame(width: 90)
-                            Text(L10n.tr("Downloading…", "正在下载…"))
-                        }
-                    case .installing:
-                        Text(L10n.tr("Installing…", "正在安装…"))
-                    default:
-                        Text(L10n.tr("Check for Updates", "检查更新"))
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isUpdateBusy)
+            // Aligned to the value column, not the pane edge: an orphaned
+            // left-aligned block below a right-aligned label column reads as a
+            // layout bug.
+            updateStatus
+                .padding(.leading, labelWidth + 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 
-                switch updates.state {
-                case .upToDate:
-                    Text(L10n.tr("You are up to date.", "已是最新版本。"))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                case .available(let release):
+    /// The version row's right-hand action, mirroring the "Choose…" slot on the
+    /// General tab. It carries the progress states in place, so a check never
+    /// reflows the pane.
+    private var checkForUpdatesButton: some View {
+        Button {
+            updates.checkInteractively()
+        } label: {
+            switch updates.state {
+            case .checking:
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(L10n.tr("Checking…", "正在检查…"))
+                }
+            case .downloading(let fraction):
+                HStack(spacing: 6) {
+                    ProgressView(value: fraction)
+                        .frame(width: 80)
+                    Text(L10n.tr("Downloading…", "正在下载…"))
+                }
+            case .installing:
+                Text(L10n.tr("Installing…", "正在安装…"))
+            default:
+                Text(L10n.tr("Check for Updates", "检查更新"))
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(isUpdateBusy)
+    }
+
+    /// Result of the last check. The notes card only exists when a release is
+    /// available, and its fixed height keeps the pane from jumping when one
+    /// appears.
+    @ViewBuilder
+    private var updateStatus: some View {
+        switch updates.state {
+        case .upToDate:
+            statusLine(L10n.tr("You are up to date.", "已是最新版本。"))
+        case .available(let release):
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
                     Text(L10n.tr(
                         "Version \(release.displayName) is available.",
-                        "新版本可用:\(release.displayName)。"
+                        "新版本 \(release.displayName) 可用。"
                     ))
-                        .font(.system(size: 12, weight: .medium))
-                    if !release.notes.isEmpty {
-                        Text(String(release.notes.prefix(600)))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(8)
-                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    Spacer(minLength: 0)
                     if UpdateCoordinator.canInstallInPlace {
                         Button(L10n.tr("Download and Install", "下载并安装")) {
                             updates.downloadAndInstall()
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
-                    } else {
-                        Text(L10n.tr(
-                            "This copy runs from a development folder, so it cannot be updated in place. Install the downloaded app into /Applications manually.",
-                            "当前副本运行在开发目录,无法原位更新;请手动把下载的 app 拖入 /Applications。"
-                        ))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+                        .disabled(isUpdateBusy)
                     }
-                case .failed(let error):
-                    Text(error.localizedDescription)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.red)
-                default:
-                    EmptyView()
+                }
+                if !release.notes.isEmpty {
+                    ReleaseNotesCard(notes: release.notes)
+                }
+                if !UpdateCoordinator.canInstallInPlace {
+                    caveat(L10n.tr(
+                        "This copy runs from a development folder, so it cannot be updated in place. Move the downloaded app into the Applications folder manually.",
+                        "当前副本运行在开发目录，无法原位更新；请手动把下载的 app 拖入「应用程序」文件夹。"
+                    ))
                 }
             }
+        case .failed(let error):
+            statusLine(error.localizedDescription, isError: true)
+        case .idle, .checking, .downloading, .installing:
+            // The button in the version row is the progress readout.
+            EmptyView()
         }
+    }
+
+    private func statusLine(_ text: String, isError: Bool = false) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(
+                isError ? Color.red : Color(nsColor: DesignTokens.Color.textSecondary)
+            )
+    }
+
+    /// Quieter than the notes on purpose: it is a constraint on this build, not
+    /// part of what changed.
+    private func caveat(_ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 10))
+            Text(text)
+                .font(.system(size: 11))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(Color(nsColor: DesignTokens.Color.textTertiary))
     }
 
     /// Mirrors `UpdateCoordinator`'s busy states so the check button cannot
     /// re-enter a check/download/install already in flight.
     private var isUpdateBusy: Bool {
-        switch UpdateCoordinator.shared.state {
+        switch updates.state {
         case .checking, .downloading, .installing: return true
         default: return false
         }
