@@ -7,6 +7,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let onCapture: (CaptureCommand) -> Void
     private let onSettings: () -> Void
     private let onHistoryBrowser: () -> Void
+    private let onCheckUpdates: () -> Void
     private let hotkeyFor: (String) -> Hotkey?
     private let recentMenu: NSMenu
     private let pinsMenu: NSMenu
@@ -20,6 +21,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         onCapture: @escaping (CaptureCommand) -> Void,
         onSettings: @escaping () -> Void,
         onHistoryBrowser: @escaping () -> Void,
+        onCheckUpdates: @escaping () -> Void,
         hotkeyFor: @escaping (String) -> Hotkey?,
         recentMenu: NSMenu,
         pinsMenu: NSMenu,
@@ -31,6 +33,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.onCapture = onCapture
         self.onSettings = onSettings
         self.onHistoryBrowser = onHistoryBrowser
+        self.onCheckUpdates = onCheckUpdates
         self.hotkeyFor = hotkeyFor
         self.recentMenu = recentMenu
         self.pinsMenu = pinsMenu
@@ -215,6 +218,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let settingsItem = makeItem(L10n.tr("Settings…", "设置…"), icon: "settings", action: #selector(openSettings))
         settingsItem.keyEquivalent = ","
         menu.addItem(settingsItem)
+        menu.addItem(makeItem(
+            L10n.tr("Check for Updates…", "检查更新…"),
+            icon: "chevrons-down",
+            action: #selector(checkForUpdates)
+        ))
         addSeparator(to: menu)
 
         let quitItem = makeItem(L10n.tr("Quit Snipbo", "退出 Snipbo"), icon: "log-out", action: #selector(quit))
@@ -274,6 +282,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func recordRegion() { onCapture(.recordRegion) }
     @objc private func recordScreen() { onCapture(.recordScreen) }
     @objc private func openSettings() { onSettings() }
+    @objc private func checkForUpdates() { onCheckUpdates() }
     @objc private func openHistoryBrowser() { onHistoryBrowser() }
     @objc private func quit() { onQuit() }
 }

@@ -50,6 +50,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         L10n.setLanguage(settings.uiLanguage)
+        // SnipboCore's update errors carry their own internal L10n mirror the
+        // app's copy shadows; keep both in sync so they render alike.
+        SnipboCore.L10n.setLanguage(settings.uiLanguage)
         applyAppearance(settings.appearance)
         ImageDragSupport.cleanup()
         PinBoard.shared.restore()
@@ -61,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onCapture: { command in coordinator.start(command) },
             onSettings: { [weak self] in self?.showSettings() },
             onHistoryBrowser: { [weak self] in self?.showHistoryBrowser() },
+            onCheckUpdates: { [weak self] in self?.showSettingsOnUpdatesTab() },
             hotkeyFor: { [weak self] mode in self?.settings.hotkey(for: mode) },
             recentMenu: recentController.menu,
             pinsMenu: pinsController.menu,
@@ -106,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.applyModeHotkeys(newSettings)
             self.syncLoginItem(newSettings)
             L10n.setLanguage(newSettings.uiLanguage)
+            SnipboCore.L10n.setLanguage(newSettings.uiLanguage)
             self.applyAppearance(newSettings.appearance)
             if newSettings.uiLanguage != self.appliedLanguage {
                 self.appliedLanguage = newSettings.uiLanguage
@@ -156,6 +161,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingURLs.removeAll()
         for url in urls {
             handleURL(url)
+        }
+
+        // Silent update check shortly after launch; the coordinator swallows
+        // every failure and "no new version" outcome. `shared` is a singleton,
+        // so the task captures nothing.
+        Task {
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            UpdateCoordinator.shared.checkSilently()
         }
     }
 
@@ -425,6 +438,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindowController = SettingsWindowController(model: settingsModel)
         }
         settingsWindowController?.show()
+    }
+
+    /// The status menu's "Check for Updates": opens Settings parked on the
+    /// Updates tab and starts a check in the same user gesture. `show()`
+    /// resets to the General tab, so the tab is set after it.
+    private func showSettingsOnUpdatesTab() {
+        showSettings()
+        settingsWindowController?.tabSelection.tab = .updates
+        UpdateCoordinator.shared.checkInteractively()
     }
 
     /// Handles ⌘Q, ⌘W and ⌘, while Snipbo is frontmost. For ⌘, capture must be

@@ -2,13 +2,14 @@ import Foundation
 
 // SnipboCore cannot see the app target's L10n, so the updater carries its own
 // minimal mirror of it (same bilingual contract: `tr("English", "中文")`).
-// Internal on purpose — the app target keeps its own L10n, which shadows this
-// one inside SnipboApp sources.
-enum L10n {
+// `setLanguage` is public so the app target can keep this mirror in sync with
+// its own L10n (the app's copy shadows this one for unqualified lookups);
+// `tr`/`isChinese` stay internal and are only used inside SnipboCore.
+public enum L10n {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var language: AppLanguage = .system
 
-    static func setLanguage(_ language: AppLanguage) {
+    public static func setLanguage(_ language: AppLanguage) {
         lock.lock()
         defer { lock.unlock() }
         self.language = language
