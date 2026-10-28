@@ -779,33 +779,99 @@ struct SettingsView: View {
     // MARK: - Updates
 
     private var updatesTab: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // Local observation: the pane must redraw whenever the coordinator
+        // republishes its state (check / download / install progress).
+        @ObservedObject var updates = UpdateCoordinator.shared
+        return VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 8) {
                 SettingsRow(L10n.tr("Current version", "当前版本"), labelWidth: labelWidth) {
-                    Text(versionText)
+                    Text(updates.currentVersion)
                         .monospacedDigit()
+                }
+                SettingsRow(L10n.tr("Check for updates on launch", "启动时检查更新"), labelWidth: labelWidth) {
+                    Toggle("", isOn: $model.settings.autoCheckUpdates)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
                 }
             }
 
             groupDivider
 
             VStack(alignment: .leading, spacing: 8) {
-                Text(L10n.tr("Getting updates", "获取更新"))
-                    .font(.system(size: 13, weight: .semibold))
-                Text(L10n.tr(
-                    "This app never contacts the network, so it cannot check for updates itself. Download the newest Snipbo.app from the GitHub Releases page and drag it into /Applications to replace the old copy — your settings and history are kept.",
-                    "本应用完全不联网，因此无法自动检查更新。请到 GitHub Releases 页面下载最新的 Snipbo.app，拖入 /Applications 替换旧版本即可 —— 设置与历史记录会自动保留。"
-                ))
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-
-                Button(L10n.tr("Open GitHub Releases", "打开 GitHub Releases 页面")) {
-                    if let url = URL(string: "https://github.com/Liuke618/snipbo/releases") {
-                        NSWorkspace.shared.open(url)
+                Button {
+                    updates.checkInteractively()
+                } label: {
+                    switch updates.state {
+                    case .checking:
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text(L10n.tr("Checking…", "正在检查…"))
+                        }
+                    case .downloading(let fraction):
+                        HStack(spacing: 6) {
+                            ProgressView(value: fraction)
+                                .frame(width: 90)
+                            Text(L10n.tr("Downloading…", "正在下载…"))
+                        }
+                    case .installing:
+                        Text(L10n.tr("Installing…", "正在安装…"))
+                    default:
+                        Text(L10n.tr("Check for Updates", "检查更新"))
                     }
                 }
+                .buttonStyle(.bordered)
                 .controlSize(.small)
+                .disabled(isUpdateBusy)
+
+                switch updates.state {
+                case .upToDate:
+                    Text(L10n.tr("You are up to date.", "已是最新版本。"))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                case .available(let release):
+                    Text(L10n.tr(
+                        "Version \(release.displayName) is available.",
+                        "新版本可用:\(release.displayName)。"
+                    ))
+                        .font(.system(size: 12, weight: .medium))
+                    if !release.notes.isEmpty {
+                        Text(String(release.notes.prefix(600)))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(8)
+                    }
+                    if UpdateCoordinator.canInstallInPlace {
+                        Button(L10n.tr("Download and Install", "下载并安装")) {
+                            updates.downloadAndInstall()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    } else {
+                        Text(L10n.tr(
+                            "This copy runs from a development folder, so it cannot be updated in place. Install the downloaded app into /Applications manually.",
+                            "当前副本运行在开发目录,无法原位更新;请手动把下载的 app 拖入 /Applications。"
+                        ))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                case .failed(let error):
+                    Text(error.localizedDescription)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.red)
+                default:
+                    EmptyView()
+                }
             }
+        }
+    }
+
+    /// Mirrors `UpdateCoordinator`'s busy states so the check button cannot
+    /// re-enter a check/download/install already in flight.
+    private var isUpdateBusy: Bool {
+        switch UpdateCoordinator.shared.state {
+        case .checking, .downloading, .installing: return true
+        default: return false
         }
     }
 
@@ -831,8 +897,8 @@ struct SettingsView: View {
                 ))
                 .font(.system(size: 12))
                 Text(L10n.tr(
-                    "Privacy: the app makes no network requests at all — no uploads, no telemetry, no crash reporting. Screenshots never leave your computer.",
-                    "隐私：本应用不发起任何网络请求 —— 无上传、无遥测、无崩溃上报。截图永远留在你的电脑上。"
+                    "Privacy: screenshots never leave your computer. The only outbound traffic is checking for updates on GitHub Releases — no uploads, no telemetry, no crash reporting.",
+                    "隐私:截图永远留在你的电脑上。唯一的对外请求是向 GitHub Releases 检查更新 —— 无上传、无遥测、无崩溃上报。"
                 ))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -933,8 +999,8 @@ struct SettingsView: View {
 }
 
 /// The Settings window's tabs. Uploading/License/Diagnostics tabs are
-/// intentionally absent: the app makes no network requests, collects nothing,
-/// and has no licensing. Updates is manual-only for the same reason.
+/// intentionally absent: the app collects nothing and has no licensing.
+/// Updates talks only to GitHub Releases, via `UpdateCoordinator`.
 @MainActor
 enum SettingsTab: String, CaseIterable {
     case general, hotkeys, actions, advanced, export, recording, updates, about
