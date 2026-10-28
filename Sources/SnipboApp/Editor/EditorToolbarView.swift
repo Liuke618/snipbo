@@ -13,6 +13,17 @@ extension NSColor {
     }
 }
 
+/// The editor's primary action: an accent-filled tile that stays visible at
+/// rest, unlike the quiet icon buttons, so copy-and-close reads as the obvious
+/// way out. Hover brightens the fill and a press dims it.
+@MainActor
+private final class AccentActionButton: HoverButton {
+    override var washColor: NSColor { DesignTokens.Color.accent }
+    override var hoverAlpha: CGFloat { 1 }
+    override var pressedAlpha: CGFloat { 0.7 }
+    override var washInset: CGFloat { 0 }
+}
+
 /// Shottr-style editor toolbar pinned to the top of a full-size-content
 /// window: actions and tools on the left, recognize/undo/redo and the live
 /// size/zoom readouts on the right. The style controls live in the floating
@@ -24,7 +35,7 @@ final class EditorToolbarView: NSView {
     private let redactButton = NSButton()
     private let recognizeButton = NSButton()
     private let pinButton = NSButton()
-    private let copyButton = NSButton()
+    private let copyButton = AccentActionButton(frame: .zero)
     private let saveButton = NSButton()
     private let undoButton = NSButton()
     private let redoButton = NSButton()
@@ -132,7 +143,12 @@ final class EditorToolbarView: NSView {
         )
         pinButton.toolTip = L10n.tr("Pin as floating window (⌘P)", "贴图置顶 (⌘P)")
         copyButton.image = EditorToolbarView.icon("copy")
-        copyButton.toolTip = L10n.tr("Copy and close (Enter)", "复制并关闭 (Enter)")
+        copyButton.contentTintColor = .white
+        copyButton.baseFillAlpha = 0.9
+        copyButton.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        copyButton.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        copyButton.toolTip = L10n.tr("Copy and close (⌘C / Enter)", "复制并关闭 (⌘C / Enter)")
+        copyButton.setAccessibilityLabel(L10n.tr("Copy and close", "复制并关闭"))
         saveButton.image = EditorToolbarView.icon("save")
         saveButton.toolTip = L10n.tr("Save (⌘S)", "保存 (⌘S)")
         undoButton.image = EditorToolbarView.icon("undo-2")
@@ -193,19 +209,22 @@ final class EditorToolbarView: NSView {
             background.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        // Leading: window actions + tools. Trailing: recognize, undo/redo, and
-        // the size/zoom readouts. The spacer stretches so the trailing group
-        // hugs the right edge at any window width. The leading inset clears
-        // the traffic lights, which sit inside this strip since the window is
-        // full-size-content (72 ≈ 3 buttons + system padding + breathing room).
+        // Leading: secondary window actions + tools. Trailing: recognize,
+        // undo/redo, the size/zoom readouts, and the accent copy-and-close
+        // action at the far right edge — the most-used action sits where the
+        // pointer already is after a selection. The spacer stretches so the
+        // trailing group hugs the right edge at any window width. The leading
+        // inset clears the traffic lights, which sit inside this strip since
+        // the window is full-size-content (72 ≈ 3 buttons + system padding +
+        // breathing room).
         let leading = NSStackView(views: [
-            copyButton, saveButton, pinButton, Self.separator(), toolsStack,
+            saveButton, pinButton, Self.separator(), toolsStack,
         ])
         leading.orientation = .horizontal
         leading.spacing = DesignTokens.Spacing.tight
         let trailing = NSStackView(views: [
             redactButton, recognizeButton, undoButton, redoButton, Self.separator(),
-            sizeButton, zoomLabel,
+            sizeButton, zoomLabel, copyButton,
         ])
         trailing.orientation = .horizontal
         trailing.spacing = DesignTokens.Spacing.tight

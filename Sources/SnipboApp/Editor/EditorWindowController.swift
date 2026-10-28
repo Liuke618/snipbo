@@ -192,11 +192,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             body.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
         refreshReadouts()
-        // Cmd+C copies without closing; Enter and the toolbar Copy button copy
-        // and close.
-        canvas.onCopy = { [weak self] in
-            Task { await self?.copyToPasteboard() }
-        }
+        // Cmd+C, Enter and the toolbar Copy button all copy and close.
         canvas.onCopyAndClose = { [weak self] in self?.copyAndClose() }
         canvas.onPin = { [weak self] in self?.pinAction() }
         canvas.onSave = { [weak self] in self?.saveAndClose(saveAs: false) }
@@ -547,7 +543,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                 if modifiers.contains(.shift) { controller.redo() } else { controller.undo() }
                 return true
             case "c":
-                Task { await self.copyToPasteboard() }
+                copyAndClose()
                 return true
             case "p":
                 pinAction()
@@ -760,8 +756,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         canvas.commitPendingText()
     }
 
-    /// Renders the document and writes it to the pasteboard, keeping the editor
-    /// open. Returns false when the image could not be encoded or written.
+    /// Renders the document and writes it to the pasteboard without closing.
+    /// Used by probes; the editor's own shortcuts all finish with a close.
+    /// Returns false when the image could not be encoded or written.
     @discardableResult
     func copyToPasteboard() async -> Bool {
         guard beginExport() else { return false }
@@ -805,9 +802,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         alert.runModal()
     }
 
-    /// Copies the rendered document and closes the editor. Enter, the toolbar
-    /// Copy button, and any other "copy and finish" action use this; Cmd+C uses
-    /// `copyToPasteboard()` and keeps the editor open.
+    /// Copies the rendered document and closes the editor. Enter, Cmd+C, the
+    /// toolbar Copy button, and any other "copy and finish" action use this.
     func copyAndClose() {
         guard beginExport() else { return }
         Task { [weak self] in

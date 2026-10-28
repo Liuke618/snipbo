@@ -13,9 +13,7 @@ final class EditorCanvasView: NSView {
     private(set) var zoom: CGFloat = 1
     var onFit: (() -> Void)?
     var onActualSize: (() -> Void)?
-    /// Cmd+C: copy without closing.
-    var onCopy: (() -> Void)?
-    /// Enter: copy and close.
+    /// Enter or Cmd+C: copy and close.
     var onCopyAndClose: (() -> Void)?
     /// Cmd+P: pin the rendered image as a floating window.
     var onPin: (() -> Void)?
@@ -626,7 +624,7 @@ final class EditorCanvasView: NSView {
                 if event.modifierFlags.contains(.shift) { onSaveAs?() } else { onSave?() }
                 return
             case "c":
-                onCopy?()
+                onCopyAndClose?()
                 return
             case "p":
                 onPin?()
