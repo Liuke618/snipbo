@@ -1,1 +1,1 @@
-public let snipboVersion = "0.8.0"
+public let snipboVersion = "0.9.0"
