@@ -85,6 +85,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         )
     }
 
+    /// Exposed for probes: the built menu, so the hidden-item filter can be
+    /// asserted without opening the status item.
+    var statusMenu: NSMenu? { statusItem.menu }
+
     private func rebuildMenu() {
         guard let menu = statusItem.menu else { return }
         menu.removeAllItems()
@@ -116,11 +120,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let windowItem = makeItem(StatusMenuItem.window.title, icon: "app-window", action: #selector(captureWindow))
         applyKeyEquivalent(windowItem, mode: "window")
         add(windowItem, as: .window, to: menu)
-        menu.addItem(makeItem(
-            StatusMenuItem.appWindows.title,
-            icon: "layers",
-            action: #selector(captureAppWindows)
-        ))
+        add(
+            makeItem(
+                StatusMenuItem.appWindows.title,
+                icon: "layers",
+                action: #selector(captureAppWindows)
+            ),
+            as: .appWindows,
+            to: menu
+        )
 
         let screenItem = makeItem(StatusMenuItem.screen.title, icon: "monitor", action: #selector(captureScreen))
         applyKeyEquivalent(screenItem, mode: "screen")
