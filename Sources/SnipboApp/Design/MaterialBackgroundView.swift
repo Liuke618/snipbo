@@ -1,8 +1,8 @@
 import AppKit
 
 /// Fixed dark fill behind toolbars and floating panels, from the design token
-/// palette. It never takes mouse events, so buttons and window dragging on top
-/// keep working.
+/// palette. It is click-through on its own surface, so buttons on top and
+/// window dragging behind keep working.
 ///
 /// This was an `NSVisualEffectView` when surfaces followed the system
 /// appearance; the fixed dark palette replaces materials with literal fills,
@@ -33,7 +33,14 @@ final class MaterialBackgroundView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    /// Ignores clicks that land on the fill itself, so the surface behind
+    /// (a window drag, the canvas) still gets them. Returning `nil` outright
+    /// would prune the whole subtree, which silently kills any control
+    /// hosted inside the plate.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self ? nil : hit
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius)
