@@ -67,6 +67,9 @@ final class UpdateCoordinator: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             guard let release = try? await self.checker.check() else { return }
+            // 网络等待期间状态可能已被交互检查/下载/安装流程改写;
+            // 不再是 idle 就整体放弃,绝不能把进行中的状态冲掉。
+            guard case .idle = self.state else { return }
             await self.assess(release: release, interactive: false)
         }
     }
@@ -96,6 +99,9 @@ final class UpdateCoordinator: ObservableObject {
     }
 
     private func assess(release: UpdateRelease, interactive: Bool) async {
+        // 非交互路径兜底:检查/下载/安装进行中时一律不回写,
+        // 防止未来的调用方重新引入"静默结果覆盖进行中状态"的问题。
+        if !interactive, isBusy { return }
         switch SemVer.compare(release.tagName, currentVersion) {
         case .orderedDescending:
             state = UpdatePackage.pick(from: release, runningVersion: currentVersion) != nil
