@@ -591,7 +591,7 @@ private final class HistorySearchFieldView: NSSearchField, NSSearchFieldDelegate
         delegate = self
         pollTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) {
             [weak self] _ in
-            self?.poll()
+            Task { @MainActor in self?.poll() }
         }
     }
 

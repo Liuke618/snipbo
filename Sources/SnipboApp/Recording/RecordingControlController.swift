@@ -120,7 +120,7 @@ final class RecordingControlController {
         panel.makeKey()
         let timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) {
             [weak self] _ in
-            self?.updateLabel()
+            Task { @MainActor in self?.updateLabel() }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
