@@ -50,7 +50,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
-        if let icon = Self.icon("focus", size: 18) {
+        if let icon = Self.icon("pinwheel", size: 18) {
             statusItem.button?.image = icon
         } else {
             statusItem.button?.image = NSImage(

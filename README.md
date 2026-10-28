@@ -3,7 +3,7 @@
   <h1>Snipbo</h1>
   <p><strong>截完就能发。</strong> 一个常驻菜单栏的 macOS 截图与标注工具，截图、标注、OCR、贴图全部在本机完成。</p>
   <p>
-    <img alt="版本 0.5.0" src="https://img.shields.io/badge/version-0.5.0-35C3F2?style=flat-square">
+    <img alt="版本 0.7.0" src="https://img.shields.io/badge/version-0.7.0-35C3F2?style=flat-square">
     <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14.0%2B-000000?style=flat-square&logo=apple&logoColor=white">
     <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat-square&logo=swift&logoColor=white">
     <img alt="不联网" src="https://img.shields.io/badge/network-none-17915D?style=flat-square">
@@ -14,7 +14,7 @@ Snipbo 把「截图 → 标注 → 交付」压缩成一次快捷键：按下默
 
 ![Snipbo 编辑器](docs/images/editor.png)
 
-<p align="center"><sub>15 种标注工具、浮动样式面板、像素化、测量与 OCR 都在同一个编辑器里。截图中「Pulse」为演示内容。</sub></p>
+<p align="center"><sub>17 种标注工具、浮动样式面板、像素化、测量与 OCR 都在同一个编辑器里。截图中「Pulse」为演示内容。</sub></p>
 
 ## 界面
 
@@ -223,6 +223,15 @@ swift run snipbo-cli --help # 查看命令行用法
 ./scripts/build_app.sh      # release 构建并打包到 dist/Snipbo.app，同时生成 dist/snipbo
 ```
 
+应用图标由 `scripts/make_icon.swift` 按尺寸逐档矢量绘制（紫色渐变底 + 白色五叶风车），改动后重新生成并打包：
+
+```bash
+swift scripts/make_icon.swift
+iconutil -c icns Resources/AppIcon.iconset -o Resources/AppIcon.icns
+```
+
+菜单栏图标是 `Resources/Icons/pinwheel.svg`，同一风车造型的单色 template 版本，缝隙加宽以适应 18 pt。
+
 `swift run` 产出的未打包进程不能用于验证屏幕录制权限，TCC 相关测试请始终运行打包后的 `dist/Snipbo.app`。
 
 仓库内还有几个不需要真实屏幕的验证脚本：
@@ -231,6 +240,9 @@ swift run snipbo-cli --help # 查看命令行用法
 ./scripts/run_editor_probe.sh          # 编辑器行为探针
 ./scripts/run_scroll_verify_harness.sh # 滚动拼接验证
 ./scripts/run_final_fix_harness.sh     # 截图交付路径验证
+./scripts/run_surface_hit_probe.sh     # 工具栏与样式面板的点击命中链路
+./scripts/run_status_menu_probe.sh     # 菜单项隐藏是否真正生效
+./scripts/run_settings_render.sh       # 设置分页离屏渲染，检查排版
 ```
 
 ### 技术栈
@@ -258,7 +270,7 @@ swift run snipbo-cli --help # 查看命令行用法
 
 ## 第三方资源
 
-工具栏与菜单图标来自 [Lucide](https://lucide.dev)，按 ISC 许可证使用，许可全文见 `Resources/Icons/LICENSE`。运行时仅使用 Apple 系统框架，无第三方依赖。
+工具栏与菜单项图标来自 [Lucide](https://lucide.dev)，按 ISC 许可证使用，许可全文见 `Resources/Icons/LICENSE`；应用图标与菜单栏风车图标为本项目绘制。运行时仅使用 Apple 系统框架，无第三方依赖。
 
 ## 许可证
 
