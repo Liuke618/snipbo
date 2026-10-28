@@ -22,7 +22,17 @@ struct ImageExporterTests {
 
     @Test func testHEICAndAVIFExportDecodes() throws {
         let image = try makeSolidImage(width: 24, height: 16)
+        // AVIF encoding needs a platform encoder (hardware on Apple silicon,
+        // or the AVF encoder service). CI's virtualized runners can lack one
+        // and ImageIO then returns nil — that is the environment, not a
+        // regression, so probe with a 1×1 first and only assert on machines
+        // that can encode at all.
+        let avifProbe = makeSolidImage(width: 1, height: 1)
+        let avifSupported = ImageExporter.data(from: avifProbe, format: .avif, quality: 0.8) != nil
         for format in [ImageFormat.heic, .avif] {
+            if format == .avif && !avifSupported {
+                continue
+            }
             let data = try #require(
                 ImageExporter.data(from: image, format: format, quality: 0.8),
                 "\(format) encoding returned nil"
