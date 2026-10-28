@@ -15,6 +15,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let lastRegionAvailable: () -> Bool
     private let onQuit: () -> Void
     private let hiddenStatusItems: () -> Set<StatusMenuItem>
+    /// 发现新版本时返回完整的「安装更新 x.y.z」标题,菜单用该项替换
+    /// 「检查更新…」;返回 nil 表示没有可安装的更新。由 AppDelegate
+    /// 提供,读取 UpdateCoordinator 的当前状态。
+    private let updateItemTitle: () -> String?
     private var lastRegionItem: NSMenuItem?
 
     init(
@@ -28,7 +32,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         presetsMenu: NSMenu,
         lastRegionAvailable: @escaping () -> Bool,
         onQuit: @escaping () -> Void,
-        hiddenStatusItems: @escaping () -> Set<StatusMenuItem>
+        hiddenStatusItems: @escaping () -> Set<StatusMenuItem>,
+        updateItemTitle: @escaping () -> String?
     ) {
         self.onCapture = onCapture
         self.onSettings = onSettings
@@ -41,6 +46,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         self.lastRegionAvailable = lastRegionAvailable
         self.onQuit = onQuit
         self.hiddenStatusItems = hiddenStatusItems
+        self.updateItemTitle = updateItemTitle
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -218,8 +224,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let settingsItem = makeItem(L10n.tr("Settings…", "设置…"), icon: "settings", action: #selector(openSettings))
         settingsItem.keyEquivalent = ","
         menu.addItem(settingsItem)
+        // 发现新版本时该项变为「安装更新 x.y.z」;点击仍然只是打开设置的
+        // Updates 页(checkForUpdates 路径),绝不从菜单直接开始下载。
+        let updatesTitle = updateItemTitle() ?? L10n.tr("Check for Updates…", "检查更新…")
         menu.addItem(makeItem(
-            L10n.tr("Check for Updates…", "检查更新…"),
+            updatesTitle,
             icon: "chevrons-down",
             action: #selector(checkForUpdates)
         ))

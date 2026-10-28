@@ -1,10 +1,12 @@
 import AppKit
+import Combine
 import ImageIO
 import SnipboCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItemController: StatusItemController?
+    private var updateStateCancellable: AnyCancellable?
     private var hotkeyService: HotkeyService?
     private let settingsModel = SettingsModel()
     private var settings: AppSettings { settingsModel.settings }
@@ -71,8 +73,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             presetsMenu: presetsController.menu,
             lastRegionAvailable: { coordinator.canCaptureLastRegion() },
             onQuit: { NSApp.terminate(nil) },
-            hiddenStatusItems: { [weak self] in self?.settings.hiddenStatusItems ?? [] }
+            hiddenStatusItems: { [weak self] in self?.settings.hiddenStatusItems ?? [] },
+            updateItemTitle: { [weak self] in self?.updateMenuTitle() }
         )
+        // The coordinator's state changes drive the menu's「检查更新…」⇄
+        // 「安装更新 x.y.z」swap: rebuild on every objectWillChange (emitted
+        // on the main actor; the Task hop makes sure the new state is
+        // visible when the title closure runs).
+        updateStateCancellable = UpdateCoordinator.shared.objectWillChange
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.statusItemController?.refreshLocalization()
+                }
+            }
         statusItemController?.setIconHidden(settings.hideMenuBarIcon)
         var handlers: [UInt32: @MainActor () -> Void] = [:]
         for mode in AppSettings.hotkeyModeIDs {
@@ -447,6 +460,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showSettings()
         settingsWindowController?.tabSelection.tab = .updates
         UpdateCoordinator.shared.checkInteractively()
+    }
+
+    /// Title for the status menu's update item: 「安装更新 x.y.z」 while a
+    /// release has been discovered and not yet installed, nil otherwise
+    /// (the menu then keeps the plain「检查更新…」item). The version comes
+    /// from the release tag, so a silent background discovery surfaces here
+    /// even when no window was ever opened.
+    private func updateMenuTitle() -> String? {
+        guard case .available(let release) = UpdateCoordinator.shared.state else { return nil }
+        let version = release.tagName.dropFirst(release.tagName.hasPrefix("v") ? 1 : 0)
+        return L10n.tr("Install Update", "安装更新") + " \(version)"
     }
 
     /// Handles ⌘Q, ⌘W and ⌘, while Snipbo is frontmost. For ⌘, capture must be
