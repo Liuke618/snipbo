@@ -213,7 +213,7 @@ struct ScrollVerifyHarness {
         }
         // Let the last enqueued frame finish processing before stopping.
         try await Task.sleep(nanoseconds: 700_000_000)
-        return run.processor.stopAndWait()
+        return await run.processor.stopAndWait()
     }
 
     // MARK: - Ruler rendering

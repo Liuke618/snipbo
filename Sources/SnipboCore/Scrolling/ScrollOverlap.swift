@@ -88,16 +88,24 @@ public enum ScrollOverlap {
             height: rows
         )) else { return nil }
         var data = [UInt8](repeating: 0, count: image.width * rows)
-        guard let context = CGContext(
-            data: &data,
-            width: image.width,
-            height: rows,
-            bitsPerComponent: 8,
-            bytesPerRow: image.width,
-            space: CGColorSpaceCreateDeviceGray(),
-            bitmapInfo: CGImageAlphaInfo.none.rawValue
-        ) else { return nil }
-        context.draw(slice, in: CGRect(x: 0, y: 0, width: image.width, height: rows))
+        // The context keeps using the buffer pointer, so its whole lifetime —
+        // creation, drawing and release — must stay inside the pointer's
+        // validity window.
+        let rendered = data.withUnsafeMutableBytes { buffer -> Bool in
+            guard let base = buffer.baseAddress,
+                  let context = CGContext(
+                      data: base,
+                      width: image.width,
+                      height: rows,
+                      bitsPerComponent: 8,
+                      bytesPerRow: image.width,
+                      space: CGColorSpaceCreateDeviceGray(),
+                      bitmapInfo: CGImageAlphaInfo.none.rawValue
+                  ) else { return false }
+            context.draw(slice, in: CGRect(x: 0, y: 0, width: image.width, height: rows))
+            return true
+        }
+        guard rendered else { return nil }
         return GrayRows(data: data, width: image.width, rows: rows)
     }
 

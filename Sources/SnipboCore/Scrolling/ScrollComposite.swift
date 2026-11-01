@@ -5,6 +5,10 @@ import CoreGraphics
 /// rows prepended above the composite are kept as small slices and composed
 /// once when the capture stops.
 ///
+/// The registration strips are served from two small rolling buffers, seeded
+/// from the initial frame and shifted incrementally by `append`/`prepend`, so
+/// the full-height main buffer is never copied on the per-frame path.
+///
 /// Thread confinement: one instance is used from a single serial work queue.
 public final class ScrollComposite {
     private let width: Int
@@ -18,6 +22,16 @@ public final class ScrollComposite {
     /// frame so a long upward scroll does not retain every full viewport.
     private var headSlices: [CGImage] = []
     private var headHeight = 0
+
+    /// Rolling registration-strip buffers. Each context holds the first
+    /// (`topStripValid`) or last (`bottomStripValid`) rows of the composite,
+    /// top-aligned, and is shifted incrementally as rows are prepended or
+    /// appended. When a request exceeds what a buffer holds it is rebuilt from
+    /// the composite and adopted at the larger size.
+    private var topStripContext: CGContext?
+    private var topStripValid = 0
+    private var bottomStripContext: CGContext?
+    private var bottomStripValid = 0
 
     public private(set) var height = 0
     public private(set) var appendedRows = 0
@@ -49,6 +63,21 @@ public final class ScrollComposite {
         mainHeight = initialHeight
         height = initialHeight
         reachedLimit = initialHeight >= maxHeight
+
+        // Seed both strip buffers from the initial frame: at this point the
+        // composite is exactly `initial`, so no copy of the main buffer is
+        // needed. Callers request one viewport of rows, which is what the
+        // initial frame already is.
+        topStripContext = makeStripContext(rows: initialHeight)
+        bottomStripContext = makeStripContext(rows: initialHeight)
+        if let context = topStripContext {
+            draw(initial, atTopRow: 0, in: context, canvasHeight: initialHeight)
+            topStripValid = initialHeight
+        }
+        if let context = bottomStripContext {
+            draw(initial, atTopRow: 0, in: context, canvasHeight: initialHeight)
+            bottomStripValid = initialHeight
+        }
     }
 
     /// Appends the non-overlapping bottom part of `frame`. `offset` is the
@@ -73,6 +102,7 @@ public final class ScrollComposite {
         height += rows
         appendedRows = rows
         reachedLimit = height >= maxHeight
+        rollBottomStrip(with: slice, addedRows: rows)
         return true
     }
 
@@ -100,79 +130,37 @@ public final class ScrollComposite {
         height += prependRows
         appendedRows = prependRows
         reachedLimit = height >= maxHeight
+        rollTopStrip(with: copied, addedRows: prependRows)
         return true
     }
 
     /// The top `rows` rows of the composite, for registering an upward scroll.
     public func topStrip(rows: Int) -> CGImage? {
         let stripRows = min(rows, height)
-        guard stripRows > 0, let context = makeStripContext(rows: stripRows) else {
-            return nil
-        }
-        var topRow = 0
-        var remaining = stripRows
-        for slice in headSlices {
-            guard remaining > 0 else { break }
-            let take = min(slice.height, remaining)
-            guard let part = slice.cropping(to: CGRect(
-                x: 0, y: 0, width: width, height: take
-            )) else { continue }
-            draw(part, atTopRow: topRow, in: context, canvasHeight: stripRows)
-            topRow += take
-            remaining -= take
-        }
-        if remaining > 0,
-           let mainImage = mainContext.makeImage(),
-           let part = mainImage.cropping(to: CGRect(
-               x: 0, y: 0, width: width, height: remaining
+        guard stripRows > 0 else { return nil }
+        if let context = topStripContext, topStripValid >= stripRows,
+           let image = context.makeImage(),
+           let cropped = image.cropping(to: CGRect(
+               x: 0, y: 0, width: width, height: stripRows
            )) {
-            draw(part, atTopRow: topRow, in: context, canvasHeight: stripRows)
+            return cropped
         }
-        return context.makeImage()
+        return rebuildTopStrip(rows: stripRows)
     }
 
     /// The bottom `rows` rows of the composite, for registering a downward
     /// scroll.
     public func bottomStrip(rows: Int) -> CGImage? {
         let stripRows = min(rows, height)
-        guard stripRows > 0, let context = makeStripContext(rows: stripRows) else {
-            return nil
-        }
-        var placed = 0
-        var remaining = stripRows
-
-        let mainTake = min(mainHeight, remaining)
-        if mainTake > 0,
-           let mainImage = mainContext.makeImage(),
-           let part = mainImage.cropping(to: CGRect(
-               x: 0, y: mainHeight - mainTake, width: width, height: mainTake
+        guard stripRows > 0 else { return nil }
+        if let context = bottomStripContext, bottomStripValid >= stripRows,
+           let image = context.makeImage(),
+           let cropped = image.cropping(to: CGRect(
+               x: 0, y: bottomStripValid - stripRows, width: width, height: stripRows
            )) {
-            draw(
-                part,
-                atTopRow: stripRows - mainTake,
-                in: context,
-                canvasHeight: stripRows
-            )
-            placed += mainTake
-            remaining -= mainTake
+            return cropped
         }
-
-        for slice in headSlices.reversed() {
-            guard remaining > 0 else { break }
-            let take = min(slice.height, remaining)
-            guard let part = slice.cropping(to: CGRect(
-                x: 0, y: slice.height - take, width: width, height: take
-            )) else { continue }
-            draw(
-                part,
-                atTopRow: stripRows - placed - take,
-                in: context,
-                canvasHeight: stripRows
-            )
-            placed += take
-            remaining -= take
-        }
-        return context.makeImage()
+        return rebuildBottomStrip(rows: stripRows)
     }
 
     /// Composes the final image. This is the only full-height copy; the
@@ -217,6 +205,114 @@ public final class ScrollComposite {
             topRow += slice.height
         }
         draw(mainUsed, atTopRow: headHeight, in: context, canvasHeight: height)
+        return context.makeImage()
+    }
+
+    /// Slides the bottom strip buffer down over `addedRows` newly appended
+    /// rows: the held rows move up (the oldest drop out once the buffer is
+    /// full) and the new rows are drawn into the freed space at the bottom.
+    private func rollBottomStrip(with added: CGImage, addedRows: Int) {
+        guard let context = bottomStripContext else { return }
+        let capacity = context.height
+        let valid = bottomStripValid
+        let kept = min(valid + addedRows, capacity)
+        let drop = valid + addedRows - kept
+        if drop > 0, drop < valid {
+            guard let shifted = context.makeImage() else {
+                bottomStripContext = nil
+                bottomStripValid = 0
+                return
+            }
+            draw(shifted, atTopRow: -drop, in: context, canvasHeight: capacity)
+        }
+        draw(added, atTopRow: kept - addedRows, in: context, canvasHeight: capacity)
+        bottomStripValid = kept
+    }
+
+    /// Shifts the top strip buffer down below `addedRows` newly prepended rows
+    /// and draws them above, so the buffer keeps holding the composite's first
+    /// rows.
+    private func rollTopStrip(with added: CGImage, addedRows: Int) {
+        guard let context = topStripContext else { return }
+        let capacity = context.height
+        guard let shifted = context.makeImage() else {
+            topStripContext = nil
+            topStripValid = 0
+            return
+        }
+        draw(shifted, atTopRow: addedRows, in: context, canvasHeight: capacity)
+        draw(added, atTopRow: 0, in: context, canvasHeight: capacity)
+        topStripValid = min(topStripValid + addedRows, capacity)
+    }
+
+    /// Slow path for `topStrip`: recomposes the strip from the head slices and
+    /// the main buffer, then adopts the fresh context as the rolling buffer at
+    /// the requested size.
+    private func rebuildTopStrip(rows stripRows: Int) -> CGImage? {
+        guard let context = makeStripContext(rows: stripRows) else { return nil }
+        var topRow = 0
+        var remaining = stripRows
+        for slice in headSlices {
+            guard remaining > 0 else { break }
+            let take = min(slice.height, remaining)
+            guard let part = slice.cropping(to: CGRect(
+                x: 0, y: 0, width: width, height: take
+            )) else { continue }
+            draw(part, atTopRow: topRow, in: context, canvasHeight: stripRows)
+            topRow += take
+            remaining -= take
+        }
+        if remaining > 0,
+           let mainImage = mainContext.makeImage(),
+           let part = mainImage.cropping(to: CGRect(
+               x: 0, y: 0, width: width, height: remaining
+           )) {
+            draw(part, atTopRow: topRow, in: context, canvasHeight: stripRows)
+        }
+        topStripContext = context
+        topStripValid = stripRows
+        return context.makeImage()
+    }
+
+    /// Slow path for `bottomStrip`, symmetric to `rebuildTopStrip`.
+    private func rebuildBottomStrip(rows stripRows: Int) -> CGImage? {
+        guard let context = makeStripContext(rows: stripRows) else { return nil }
+        var placed = 0
+        var remaining = stripRows
+
+        let mainTake = min(mainHeight, remaining)
+        if mainTake > 0,
+           let mainImage = mainContext.makeImage(),
+           let part = mainImage.cropping(to: CGRect(
+               x: 0, y: mainHeight - mainTake, width: width, height: mainTake
+           )) {
+            draw(
+                part,
+                atTopRow: stripRows - mainTake,
+                in: context,
+                canvasHeight: stripRows
+            )
+            placed += mainTake
+            remaining -= mainTake
+        }
+
+        for slice in headSlices.reversed() {
+            guard remaining > 0 else { break }
+            let take = min(slice.height, remaining)
+            guard let part = slice.cropping(to: CGRect(
+                x: 0, y: slice.height - take, width: width, height: take
+            )) else { continue }
+            draw(
+                part,
+                atTopRow: stripRows - placed - take,
+                in: context,
+                canvasHeight: stripRows
+            )
+            placed += take
+            remaining -= take
+        }
+        bottomStripContext = context
+        bottomStripValid = stripRows
         return context.makeImage()
     }
 

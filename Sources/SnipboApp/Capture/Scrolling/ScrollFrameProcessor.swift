@@ -71,18 +71,31 @@ final class ScrollFrameProcessor: @unchecked Sendable {
     /// Stops and returns the stitched image, waiting out the in-flight frame.
     /// A composite that never grew reports `.noMovement`; nil means not even
     /// a first frame arrived.
-    func stopAndWait() -> ScrollingCaptureResult? {
-        workQueue.sync { () -> ScrollingCaptureResult? in
-            stateQueue.sync {
-                finished = true
-                latestFrame = nil
+    ///
+    /// The drain+finalize runs on `workQueue` behind a continuation instead of
+    /// `workQueue.sync`: callers hop here from Swift's cooperative pool, which
+    /// must not block on a queue that may be waiting out a frame.
+    func stopAndWait() async -> ScrollingCaptureResult? {
+        await withCheckedContinuation { continuation in
+            workQueue.async { [weak self] in
+                guard let self else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                self.stateQueue.sync {
+                    self.finished = true
+                    self.latestFrame = nil
+                }
+                guard let accumulator = self.accumulator,
+                      let image = accumulator.makeImage() else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: ScrollingCaptureResult(
+                    image: image,
+                    reason: self.appended ? self.reason : .noMovement
+                ))
             }
-            guard let accumulator,
-                  let image = accumulator.makeImage() else { return nil }
-            return ScrollingCaptureResult(
-                image: image,
-                reason: appended ? reason : .noMovement
-            )
         }
     }
 

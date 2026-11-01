@@ -231,9 +231,20 @@ final class ScrollingCaptureSession: @unchecked Sendable {
             )
             event?.post(tap: .cghidEventTap)
         }
-        timer.resume()
+        // Register before resuming: if the capture was already torn down,
+        // cancelling here keeps a never-registered timer from being resumed
+        // and then waking forever with nothing to stop it.
+        var shouldResume = false
         stateQueue.sync {
-            autoScrollTimer = timer
+            if cancelled {
+                timer.cancel()
+            } else {
+                autoScrollTimer = timer
+                shouldResume = true
+            }
+        }
+        if shouldResume {
+            timer.resume()
         }
     }
 
@@ -241,7 +252,7 @@ final class ScrollingCaptureSession: @unchecked Sendable {
     /// in-flight frame.
     func stop() async -> ScrollingCaptureResult? {
         await stopStream()
-        let result = processor.stopAndWait()
+        let result = await processor.stopAndWait()
         ScrollDebugLog.log("stop: \(result.map { "reason=\($0.reason) height=\($0.image.height)" } ?? "no composite (no frames)")")
         return result.map(orientedResult)
     }
