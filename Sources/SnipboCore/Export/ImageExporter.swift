@@ -117,10 +117,12 @@ public enum ImageExporter {
         targetBytes: Int?,
         flattenAlpha: Bool
     ) -> Data? {
+        // Flatten once: the target-bytes search re-encodes up to 10 times, and
+        // re-compositing alpha for every iteration redraws the whole image.
+        let source = flattenAlpha ? (flattened(image) ?? image) : image
         func encoded(quality: CGFloat) -> Data? {
-            let source = flattenAlpha ? flattened(image) : image
-            return encode(
-                source ?? image,
+            encode(
+                source,
                 type: type,
                 options: [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary
             )

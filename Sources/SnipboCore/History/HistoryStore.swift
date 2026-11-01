@@ -46,6 +46,10 @@ public actor HistoryStore {
     private let fileManager = FileManager.default
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    /// OCR text is re-derivable search metadata; its index writes are debounced
+    /// so a burst of recognition results does not rewrite index.json per entry.
+    private var ocrFlushTask: Task<Void, Never>?
+    private var ocrFlushPending = false
     private var indexURL: URL { baseDirectory.appendingPathComponent(Self.indexFileName) }
 
     /// Production floor for the byte cap.
@@ -70,7 +74,9 @@ public actor HistoryStore {
         self.maxItems = max(1, maxItems)
         self.maxBytes = max(max(0, minimumBytes), maxBytes)
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        // Compact output: with OCR text and up to maxItems entries the pretty
+        // format roughly doubled an index that is rewritten on every change.
+        encoder.outputFormatting = [.sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         self.encoder = encoder
         let decoder = JSONDecoder()
@@ -154,11 +160,38 @@ public actor HistoryStore {
 
     /// Stores locally recognized text for search. Entries recorded before
     /// indexing existed stay nil until re-indexed.
+    ///
+    /// Unlike `setTags`/`setFavorite` this only mutates memory and schedules a
+    /// debounced index write: losing an OCR entry to a crash merely delays
+    /// search until re-indexing, while rewriting a possibly multi-megabyte
+    /// index per recognized capture is pure overhead.
     public func updateOCR(id: UUID, text: String) throws {
-        try updateEntry(id: id) { entry in
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            entry.ocrText = trimmed.isEmpty ? nil : trimmed
+        ensureLoaded()
+        guard let index = entriesValue.firstIndex(where: { $0.id == id }) else {
+            return
         }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newValue = trimmed.isEmpty ? nil : trimmed
+        guard entriesValue[index].ocrText != newValue else { return }
+        entriesValue[index].ocrText = newValue
+        scheduleOCRIndexFlush()
+    }
+
+    private func scheduleOCRIndexFlush() {
+        ocrFlushPending = true
+        guard ocrFlushTask == nil else { return }
+        ocrFlushTask = Task.detached { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, !Task.isCancelled else { return }
+            await self.flushPendingOCR()
+        }
+    }
+
+    private func flushPendingOCR() {
+        ocrFlushTask = nil
+        guard ocrFlushPending else { return }
+        ocrFlushPending = false
+        try? saveIndex(entriesValue)
     }
 
     public func setTags(id: UUID, tags: [String]) throws {
@@ -266,6 +299,10 @@ public actor HistoryStore {
         loaded = true
         entriesValue.removeAll()
         allowRecovery = false
+        // A cleared history has nothing left for the debounced OCR write.
+        ocrFlushPending = false
+        ocrFlushTask?.cancel()
+        ocrFlushTask = nil
         let files = (try? fileManager.contentsOfDirectory(at: baseDirectory, includingPropertiesForKeys: nil)) ?? []
         for file in files where file.lastPathComponent != Self.indexFileName {
             try? fileManager.removeItem(at: file)
@@ -319,6 +356,11 @@ public actor HistoryStore {
         }
         let recovery = entries.isEmpty ? allowRecovery : true
         try writeIndex(entries, allowRecovery: recovery)
+        // The full entry list was just persisted, so any OCR text still marked
+        // pending is now on disk as well.
+        ocrFlushPending = false
+        ocrFlushTask?.cancel()
+        ocrFlushTask = nil
         allowRecovery = recovery
         hasTrustworthyIndex = true
     }
@@ -709,11 +751,16 @@ public actor HistoryStore {
         in baseDirectory: URL,
         fileManager: FileManager
     ) -> Int64 {
+        // Document snapshots grow with edits, so they count toward the byte
+        // cap like the image and its thumbnail.
         fileSize(
             of: baseDirectory.appendingPathComponent(entry.imageFileName),
             fileManager: fileManager
         ) + fileSize(
             of: baseDirectory.appendingPathComponent(entry.thumbnailFileName),
+            fileManager: fileManager
+        ) + fileSize(
+            of: baseDirectory.appendingPathComponent(documentFileName(for: entry.id)),
             fileManager: fileManager
         )
     }
