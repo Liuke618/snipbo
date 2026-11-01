@@ -814,10 +814,10 @@ final class CaptureCoordinator {
                 captured: capture,
                 constraints: constraints
             )
-            view.onConfirm = { [weak self] rect in
+            view.onConfirm = { [weak self] rect, window in
                 switch purpose {
                 case .region:
-                    self?.complete(capture: capture, rect: rect)
+                    self?.complete(capture: capture, rect: rect, window: window)
                 case .scrolling(let axis, let autoScroll):
                     self?.beginScrolling(
                         capture: capture,
@@ -833,8 +833,8 @@ final class CaptureCoordinator {
                         backingScale: capture.geometry.backingScale,
                         metadata: CaptureMetadata(
                             source: .region,
-                            appName: self.frontmostAppName,
-                            windowTitle: nil
+                            appName: window?.applicationName ?? self.frontmostAppName,
+                            windowTitle: window?.title
                         )
                     )
                 }
@@ -951,6 +951,13 @@ final class CaptureCoordinator {
     /// Completes a confirmed selection. Internal so the committed harness can
     /// drive the editor and direct-copy paths without a real screen capture.
     func complete(capture: CapturedImage, rect: CGRect) {
+        complete(capture: capture, rect: rect, window: nil)
+    }
+
+    /// `window` is the hover-locked window when the selection came from a
+    /// click on one: the capture is still a region crop of the screen, but it
+    /// is named after the window's owner ({app}/{title} file-name tokens).
+    func complete(capture: CapturedImage, rect: CGRect, window: WindowTarget?) {
         guard let cropped = capture.cropped(toLocalPoints: rect) else {
             dismiss()
             NSSound.beep()
@@ -966,7 +973,18 @@ final class CaptureCoordinator {
             lastRegion.save(region)
         }
         dismiss()
-        deliver(cropped, source: .region, backingScale: capture.geometry.backingScale)
+        deliver(
+            cropped,
+            source: .region,
+            backingScale: capture.geometry.backingScale,
+            metadata: window.map {
+                CaptureMetadata(
+                    source: .region,
+                    appName: $0.applicationName,
+                    windowTitle: $0.title
+                )
+            }
+        )
     }
 
     /// Opens the editor or copies directly according to the live setting. The

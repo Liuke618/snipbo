@@ -5,7 +5,9 @@ final class SelectionOverlayView: NSView {
     let captured: CapturedImage
     let selectionConstraints: SelectionConstraints
     var selection = SelectionModel()
-    var onConfirm: ((CGRect) -> Void)?
+    /// `window` is the hover-locked window when the selection came from a
+    /// click on one, so the capture can be named after its owner.
+    var onConfirm: ((CGRect, WindowTarget?) -> Void)?
     var onCancel: (() -> Void)?
     var onHover: (() -> Void)?
 
@@ -13,9 +15,15 @@ final class SelectionOverlayView: NSView {
     private var moveAnchor: CGPoint?
     private var activeHandle: SelectionHandle?
     private var mousePoint: CGPoint = .zero
-    /// On-screen layer-0 window edges for this display, in screen-local
-    /// top-left coordinates. Empty when snapping is disabled.
-    private let windowFrames: [CGRect]
+    /// Layer-0 windows on this display in screen-local top-left coordinates,
+    /// with their ids and owners. Drives both the WeChat-style hover lock and
+    /// (when enabled in Settings) the drag edge snapping.
+    private let windows: [WindowTarget]
+    /// The window under the pointer while no selection is in progress.
+    private(set) var hoveredWindow: WindowTarget?
+    /// The window a press locked onto; a release without a drag confirms it.
+    private var pendingWindow: WindowTarget?
+    private var pendingDragStart: CGPoint?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -26,14 +34,14 @@ final class SelectionOverlayView: NSView {
 
     init(
         captured: CapturedImage,
-        constraints: SelectionConstraints = SelectionConstraints()
+        constraints: SelectionConstraints = SelectionConstraints(),
+        /// Harness seam: replaces the live CGWindowList so the hover lock can
+        /// be driven deterministically without Screen Recording access.
+        windowOverrides: [WindowTarget]? = nil
     ) {
         self.captured = captured
         self.selectionConstraints = constraints
-        self.windowFrames = Self.windowFrames(
-            for: captured,
-            enabled: constraints.snapToWindows
-        )
+        self.windows = windowOverrides ?? Self.windowTargets(for: captured)
         super.init(frame: CGRect(origin: .zero, size: captured.geometry.frame.size))
         wantsLayer = true
     }
@@ -76,11 +84,48 @@ final class SelectionOverlayView: NSView {
             drawHandles()
             drawSizeLabel()
         } else {
-            NSColor.black.withAlphaComponent(DesignTokens.overlayDim).setFill()
-            NSBezierPath(rect: bounds).fill()
+            // WeChat-style hover lock: while no selection is in progress the
+            // window under the pointer stays bright and everything around it
+            // dims, so a plain click reads as "capture this window".
+            if let hover = hoveredWindow {
+                let dim = NSBezierPath(rect: bounds)
+                dim.append(NSBezierPath(rect: hover.frame))
+                dim.windingRule = .evenOdd
+                NSColor.black.withAlphaComponent(DesignTokens.overlayDim).setFill()
+                dim.fill()
+            } else {
+                NSColor.black.withAlphaComponent(DesignTokens.overlayDim).setFill()
+                NSBezierPath(rect: bounds).fill()
+            }
             drawCrosshair()
+            if let hover = hoveredWindow {
+                drawHoverHighlight(hover)
+            }
         }
         drawMagnifierIfNeeded()
+    }
+
+    /// Accent border around the locked window plus its title, so the lock
+    /// target is legible over both light and dark content.
+    private func drawHoverHighlight(_ target: WindowTarget) {
+        let frame = target.frame
+        NSColor.white.setStroke()
+        let ring = NSBezierPath(rect: frame.insetBy(dx: -3.5, dy: -3.5))
+        ring.lineWidth = 1
+        ring.stroke()
+        DesignTokens.Color.accent.setStroke()
+        let border = NSBezierPath(rect: frame.insetBy(dx: -1.5, dy: -1.5))
+        border.lineWidth = 3
+        border.stroke()
+
+        let title = target.displayTitle
+        guard !title.isEmpty else { return }
+        let size = PillLabel.size(for: title)
+        let x = min(max(frame.minX, 4), bounds.width - size.width - 4)
+        let y = frame.minY - size.height - 6 >= 4
+            ? frame.minY - size.height - 6
+            : frame.minY + 6
+        PillLabel.draw(title, at: CGPoint(x: x, y: y))
     }
 
     private func drawHandles() {
@@ -173,25 +218,33 @@ final class SelectionOverlayView: NSView {
         mousePoint = point
         onHover?()
         if event.clickCount == 2, selection.isUsable {
-            onConfirm?(selection.rect)
+            onConfirm?(selection.rect, nil)
             return
         }
 
         anchor = nil
         moveAnchor = nil
         activeHandle = nil
+        pendingWindow = nil
         // With no usable selection every click starts a new one; a zero rect is
         // within handle tolerance of the origin and must not act as a resize.
         if selection.isUsable,
            let handle = selection.handle(at: point, tolerance: 8),
            handle != .inside {
             activeHandle = handle
+            hoveredWindow = nil
         } else if selection.isUsable, selection.rect.contains(point) {
             activeHandle = .inside
             moveAnchor = point
+            hoveredWindow = nil
         } else {
             anchor = point
             selection = SelectionModel()
+            // WeChat-style lock: pressing on a highlighted window captures it
+            // on release, unless the pointer drags away into a free region.
+            hoveredWindow = WindowTarget.lockTarget(at: point, in: windows)
+            pendingWindow = hoveredWindow
+            pendingDragStart = point
         }
         needsDisplay = true
     }
@@ -368,13 +421,13 @@ final class SelectionOverlayView: NSView {
         guard selectionConstraints.snapToWindows,
               selectionConstraints.fixedSize == nil,
               selectionConstraints.aspectRatio == nil,
-              !windowFrames.isEmpty else {
+              !windows.isEmpty else {
             return rect
         }
         var result = rect
-        let xEdges = windowFrames.flatMap { [$0.minX, $0.maxX] }
+        let xEdges = windows.flatMap { [$0.frame.minX, $0.frame.maxX] }
             + [bounds.minX, bounds.maxX]
-        let yEdges = windowFrames.flatMap { [$0.minY, $0.maxY] }
+        let yEdges = windows.flatMap { [$0.frame.minY, $0.frame.maxY] }
             + [bounds.minY, bounds.maxY]
         if left, let x = nearest(rect.minX, in: xEdges) {
             result.origin.x = x
@@ -409,11 +462,13 @@ final class SelectionOverlayView: NSView {
         return result
     }
 
-    private static func windowFrames(
-        for captured: CapturedImage,
-        enabled: Bool
-    ) -> [CGRect] {
-        guard enabled else { return [] }
+    /// Layer-0 on-screen windows of other apps on this display, in screen-local
+    /// top-left coordinates. `kCGWindowName` needs Screen Recording access,
+    /// which the app already holds; without it the title falls back to the
+    /// owner name through `displayTitle`.
+    private static func windowTargets(
+        for captured: CapturedImage
+    ) -> [WindowTarget] {
         let layout = ScreenLayout.current()
         guard let screen = layout.screens.first(where: {
             $0.displayID == captured.geometry.displayID
@@ -424,7 +479,7 @@ final class SelectionOverlayView: NSView {
         ) as? [[String: Any]] else { return [] }
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let screenBounds = CGRect(origin: .zero, size: screen.frame.size)
-        var frames: [CGRect] = []
+        var targets: [WindowTarget] = []
         for entry in info {
             guard let owner = (entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
                   owner != ownPID,
@@ -438,32 +493,58 @@ final class SelectionOverlayView: NSView {
                   width > 2, height > 2 else {
                 continue
             }
-            let local = layout.localRect(
-                fromCGRect: CGRect(x: x, y: y, width: width, height: height),
-                on: screen
-            )
+            let global = CGRect(x: x, y: y, width: width, height: height)
+            let local = layout.localRect(fromCGRect: global, on: screen)
             let clipped = local.intersection(screenBounds)
             guard !clipped.isNull, clipped.width > 2, clipped.height > 2 else {
                 continue
             }
-            frames.append(clipped)
+            let windowID = (entry[kCGWindowNumber as String] as? NSNumber)?.uint32Value ?? 0
+            let title = entry[kCGWindowName as String] as? String ?? ""
+            let applicationName = entry[kCGWindowOwnerName as String] as? String ?? ""
+            targets.append(WindowTarget(
+                windowID: windowID,
+                title: title,
+                applicationName: applicationName,
+                frame: clipped
+            ))
         }
-        return frames
+        return targets
     }
 
     override func mouseUp(with event: NSEvent) {
-        anchor = nil
-        moveAnchor = nil
-        activeHandle = nil
+        defer {
+            anchor = nil
+            moveAnchor = nil
+            activeHandle = nil
+            pendingWindow = nil
+            pendingDragStart = nil
+            needsDisplay = true
+        }
+        // A press-and-release on a locked window captures it; the drag anchor
+        // only turns into a free selection once the pointer travels.
+        if let pending = pendingWindow, let start = pendingDragStart {
+            let point = convert(event.locationInWindow, from: nil)
+            if hypot(point.x - start.x, point.y - start.y) < 4 {
+                selection = SelectionModel()
+                onConfirm?(pending.frame, pending)
+                return
+            }
+        }
         if !selection.isUsable {
             selection = SelectionModel()
         }
-        needsDisplay = true
     }
 
     override func mouseMoved(with event: NSEvent) {
         mousePoint = convert(event.locationInWindow, from: nil)
         onHover?()
+        if anchor == nil, activeHandle == nil, !selection.isUsable {
+            let hover = WindowTarget.lockTarget(at: mousePoint, in: windows)
+            if hover != hoveredWindow {
+                hoveredWindow = hover
+            }
+        }
         needsDisplay = true
     }
 
@@ -480,7 +561,7 @@ final class SelectionOverlayView: NSView {
                 NSSound.beep()
                 return true
             }
-            onConfirm?(selection.rect)
+            onConfirm?(selection.rect, nil)
             return true
         case 53:
             onCancel?()

@@ -23,4 +23,16 @@ public struct WindowTarget: Equatable, Sendable {
         if trimmedApplication.isEmpty { return trimmedTitle }
         return "\(trimmedApplication) — \(trimmedTitle)"
     }
+
+    /// The window a region selection should lock onto for a pointer at
+    /// `point`: the smallest window that contains it. A small window floating
+    /// over a large one wins, matching what the pointer visually rests on;
+    /// nil when the point hits no window.
+    public static func lockTarget(at point: CGPoint, in targets: [WindowTarget]) -> WindowTarget? {
+        targets
+            .filter { $0.frame.contains(point) }
+            .min {
+                $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+            }
+    }
 }
