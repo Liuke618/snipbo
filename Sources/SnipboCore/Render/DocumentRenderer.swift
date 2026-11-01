@@ -6,9 +6,106 @@ import Foundation
 public enum DocumentRenderer {
     /// Shared CIContext for blur rendering. CIContext creation is expensive
     /// and the instance is thread-safe.
-    nonisolated(unsafe) private static let ciContext = CIContext(options: nil)
+    private static let ciContext = CIContext(options: nil)
+
+    /// Per-annotation effect outputs (pixelate mosaics, blurred regions),
+    /// keyed by the source image's identity plus everything that changes the
+    /// result. The keys use image-pixel coordinates, so the cache is valid
+    /// across crops and render scales, and each document's own CGImage keeps
+    /// entries from leaking between documents. NSCache is thread-safe and
+    /// evicts under pressure, so canvas and export renders can share it.
+    private final class EffectKey: NSObject {
+        let sourceID: ObjectIdentifier
+        let effect: String
+        let rect: CGRect
+        let parameter: CGFloat
+
+        init(sourceID: ObjectIdentifier, effect: String, rect: CGRect, parameter: CGFloat) {
+            self.sourceID = sourceID
+            self.effect = effect
+            self.rect = rect
+            self.parameter = parameter
+        }
+
+        override func isEqual(_ object: Any?) -> Bool {
+            guard let other = object as? EffectKey else { return false }
+            return sourceID == other.sourceID
+                && effect == other.effect
+                && rect == other.rect
+                && parameter == other.parameter
+        }
+
+        override var hash: Int {
+            var hasher = Hasher()
+            hasher.combine(sourceID)
+            hasher.combine(effect)
+            // CGRect is only Hashable on macOS 15; hash its components.
+            hasher.combine(rect.minX)
+            hasher.combine(rect.minY)
+            hasher.combine(rect.width)
+            hasher.combine(rect.height)
+            hasher.combine(parameter)
+            return hasher.finalize()
+        }
+    }
+
+    nonisolated(unsafe) private static let effectCache: NSCache<EffectKey, CGImage> = {
+        let cache = NSCache<EffectKey, CGImage>()
+        cache.countLimit = 64
+        cache.totalCostLimit = 64 * 1024 * 1024
+        return cache
+    }()
+
+    /// Returns the effect bitmap for `key`, rendering it through `make` on a
+    /// miss. Effect outputs only depend on the base image and the effect
+    /// parameters, never on the render scale, so hits are safe at any zoom.
+    private static func cachedEffect(
+        _ key: EffectKey,
+        make: () -> CGImage?
+    ) -> CGImage? {
+        if let cached = effectCache.object(forKey: key) { return cached }
+        guard let image = make() else { return nil }
+        effectCache.setObject(image, forKey: key, cost: image.width * image.height * 4)
+        return image
+    }
 
     public static func render(_ document: EditDocument, scale: CGFloat = 1) -> CGImage? {
+        guard let (context, crop, canvasHeight) = makeRenderContext(document, scale: scale) else {
+            return nil
+        }
+        let imageOrigin = CGPoint(
+            x: -crop.minX,
+            y: crop.maxY - CGFloat(document.image.height)
+        )
+        context.draw(
+            document.image,
+            in: CGRect(origin: imageOrigin, size: CGSize(width: document.image.width, height: document.image.height))
+        )
+        drawAnnotations(document, in: context, canvasHeight: canvasHeight, crop: crop)
+        return context.makeImage()
+    }
+
+    /// Renders only the document's annotations over a transparent background
+    /// — the draft layer of the canvas' committed/draft cache. Returns nil
+    /// when there is nothing to draw. Callers pass a document whose
+    /// annotations are just the pending draft.
+    public static func renderDraftOnly(_ document: EditDocument, scale: CGFloat = 1) -> CGImage? {
+        guard !document.annotations.isEmpty,
+              let (context, crop, canvasHeight) = makeRenderContext(document, scale: scale) else {
+            return nil
+        }
+        drawAnnotations(document, in: context, canvasHeight: canvasHeight, crop: crop)
+        return context.makeImage()
+    }
+
+    /// Shared setup for the full and draft-only renders: the crop clamped to
+    /// the image, the output size, and a bitmap context in the source image's
+    /// color space so Display-P3 captures never shift tint in intermediate
+    /// buffers. Returns nil when the crop is empty.
+    private static func makeRenderContext(
+        _ document: EditDocument,
+        scale: CGFloat
+    ) -> (context: CGContext, crop: CGRect, canvasHeight: CGFloat)? {
         let imageBounds = CGRect(x: 0, y: 0, width: document.image.width, height: document.image.height)
         let crop = document.cropRect.intersection(imageBounds).integral
         guard crop.width >= 1, crop.height >= 1 else { return nil }
@@ -29,24 +126,22 @@ public enum DocumentRenderer {
 
         context.interpolationQuality = .high
         context.scaleBy(x: renderScale, y: renderScale)
-        let imageOrigin = CGPoint(
-            x: -crop.minX,
-            y: crop.maxY - CGFloat(document.image.height)
-        )
-        context.draw(
-            document.image,
-            in: CGRect(origin: imageOrigin, size: CGSize(width: document.image.width, height: document.image.height))
-        )
+        return (context, crop, CGFloat(crop.height))
+    }
 
-        // Annotation drawing works in image-pixel coordinates; the context
-        // scale maps those to the output resolution.
-        let canvasHeight = CGFloat(crop.height)
+    /// Annotation drawing works in image-pixel coordinates; the context
+    /// scale maps those to the output resolution.
+    private static func drawAnnotations(
+        _ document: EditDocument,
+        in context: CGContext,
+        canvasHeight: CGFloat,
+        crop: CGRect
+    ) {
         for annotation in document.annotations.sorted(by: { $0.zIndex < $1.zIndex }) {
             context.saveGState()
             draw(annotation, in: context, canvasHeight: canvasHeight, crop: crop, source: document.image)
             context.restoreGState()
         }
-        return context.makeImage()
     }
 
     private static func draw(
@@ -279,44 +374,76 @@ public enum DocumentRenderer {
         }
         context.clip()
 
-        let pixelRect = crop.integral
-        guard pixelRect.width >= 1, pixelRect.height >= 1,
-              let sourceCrop = source.cropping(to: pixelRect) else {
-            context.restoreGState()
-            return
-        }
+        // Only the brush's neighborhood needs the mosaic: downscaling the
+        // whole crop at every render wasted work on pixels the clip never
+        // shows. The bbox is grown outward to whole blockSize steps from the
+        // image origin, so the mosaic stays put while the path grows during a
+        // scrub instead of resampling under the stroke.
+        let imageBounds = CGRect(x: 0, y: 0, width: source.width, height: source.height)
         // Keep a few blocks across the brush so the stroke still reads as
         // pixelation instead of a flat eraser band.
         let blockSize = max(2, min(style.pixelBlockSize, max(4, brushRadius * 0.6)))
-        let smallWidth = max(1, Int((pixelRect.width / blockSize).rounded(.up)))
-        let smallHeight = max(1, Int((pixelRect.height / blockSize).rounded(.up)))
-        guard let smallContext = CGContext(
-            data: nil,
-            width: smallWidth,
-            height: smallHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
+        var pathBounds = points.dropFirst().reduce(CGRect(x: points[0].x, y: points[0].y, width: 0, height: 0)) {
+            $0.union(CGRect(x: $1.x, y: $1.y, width: 0, height: 0))
+        }
+        pathBounds = pathBounds
+            .insetBy(dx: -brushRadius, dy: -brushRadius)
+            .intersection(imageBounds)
+        guard !pathBounds.isNull else {
             context.restoreGState()
             return
         }
-        // Average while downscaling so a block carries the content's color,
-        // then upscale without smoothing for the mosaic look.
-        smallContext.interpolationQuality = .high
-        smallContext.draw(
-            sourceCrop,
-            in: CGRect(x: 0, y: 0, width: smallWidth, height: smallHeight)
+        var pixelRect = CGRect(
+            x: (pathBounds.minX / blockSize).rounded(.down) * blockSize,
+            y: (pathBounds.minY / blockSize).rounded(.down) * blockSize,
+            width: (pathBounds.maxX / blockSize).rounded(.up) * blockSize
+                - (pathBounds.minX / blockSize).rounded(.down) * blockSize,
+            height: (pathBounds.maxY / blockSize).rounded(.up) * blockSize
+                - (pathBounds.minY / blockSize).rounded(.down) * blockSize
         )
-        guard let smallImage = smallContext.makeImage() else {
+        pixelRect = pixelRect.intersection(imageBounds).integral
+        guard pixelRect.width >= 1, pixelRect.height >= 1 else {
+            context.restoreGState()
+            return
+        }
+        let smallWidth = max(1, Int((pixelRect.width / blockSize).rounded(.up)))
+        let smallHeight = max(1, Int((pixelRect.height / blockSize).rounded(.up)))
+        let sourceID = ObjectIdentifier(source)
+        let smallImage = cachedEffect(EffectKey(
+            sourceID: sourceID,
+            effect: "pixelateBrush",
+            rect: pixelRect,
+            parameter: blockSize
+        )) {
+            guard let sourceCrop = source.cropping(to: pixelRect),
+                  let smallContext = CGContext(
+                    data: nil,
+                    width: smallWidth,
+                    height: smallHeight,
+                    bitsPerComponent: 8,
+                    bytesPerRow: 0,
+                    space: source.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  ) else {
+                return nil
+            }
+            // Average while downscaling so a block carries the content's color,
+            // then upscale without smoothing for the mosaic look.
+            smallContext.interpolationQuality = .high
+            smallContext.draw(
+                sourceCrop,
+                in: CGRect(x: 0, y: 0, width: smallWidth, height: smallHeight)
+            )
+            return smallContext.makeImage()
+        }
+        guard let smallImage else {
             context.restoreGState()
             return
         }
         context.interpolationQuality = .none
         context.draw(
             smallImage,
-            in: convert(crop, canvasHeight: canvasHeight, crop: crop)
+            in: convert(pixelRect, canvasHeight: canvasHeight, crop: crop)
         )
         context.restoreGState()
     }
@@ -337,19 +464,27 @@ public enum DocumentRenderer {
         let blockSize = max(1, annotation.style.pixelBlockSize)
         let smallWidth = max(1, Int(pixelRect.width / blockSize))
         let smallHeight = max(1, Int(pixelRect.height / blockSize))
-        guard let smallContext = CGContext(
-            data: nil,
-            width: smallWidth,
-            height: smallHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return }
+        let smallImage = cachedEffect(EffectKey(
+            sourceID: ObjectIdentifier(source),
+            effect: "pixelate",
+            rect: pixelRect,
+            parameter: blockSize
+        )) {
+            guard let smallContext = CGContext(
+                data: nil,
+                width: smallWidth,
+                height: smallHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: source.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return nil }
 
-        smallContext.interpolationQuality = .none
-        smallContext.draw(sourceCrop, in: CGRect(x: 0, y: 0, width: smallWidth, height: smallHeight))
-        guard let smallImage = smallContext.makeImage() else { return }
+            smallContext.interpolationQuality = .none
+            smallContext.draw(sourceCrop, in: CGRect(x: 0, y: 0, width: smallWidth, height: smallHeight))
+            return smallContext.makeImage()
+        }
+        guard let smallImage else { return }
 
         let cgRect = convert(pixelRect, canvasHeight: canvasHeight, crop: crop)
         context.saveGState()
@@ -374,14 +509,29 @@ public enum DocumentRenderer {
               let sourceCrop = source.cropping(to: pixelRect) else { return }
 
         let radius = Double(max(2, annotation.style.pixelBlockSize))
-        guard let filter = CIFilter(name: "CIGaussianBlur") else { return }
-        filter.setValue(CIImage(cgImage: sourceCrop).clampedToExtent(), forKey: kCIInputImageKey)
-        filter.setValue(radius, forKey: kCIInputRadiusKey)
-        guard let output = filter.outputImage,
-              let blurred = ciContext.createCGImage(
+        // Gaussian blur is the most expensive effect per render; the output
+        // only depends on the base image, the rect, and the radius, so cache
+        // it across renders (and across zoom levels — it is full resolution).
+        let blurred = cachedEffect(EffectKey(
+            sourceID: ObjectIdentifier(source),
+            effect: "blur",
+            rect: pixelRect,
+            parameter: CGFloat(radius)
+        )) {
+            guard let filter = CIFilter(name: "CIGaussianBlur") else { return nil }
+            filter.setValue(CIImage(cgImage: sourceCrop).clampedToExtent(), forKey: kCIInputImageKey)
+            filter.setValue(radius, forKey: kCIInputRadiusKey)
+            guard let output = filter.outputImage else { return nil }
+            // Render into the source's color space so Display-P3 screenshots
+            // keep their color through the Core Image round trip.
+            return ciContext.createCGImage(
                 output,
-                from: CGRect(x: 0, y: 0, width: pixelRect.width, height: pixelRect.height)
-              ) else { return }
+                from: CGRect(x: 0, y: 0, width: pixelRect.width, height: pixelRect.height),
+                format: .RGBA8,
+                colorSpace: source.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+            )
+        }
+        guard let blurred else { return }
 
         let cgRect = convert(pixelRect, canvasHeight: canvasHeight, crop: crop)
         context.saveGState()

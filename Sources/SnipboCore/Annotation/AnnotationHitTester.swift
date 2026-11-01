@@ -1,14 +1,24 @@
 import CoreGraphics
 
 public enum AnnotationHitTester {
+    /// Single linear scan keeping the highest-zIndex hit, instead of sorting
+    /// all annotations just to find the one under the point. Ties take the
+    /// later annotation, matching the order the renderer draws them in.
     public static func topmost(
         in annotations: [Annotation],
         at point: CGPoint,
         tolerance: CGFloat
     ) -> Annotation? {
-        annotations
-            .sorted { $0.zIndex > $1.zIndex }
-            .first { contains($0, point: point, tolerance: tolerance) }
+        var best: Annotation?
+        var bestZIndex = Int.min
+        for annotation in annotations
+        where contains(annotation, point: point, tolerance: tolerance) {
+            if annotation.zIndex >= bestZIndex {
+                best = annotation
+                bestZIndex = annotation.zIndex
+            }
+        }
+        return best
     }
 
     public static func contains(_ annotation: Annotation, point: CGPoint, tolerance: CGFloat) -> Bool {

@@ -38,8 +38,8 @@ final class EditorStylePanelView: NSView {
     )
     private let lineStyleControl = NSSegmentedControl(
         images: [
-            EditorStylePanelView.lineStyleIcon(dashed: false),
-            EditorStylePanelView.lineStyleIcon(dashed: true),
+            EditorStylePanelView.lineStyleSolidIcon,
+            EditorStylePanelView.lineStyleDashedIcon,
         ],
         trackingMode: .selectOne,
         target: nil,
@@ -74,6 +74,10 @@ final class EditorStylePanelView: NSView {
     private var swatches: [ColorSwatchButton] = []
     /// Whether the shared size readout currently edits the text size.
     private var showsTextSize = false
+    /// Inputs of the last `syncStyleControls` call. The sync runs on every
+    /// controller tick; identical inputs produce an identical panel, so the
+    /// control resets are skipped.
+    private var lastSyncInputs: (style: AnnotationStyle, isText: Bool, showsShapeOptions: Bool, showsArrowStyle: Bool)?
 
     private static let paletteColors: [RGBA] = [
         RGBA(red: 0.93, green: 0.16, blue: 0.16),
@@ -170,6 +174,16 @@ final class EditorStylePanelView: NSView {
     override func mouseUp(with event: NSEvent) {
         dragOrigin = nil
     }
+
+    /// Hand-drawn 16/26 pt template images. Built once: the style sync runs
+    /// on every controller tick and re-rendering the bitmaps each time churns
+    /// allocations for pixels that never change.
+    private static let lineStyleSolidIcon = lineStyleIcon(dashed: false)
+    private static let lineStyleDashedIcon = lineStyleIcon(dashed: true)
+    private static let arrowTaperedIcon = arrowIcon(filled: true, chevron: true)
+    private static let arrowSimpleIcon = arrowIcon(filled: false, chevron: true)
+    private static let arrowTaperedMenuItem = arrowIcon(filled: true)
+    private static let arrowSimpleMenuItem = arrowIcon(filled: false)
 
     private static func lineStyleIcon(dashed: Bool) -> NSImage {
         let image = NSImage(size: NSSize(width: 16, height: 16), flipped: true) { _ in
@@ -368,7 +382,7 @@ final class EditorStylePanelView: NSView {
 
         arrowButton.isBordered = false
         arrowButton.imagePosition = .imageOnly
-        arrowButton.image = Self.arrowIcon(filled: true, chevron: true)
+        arrowButton.image = Self.arrowTaperedIcon
         arrowButton.controlSize = .small
         arrowButton.toolTip = L10n.tr("Arrow head", "箭头样式")
 
@@ -439,12 +453,7 @@ final class EditorStylePanelView: NSView {
             swatch.tag = index
             swatch.target = self
             swatch.action = #selector(paletteChanged(_:))
-            swatch.toolTip = String(
-                format: "#%02X%02X%02X",
-                Int((color.red * 255).rounded()),
-                Int((color.green * 255).rounded()),
-                Int((color.blue * 255).rounded())
-            )
+            swatch.toolTip = color.hexString
             swatch.widthAnchor.constraint(equalToConstant: 18).isActive = true
             swatch.heightAnchor.constraint(equalToConstant: 18).isActive = true
             paletteRow.addArrangedSubview(swatch)
@@ -522,12 +531,22 @@ final class EditorStylePanelView: NSView {
     /// Mirrors the style being edited (the selected annotation's, or the
     /// default for new annotations). Programmatic value changes do not fire
     /// the control actions, so this cannot feed back into the controller.
+    /// Runs on every controller tick; identical inputs skip the reset so a
+    /// drag does not churn sliders, color wells, and the font popup.
     func syncStyleControls(
         style: AnnotationStyle,
         isText: Bool,
         showsShapeOptions: Bool,
         showsArrowStyle: Bool
     ) {
+        if let last = lastSyncInputs,
+           last.style == style,
+           last.isText == isText,
+           last.showsShapeOptions == showsShapeOptions,
+           last.showsArrowStyle == showsArrowStyle {
+            return
+        }
+        lastSyncInputs = (style, isText, showsShapeOptions, showsArrowStyle)
         widthSlider.doubleValue = style.lineWidth
         fontSizeSlider.doubleValue = style.fontSize
         showsTextSize = isText
@@ -535,12 +554,7 @@ final class EditorStylePanelView: NSView {
             sizeField.stringValue = Self.widthText(isText ? style.fontSize : style.lineWidth)
         }
         colorWell.color = NSColor(style.color)
-        hexLabel.stringValue = String(
-            format: "#%02X%02X%02X",
-            Int((style.color.red * 255).rounded()),
-            Int((style.color.green * 255).rounded()),
-            Int((style.color.blue * 255).rounded())
-        )
+        hexLabel.stringValue = style.color.hexString
         let fontIndex = Self.fontChoices.firstIndex { $0.name == style.fontName } ?? 0
         fontPopup.selectItem(at: fontIndex)
         boldButton.state = style.fontBold == true ? .on : .off
@@ -552,7 +566,9 @@ final class EditorStylePanelView: NSView {
         backgroundButton.state = style.textBackground != nil ? .on : .off
         lineStyleControl.selectedSegment = style.lineStyle == .dashed ? 1 : 0
         fillButton.state = style.fillColor != nil ? .on : .off
-        arrowButton.image = Self.arrowIcon(filled: style.arrowStyle != .simple, chevron: true)
+        arrowButton.image = style.arrowStyle == .simple
+            ? Self.arrowSimpleIcon
+            : Self.arrowTaperedIcon
 
         widthSlider.isHidden = isText
         fontSizeSlider.isHidden = !isText
@@ -618,7 +634,7 @@ final class EditorStylePanelView: NSView {
             let item = NSMenuItem(title: title, action: #selector(pickArrowStyle(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = filled
-            item.image = Self.arrowIcon(filled: filled)
+            item.image = filled ? Self.arrowTaperedMenuItem : Self.arrowSimpleMenuItem
             menu.addItem(item)
         }
         menu.popUp(

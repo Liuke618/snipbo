@@ -50,6 +50,10 @@ final class EditorController {
     /// undo stack, so a slider drag or color-panel scrub records one undo
     /// entry instead of one per tick.
     private var styleEditKey: String?
+    /// Same coalescing for arrow-key nudges: the first nudge of a run records
+    /// the pre-change state and the repeats extend it, until a mouse press,
+    /// structural edit, undo/redo, or selection change breaks the run.
+    private var moveEditKey: String?
 
     init(document: EditDocument) {
         self.document = document
@@ -62,6 +66,7 @@ final class EditorController {
     func setSelected(id: UUID?) {
         selectedIDs = id.map { [$0] } ?? []
         styleEditKey = nil
+        moveEditKey = nil
         changed()
     }
 
@@ -149,9 +154,15 @@ final class EditorController {
     }
 
     private func applyStyleEdit(_ mutate: (inout AnnotationStyle) -> Void) {
-        let key = selectedIDs.isEmpty
-            ? "defaults"
-            : "annotations:" + selectedIDs.map(\.uuidString).sorted().joined(separator: ",")
+        guard !selectedIDs.isEmpty else {
+            // The default style is not part of DocumentState, so editing it
+            // with nothing selected cannot be undone — recording a state here
+            // would push a no-op undo entry and drop the redo stack.
+            mutate(&style)
+            changed()
+            return
+        }
+        let key = "annotations:" + selectedIDs.map(\.uuidString).sorted().joined(separator: ",")
         if styleEditKey != key {
             recordState(document.state)
             styleEditKey = key
@@ -165,19 +176,33 @@ final class EditorController {
     }
 
     /// Records a pre-change state for undo. Any structural edit ends the
-    /// current style-edit run so the next style change records its own state.
+    /// current style- and move-edit runs so the next edit records its own
+    /// state.
     private func recordState(_ state: DocumentState) {
         history.record(state)
         styleEditKey = nil
+        moveEditKey = nil
     }
 
     /// Begins a gesture at `point`, expressed in original image coordinates.
     /// `tolerance` is the select-tool hit radius in image points; callers that
     /// display a zoomed canvas pass `8 / zoom` to keep it constant on screen.
-    func begin(at point: CGPoint, tolerance: CGFloat = 8, extendSelection: Bool = false) {
+    /// `hit` lets a caller that already hit-tested (the canvas, once per
+    /// press) hand the result over instead of testing every annotation again.
+    func begin(
+        at point: CGPoint,
+        tolerance: CGFloat = 8,
+        extendSelection: Bool = false,
+        hit: Annotation? = nil
+    ) {
+        // A new press ends any in-progress nudge run so the next arrow-key
+        // edit records its own pre-change state.
+        moveEditKey = nil
         switch tool {
         case .select:
-            if let hit = AnnotationHitTester.topmost(in: document.annotations, at: point, tolerance: tolerance) {
+            let hit = hit
+                ?? AnnotationHitTester.topmost(in: document.annotations, at: point, tolerance: tolerance)
+            if let hit {
                 if extendSelection {
                     if selectedIDs.contains(hit.id) {
                         selectedIDs.remove(hit.id)
@@ -364,6 +389,7 @@ final class EditorController {
         ))
         selectedIDs = [id]
         styleEditKey = nil
+        moveEditKey = nil
         polygonPoints.removeAll()
         draft = nil
         changed()
@@ -447,6 +473,7 @@ final class EditorController {
     func selectAll() {
         selectedIDs = Set(document.annotations.map(\.id))
         styleEditKey = nil
+        moveEditKey = nil
         changed()
     }
 
@@ -478,6 +505,7 @@ final class EditorController {
         }
         selectedIDs = newIDs
         styleEditKey = nil
+        moveEditKey = nil
         changed()
     }
 
@@ -502,6 +530,7 @@ final class EditorController {
         }
         selectedIDs = duplicates
         styleEditKey = nil
+        moveEditKey = nil
         changed()
     }
 
@@ -538,14 +567,20 @@ final class EditorController {
         }
         selectedIDs = pasted
         styleEditKey = nil
+        moveEditKey = nil
         changed()
     }
 
     /// Moves every selected annotation by the same delta. Used by the arrow
-    /// keys; callers coalesce repeated presses only if they want to.
+    /// keys; consecutive nudges of the same selection share one undo entry,
+    /// mirroring the style-edit run coalescing.
     func nudgeSelected(dx: CGFloat, dy: CGFloat) {
         guard !selectedIDs.isEmpty else { return }
-        recordState(document.state)
+        let key = "nudge:" + selectedIDs.map(\.uuidString).sorted().joined(separator: ",")
+        if moveEditKey != key {
+            recordState(document.state)
+            moveEditKey = key
+        }
         for index in document.annotations.indices
         where selectedIDs.contains(document.annotations[index].id) {
             document.annotations[index].geometry = translated(
@@ -635,6 +670,7 @@ final class EditorController {
         document.apply(state)
         selectedIDs.removeAll()
         styleEditKey = nil
+        moveEditKey = nil
         if document.cropRect != previousCrop {
             onCropChanged?()
         }

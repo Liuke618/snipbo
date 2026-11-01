@@ -26,6 +26,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     /// record completes (or immediately for a history-opened editor).
     private var historyEntryID: UUID?
     private var snapshotSaveTask: Task<Void, Never>?
+    /// Set when edits land while a snapshot write is already pending.
+    private var snapshotDirty = false
+    /// Guard so the close cleanup below runs once even though `close()` and
+    /// `windowWillClose` can both fire for the same window.
+    private var closeCleanupDone = false
     private var keyMonitor: Any?
     private let recognitionService: RecognitionService
     private let recognitionPanel: RecognitionResultsView
@@ -415,14 +420,28 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         centerTrafficLights()
     }
 
-    /// Debounces snapshot writes while the user draws or adjusts a crop.
+    /// Debounces snapshot writes while the user draws or adjusts a crop. At
+    /// most one task is in flight; edits that land while it waits set a dirty
+    /// flag that extends the wait, instead of cancelling and recreating a
+    /// task on every controller tick.
     private func scheduleDocumentSnapshot() {
         guard historyEntryID != nil else { return }
-        snapshotSaveTask?.cancel()
+        guard snapshotSaveTask == nil else {
+            snapshotDirty = true
+            return
+        }
         snapshotSaveTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 600_000_000)
-            guard !Task.isCancelled, let self else { return }
-            self.persistDocumentSnapshot()
+            while let self, !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                guard !Task.isCancelled else { return }
+                if self.snapshotDirty {
+                    self.snapshotDirty = false
+                    continue
+                }
+                self.snapshotSaveTask = nil
+                self.persistDocumentSnapshot()
+                return
+            }
         }
     }
 
@@ -450,15 +469,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     /// Tab on the canvas: copies the edited color as "#RRGGBB".
     private func copyColorHex() {
         let color = (controller.selectedStyle ?? controller.style).color
-        let hex = String(
-            format: "#%02X%02X%02X",
-            Int((color.red * 255).rounded()),
-            Int((color.green * 255).rounded()),
-            Int((color.blue * 255).rounded())
-        )
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(hex, forType: .string)
+        pasteboard.setString(color.hexString, forType: .string)
     }
 
     // MARK: - Shortcuts while a toolbar control has focus
@@ -1144,17 +1157,21 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     override func close() {
-        commitPendingText()
-        snapshotSaveTask?.cancel()
-        snapshotSaveTask = nil
-        persistDocumentSnapshot()
-        cancelRecognition()
-        cancelRedaction()
-        removeKeyMonitor()
+        performCloseCleanup()
         super.close()
     }
 
     func windowWillClose(_ notification: Notification) {
+        performCloseCleanup()
+        onClose()
+    }
+
+    /// One idempotent teardown path: `close()` and `windowWillClose` both run
+    /// for a programmatic close, and the red close button only reaches
+    /// `windowWillClose`, so the work is guarded to happen exactly once.
+    private func performCloseCleanup() {
+        guard !closeCleanupDone else { return }
+        closeCleanupDone = true
         commitPendingText()
         snapshotSaveTask?.cancel()
         snapshotSaveTask = nil
@@ -1162,7 +1179,6 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         cancelRecognition()
         cancelRedaction()
         removeKeyMonitor()
-        onClose()
     }
 }
 

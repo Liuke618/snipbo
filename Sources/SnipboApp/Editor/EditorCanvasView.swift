@@ -38,11 +38,32 @@ final class EditorCanvasView: NSView {
     /// Image-pixel rects returned by the last recognition. They are drawn over
     /// the current crop and are not part of the document or undo history.
     private(set) var recognitionHighlights: [CGRect] = []
-    private var cachedImage: CGImage?
-    private var cachedState: DocumentState?
-    private var cachedDraft: Annotation?
-    private var cachedScale: CGFloat = 0
-    private var cachedImageID: ObjectIdentifier?
+    /// Committed layer: base image + committed annotations, keyed by the
+    /// document state, source image, and display scale. Draft ticks never
+    /// touch this key, so drawing reuses the expensive layer.
+    private var committedImage: CGImage?
+    private var committedState: DocumentState?
+    private var committedScale: CGFloat = 0
+    private var committedImageID: ObjectIdentifier?
+    /// Draft layer: only the in-progress annotation, over transparency. A
+    /// full-size buffer, but cheap to re-render because nothing else is drawn.
+    private var draftLayerImage: CGImage?
+    private var draftLayerDraft: Annotation?
+    private var draftLayerScale: CGFloat = 0
+    private var draftLayerImageID: ObjectIdentifier?
+    private var draftLayerGeneration = 0
+    /// The two layers blitted together, redrawn only when either layer
+    /// changes. Together with the committed layer this stays at roughly two
+    /// full-size buffers plus the draft.
+    private var compositedImage: CGImage?
+    private var compositedState: DocumentState?
+    private var compositedScale: CGFloat = 0
+    private var compositedImageID: ObjectIdentifier?
+    private var compositedDraftGeneration = -1
+    /// Background render + PNG encode started at mouse-down so the drag-out
+    /// does not block the main thread; consumed by `beginImageDrag`.
+    private var dragOutTask: Task<Void, Never>?
+    private var preparedDragOut: DragOutPreparation.Prepared?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -147,29 +168,80 @@ final class EditorCanvasView: NSView {
         return min(1, max(0.05, zoom * backing))
     }
 
-    /// Reuses the last render unless the document, draft, source image, or
-    /// display scale changed. Selection changes and recognition highlights are
-    /// drawn on top and do not invalidate it.
+    /// Layered render cache: a committed layer (image + committed
+    /// annotations) that only re-renders when the document state, source
+    /// image, or display scale changes, plus a draft layer (only the
+    /// in-progress annotation) that re-renders while it moves or grows, and
+    /// a composite of the two blitted once per layer change. Drawing or
+    /// dragging therefore never re-runs the annotation effects per frame;
+    /// selection changes and recognition highlights are drawn on top and do
+    /// not invalidate anything.
     private func imageToDraw() -> CGImage? {
         let document = controller.document
         let state = document.state
         let draft = controller.draft
         let scale = displayRenderScale
         let imageID = ObjectIdentifier(document.image)
-        if let cachedImage,
-           cachedState == state,
-           cachedDraft == draft,
-           cachedScale == scale,
-           cachedImageID == imageID {
-            return cachedImage
+        if committedImage == nil
+            || committedState != state
+            || committedScale != scale
+            || committedImageID != imageID {
+            committedImage = DocumentRenderer.render(document, scale: scale)
+            committedState = state
+            committedScale = scale
+            committedImageID = imageID
         }
-        let image = controller.render(includeDraft: true, scale: scale)
-        cachedImage = image
-        cachedState = state
-        cachedDraft = draft
-        cachedScale = scale
-        cachedImageID = imageID
-        return image
+        guard let committed = committedImage else { return nil }
+
+        if let draft {
+            if draftLayerDraft != draft
+                || draftLayerScale != scale
+                || draftLayerImageID != imageID {
+                var draftDocument = document
+                draftDocument.annotations = [draft]
+                draftLayerImage = DocumentRenderer.renderDraftOnly(draftDocument, scale: scale)
+                draftLayerDraft = draft
+                draftLayerScale = scale
+                draftLayerImageID = imageID
+                draftLayerGeneration += 1
+            }
+        } else if draftLayerImage != nil {
+            draftLayerImage = nil
+            draftLayerDraft = nil
+            draftLayerGeneration += 1
+        }
+        guard let draftLayer = draftLayerImage else {
+            // No draft: the committed buffer draws directly, no composite.
+            compositedImage = nil
+            return committed
+        }
+
+        if compositedImage == nil
+            || compositedState != state
+            || compositedScale != scale
+            || compositedImageID != imageID
+            || compositedDraftGeneration != draftLayerGeneration {
+            let size = CGSize(width: committed.width, height: committed.height)
+            if let composite = CGContext(
+                data: nil,
+                width: committed.width,
+                height: committed.height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: committed.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) {
+                composite.interpolationQuality = .high
+                composite.draw(committed, in: CGRect(origin: .zero, size: size))
+                composite.draw(draftLayer, in: CGRect(origin: .zero, size: size))
+                compositedImage = composite.makeImage()
+                compositedState = state
+                compositedScale = scale
+                compositedImageID = imageID
+                compositedDraftGeneration = draftLayerGeneration
+            }
+        }
+        return compositedImage ?? committed
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -346,16 +418,25 @@ final class EditorCanvasView: NSView {
             }
             return
         }
+        // Select tool hit-tests once per press: the result picks between the
+        // drag-out gesture and moving annotations, and `begin` reuses it
+        // instead of testing every annotation a second time.
+        let hit = controller.tool == .select
+            ? AnnotationHitTester.topmost(
+                in: controller.document.annotations,
+                at: imagePoint,
+                tolerance: 8 / zoom
+            )
+            : nil
         // Dragging empty canvas with the select tool exports the rendered
         // image. A press that lands on an annotation keeps moving it instead.
+        // The press also starts the background render + encode the drag will
+        // need, so the first drag tick does not block on a full-size export.
         if controller.tool == .select,
            !event.modifierFlags.contains(.shift),
-           AnnotationHitTester.topmost(
-               in: controller.document.annotations,
-               at: imagePoint,
-               tolerance: 8 / zoom
-           ) == nil {
+           hit == nil {
             dragOutOrigin = convert(event.locationInWindow, from: nil)
+            prepareDragOut()
         } else {
             dragOutOrigin = nil
         }
@@ -363,7 +444,8 @@ final class EditorCanvasView: NSView {
         controller.begin(
             at: imagePoint,
             tolerance: 8 / zoom,
-            extendSelection: event.modifierFlags.contains(.shift)
+            extendSelection: event.modifierFlags.contains(.shift),
+            hit: hit
         )
     }
 
@@ -462,19 +544,48 @@ final class EditorCanvasView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         dragOutOrigin = nil
+        cancelDragOutPreparation()
         controller.end(at: imagePoint(from: event))
+    }
+
+    /// Starts the background render + PNG encode for a drag-out. If the drag
+    /// never happens (plain click) or the document changes first, the result
+    /// is discarded by the use-time state check and the cancel below.
+    private func prepareDragOut() {
+        cancelDragOutPreparation()
+        let document = controller.document
+        dragOutTask = Task { [weak self] in
+            let prepared = await DragOutPreparation.prepare(document)
+            guard let self, !Task.isCancelled else { return }
+            self.preparedDragOut = prepared
+        }
+    }
+
+    private func cancelDragOutPreparation() {
+        dragOutTask?.cancel()
+        dragOutTask = nil
+        preparedDragOut = nil
     }
 
     /// Starts a drag session carrying a temporary PNG plus the rendered
     /// preview. The select tool only reaches this path on empty canvas, so it
     /// cannot interfere with moving or drawing annotations.
     private func beginImageDrag(with event: NSEvent, from origin: CGPoint) {
-        guard let image = controller.render(),
-              let payload = ImageDragSupport.makePayload(
-                  image: image,
-                  suggestedName: suggestedExportName?()
-                      ?? controller.defaultFileName(format: .png)
-              ) else {
+        let name = suggestedExportName?() ?? controller.defaultFileName(format: .png)
+        defer { cancelDragOutPreparation() }
+        // The prepared payload is only used when the document is exactly the
+        // one it was rendered from; otherwise fall back to the synchronous
+        // render so the drag always carries the current image.
+        let payload: ImageDragSupport.Payload?
+        if let prepared = preparedDragOut,
+           prepared.state == controller.document.state {
+            payload = ImageDragSupport.makePayload(prepared: prepared, suggestedName: name)
+        } else if let image = controller.render() {
+            payload = ImageDragSupport.makePayload(image: image, suggestedName: name)
+        } else {
+            payload = nil
+        }
+        guard let payload else {
             NSSound.beep()
             return
         }

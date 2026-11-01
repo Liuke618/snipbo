@@ -18,6 +18,17 @@ public struct RGBA: Codable, Equatable, Sendable {
     public static let yellow = RGBA(red: 1, green: 0.8, blue: 0)
     public static let black = RGBA(red: 0, green: 0, blue: 0)
     public static let white = RGBA(red: 1, green: 1, blue: 1)
+
+    /// "#RRGGBB", shared by the style panel readout, palette tooltips, and
+    /// the Tab copy-to-clipboard action.
+    public var hexString: String {
+        String(
+            format: "#%02X%02X%02X",
+            Int((red * 255).rounded()),
+            Int((green * 255).rounded()),
+            Int((blue * 255).rounded())
+        )
+    }
 }
 
 public enum AnnotationKind: String, Codable, Sendable {
