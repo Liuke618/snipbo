@@ -41,8 +41,12 @@ class HoverButton: NSButton {
     var washColor: NSColor { .white }
     /// Colour of the selected wash; the violet accent marks the active tool.
     var selectedWashColor: NSColor { DesignTokens.Color.accentSoft }
-    /// Corner radius of the wash; capsules override with half the height.
-    var washRadius: CGFloat { DesignTokens.Radius.control }
+    /// Corner radius of the wash; capsules override with half their height,
+    /// square pill buttons set a rounded-square radius per instance.
+    var washRadius: CGFloat { washRadiusOverride ?? DesignTokens.Radius.control }
+    var washRadiusOverride: CGFloat? {
+        didSet { needsDisplay = true }
+    }
     /// How far the wash sits inside the bounds.
     var washInset: CGFloat { 1 }
     var hoverAlpha: CGFloat { DesignTokens.Alpha.hover }

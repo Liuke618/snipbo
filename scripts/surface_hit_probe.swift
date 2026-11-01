@@ -4,14 +4,15 @@ import SnipboCore
 
 // Floating-surface hit-test probe (compiled together with the app sources).
 //
-// For every visible control in the editor toolbar and the floating style panel,
+// For every visible control in the editor chrome and the floating style panel,
 // this asks the window's content view who would receive a mouse-down at the
 // control's centre. A control shadowed by another view — the panel itself, or a
 // background plate that returns nil and so prunes its own subtree — is
 // unclickable no matter how its target and action are wired.
 //
-// The toolbar keeps its plate as a sibling behind the buttons; the style panel
-// hosts its controls inside the plate. Both layouts have to stay clickable.
+// The chrome hosts its controls inside floating capsule pills over the canvas;
+// the style panel hosts its controls inside the plate. Both layouts have to
+// stay clickable.
 
 @MainActor var failures = 0
 
@@ -107,7 +108,7 @@ func run() {
         onFill: { lastFillColor = $0 },
         onArrowStyle: { _ in }
     )
-    let toolbar = EditorToolbarView(
+    let chrome = EditorChromeView(
         onTool: { _ in },
         onUndo: {},
         onRedo: {},
@@ -116,26 +117,33 @@ func run() {
         onPin: {},
         onCopy: {},
         onSave: {},
-        onShowOptions: {}
+        onShowOptions: {},
+        onZoomIn: {},
+        onZoomOut: {},
+        onFit: {}
     )
 
     let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+        contentRect: NSRect(x: 0, y: 0, width: 1200, height: 700),
         styleMask: [.titled, .closable, .resizable],
         backing: .buffered,
         defer: false
     )
-    let content = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 1200, height: 700))
     window.contentView = content
     content.addSubview(panel)
-    content.addSubview(toolbar)
+    content.addSubview(chrome)
     panel.translatesAutoresizingMaskIntoConstraints = false
-    toolbar.translatesAutoresizingMaskIntoConstraints = false
+    chrome.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-        toolbar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-        toolbar.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-        toolbar.topAnchor.constraint(equalTo: content.topAnchor),
-        panel.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 12),
+        chrome.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+        chrome.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+        chrome.topAnchor.constraint(equalTo: content.topAnchor),
+        chrome.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+        panel.topAnchor.constraint(
+            equalTo: content.topAnchor,
+            constant: EditorChromeView.topBandHeight + 12
+        ),
         panel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
     ])
     // Show every row: shape options on, so the line-style/fill/arrow row is live.
@@ -147,9 +155,9 @@ func run() {
     )
     window.layoutIfNeeded()
 
-    // The toolbar keeps its plate as a sibling behind the buttons; the style
-    // panel hosts its controls inside the plate. Both must stay clickable.
-    probeClickable(toolbar, named: "toolbar", in: content, atLeast: 10)
+    // The chrome hosts its controls inside floating capsule plates; the style
+    // panel hosts its controls inside its own plate. Both must stay clickable.
+    probeClickable(chrome, named: "chrome", in: content, atLeast: 24)
     var panelControls: [NSView] = []
     collectControls(panel, into: &panelControls)
     probeClickable(panel, named: "style panel", in: content, atLeast: 14)

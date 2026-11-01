@@ -72,20 +72,28 @@ struct UIRenderHarness {
 
     @MainActor
     static func renderEditorToolbar(to dir: URL) {
-        let toolbar = EditorToolbarView(
+        let chrome = EditorChromeView(
             onTool: { _ in }, onUndo: {}, onRedo: {}, onRedact: { _ in },
-            onRecognize: {}, onPin: {}, onCopy: {}, onSave: {}, onShowOptions: {}
+            onRecognize: {}, onPin: {}, onCopy: {}, onSave: {}, onShowOptions: {},
+            onZoomIn: {}, onZoomOut: {}, onFit: {}
         )
-        toolbar.setSelectedTool(.rectangle)
-        toolbar.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: 0.35)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: EditorToolbarView.height),
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-        window.contentView = toolbar
-        renderContentView(of: window, to: dir.appendingPathComponent("editor-toolbar.png"))
+        chrome.setSelectedTool(.rectangle)
+        chrome.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: 0.35)
+        // The chrome floats over the canvas, so render it over the mat colour
+        // the canvas shows behind it.
+        let canvas = NSView(frame: NSRect(x: 0, y: 0, width: 1240, height: 560))
+        canvas.wantsLayer = true
+        canvas.layer?.backgroundColor = DesignTokens.Color.canvasBase.cgColor
+        chrome.translatesAutoresizingMaskIntoConstraints = false
+        canvas.addSubview(chrome)
+        NSLayoutConstraint.activate([
+            chrome.leadingAnchor.constraint(equalTo: canvas.leadingAnchor),
+            chrome.trailingAnchor.constraint(equalTo: canvas.trailingAnchor),
+            chrome.topAnchor.constraint(equalTo: canvas.topAnchor),
+            chrome.bottomAnchor.constraint(equalTo: canvas.bottomAnchor),
+        ])
+        canvas.layoutSubtreeIfNeeded()
+        renderView(canvas, to: dir.appendingPathComponent("editor-chrome.png"))
     }
 
     @MainActor

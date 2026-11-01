@@ -47,32 +47,38 @@ struct EditorProbe {
         if let window = editor.window {
             let content = window.contentView!.frame.size
             // The window hugs the image's displayed size: fit into 90% of the
-            // screen first, floored at 640 pt — but never narrower than the
-            // toolbar's intrinsic width, which the probe binary inflates
-            // (labels instead of bundled icons).
-            let fitZoom = min(screen.width * 0.9 / 2022, screen.height * 0.9 / 5175, 1)
-            // Measure the toolbar floor with the real readout strings — the
-            // size label ("2022×5175 px") is much wider than the placeholder.
-            let probeToolbar = EditorToolbarView(
-                onTool: { _ in }, onUndo: {}, onRedo: {}, onRedact: { _ in },
-                onRecognize: {}, onPin: {}, onCopy: {}, onSave: {}, onShowOptions: {}
+            // screen minus the floating chrome rows first, floored at 640 pt —
+            // but never narrower than the chrome's intrinsic width, which the
+            // probe binary inflates (labels instead of bundled icons).
+            let fitZoom = min(
+                screen.width * 0.9 / 2022,
+                (screen.height * 0.9 - EditorChromeView.verticalChrome) / 5175,
+                1
             )
-            probeToolbar.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: fitZoom)
-            let toolbarFloor = probeToolbar.fittingSize.width
-            // Zoom digits change constantly while pinching; the toolbar must
+            // Measure the chrome floor with the real readout strings — the
+            // size pill ("2022×5175 px") is much wider than the placeholder.
+            let probeChrome = EditorChromeView(
+                onTool: { _ in }, onUndo: {}, onRedo: {}, onRedact: { _ in },
+                onRecognize: {}, onPin: {}, onCopy: {}, onSave: {}, onShowOptions: {},
+                onZoomIn: {}, onZoomOut: {}, onFit: {}
+            )
+            probeChrome.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: fitZoom)
+            let chromeFloor = probeChrome.floorWidth
+            // Zoom digits change constantly while pinching; the chrome must
             // not resize (and shift its icons) between "10%" and "800%".
-            probeToolbar.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: 0.1)
-            let narrowZoomWidth = probeToolbar.fittingSize.width
-            probeToolbar.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: 8)
-            let wideZoomWidth = probeToolbar.fittingSize.width
-            check("toolbar: width independent of zoom digits",
+            probeChrome.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: 0.1)
+            let narrowZoomWidth = probeChrome.floorWidth
+            probeChrome.updateReadouts(size: CGSize(width: 2022, height: 5175), zoom: 8)
+            let wideZoomWidth = probeChrome.floorWidth
+            check("chrome: width independent of zoom digits",
                   abs(narrowZoomWidth - wideZoomWidth) < 0.5,
                   "\(Int(narrowZoomWidth)) vs \(Int(wideZoomWidth))")
-            let expectedWidth = min(max(640, 2022 * fitZoom, toolbarFloor), screen.width * 0.9)
-            let expectedHeight = min(max(320, 5175 * fitZoom), screen.height * 0.9) + 36
-            check("large: window hugs fitted image (toolbar floor respected)",
+            let expectedWidth = min(max(640, 2022 * fitZoom, chromeFloor), screen.width * 0.9)
+            let expectedHeight = min(max(320, 5175 * fitZoom), screen.height * 0.9 - EditorChromeView.verticalChrome)
+                + EditorChromeView.verticalChrome
+            check("large: window hugs fitted image (chrome floor respected)",
                   abs(content.width - expectedWidth) <= 12 && abs(content.height - expectedHeight) < 2,
-                  "got \(Int(content.width))x\(Int(content.height)), want \(Int(expectedWidth))x\(Int(expectedHeight)) (toolbar floor \(Int(toolbarFloor)))")
+                  "got \(Int(content.width))x\(Int(content.height)), want \(Int(expectedWidth))x\(Int(expectedHeight)) (chrome floor \(Int(chromeFloor)))")
             check("large: window fits the screen",
                   window.frame.width <= screen.width && window.frame.height <= screen.height + 2,
                   "frame \(window.frame), screen \(screen)")
@@ -93,7 +99,7 @@ struct EditorProbe {
         editor.close()
 
         // --- Case 2: small 300x200 capture. The window cannot shrink below
-        // the toolbar's intrinsic width, so only centering and the 1:1 zoom
+        // the chrome's intrinsic width, so only centering and the 1:1 zoom
         // are asserted, relative to the actual content size.
         editor = makeEditor(image: makeImage(width: 300, height: 200))
         editor.show()
@@ -106,13 +112,13 @@ struct EditorProbe {
                 let scale = Double(bitmap.pixelsWide) / content.width
                 let box = blueBounds(bitmap)
                 // cacheDisplay bitmaps are top-down: row 0 is the content's
-                // top edge. Centered canvas → blue center at the content's
-                // midpoint x and the midpoint of the scroll area (which spans
-                // from 36 pt down to the content bottom) y.
+                // top edge. The canvas fills the window and centers its
+                // document, so the blue center lands on the content's
+                // midpoint x and y.
                 let centerX = Double((box.minX + box.maxX) / 2)
                 let centerY = Double((box.minY + box.maxY) / 2)
                 let wantX = Double(bitmap.pixelsWide / 2)
-                let wantY = (36 + (content.height - 36) / 2) * scale
+                let wantY = Double(bitmap.pixelsHigh / 2)
                 check("small: crop centered horizontally", abs(centerX - wantX) <= 8,
                       "center \(centerX), want \(wantX)")
                 check("small: crop centered vertically", abs(centerY - wantY) <= 8,

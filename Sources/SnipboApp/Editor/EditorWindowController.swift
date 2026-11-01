@@ -1,4 +1,5 @@
 import AppKit
+import ObjectiveC
 import SnipboCore
 import UniformTypeIdentifiers
 
@@ -39,7 +40,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     /// Prevents a second copy/save/pin from starting while the first render or
     /// encode is still in flight.
     private var exportInFlight = false
-    private var toolbarView: EditorToolbarView?
+    private var chromeView: EditorChromeView?
     private var stylePanel: EditorStylePanelView?
     private var stylePanelTopConstraint: NSLayoutConstraint?
     private var stylePanelTrailingConstraint: NSLayoutConstraint?
@@ -76,9 +77,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             defer: false
         )
         super.init(window: window)
-        // The toolbar's actions call back into this controller, so it is built
+        // The chrome's actions call back into this controller, so it is built
         // after `super.init` when `self` can be captured.
-        let toolbar = EditorToolbarView(
+        let chrome = EditorChromeView(
             onTool: { [weak controller] tool in controller?.tool = tool },
             onUndo: { [weak controller] in controller?.undo() },
             onRedo: { [weak controller] in controller?.redo() },
@@ -87,9 +88,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             onPin: { [weak self] in self?.pinAction() },
             onCopy: { [weak self] in self?.copyAndClose() },
             onSave: { [weak self] in self?.saveAndClose(saveAs: false) },
-            onShowOptions: { [weak self] in self?.showOptionsPopover() }
+            onShowOptions: { [weak self] in self?.showOptionsPopover() },
+            onZoomIn: { [weak self] in self?.stepZoom(1.25) },
+            onZoomOut: { [weak self] in self?.stepZoom(0.8) },
+            onFit: { [weak self] in self?.fitToWindow() }
         )
-        self.toolbarView = toolbar
+        self.chromeView = chrome
         let stylePanel = EditorStylePanelView(
             onColor: { [weak controller] color in controller?.setColor(color) },
             onWidth: { [weak controller] width in controller?.setLineWidth(width) },
@@ -121,9 +125,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             self.window?.makeFirstResponder(self.canvas)
         }
         window.title = "Snipbo"
-        // Shottr-style chrome: no separate title-bar strip — the toolbar fills
-        // the top of the window and hosts the traffic lights at its left edge.
-        // The title stays set so Mission Control still names the window.
+        // Freeform-style chrome: no separate title-bar strip — the canvas
+        // fills the window and the floating pill clusters hover over it. The
+        // title stays set so Mission Control still names the window.
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.backgroundColor = DesignTokens.Color.canvasBase
@@ -151,31 +155,37 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         scrollView.drawsBackground = true
         scrollView.backgroundColor = DesignTokens.Color.canvasBase
         scrollView.documentView = canvas
+        Self.disableScrollEdgeEffect(scrollView)
 
         let body = bodyView
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         recognitionPanel.translatesAutoresizingMaskIntoConstraints = false
-        toolbar.translatesAutoresizingMaskIntoConstraints = false
+        chrome.translatesAutoresizingMaskIntoConstraints = false
         body.addSubview(scrollView)
-        body.addSubview(toolbar)
+        body.addSubview(chrome)
         body.addSubview(stylePanel)
+        chrome.scrollForwardTarget = canvas
 
         scrollTrailingConstraint = scrollView.trailingAnchor.constraint(equalTo: body.trailingAnchor)
         // Anchored to the canvas viewport rather than the window so the panel
         // moves aside with the canvas when the recognition panel opens, and
-        // floats above the image instead of taking layout space.
-        let stylePanelTop = stylePanel.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12)
+        // floats above the image instead of taking layout space. The top inset
+        // drops the panel below the floating tool pills.
+        let stylePanelTop = stylePanel.topAnchor.constraint(
+            equalTo: scrollView.topAnchor,
+            constant: EditorChromeView.topBandHeight + 8
+        )
         let stylePanelTrailing = stylePanel.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -12)
         stylePanelTopConstraint = stylePanelTop
         stylePanelTrailingConstraint = stylePanelTrailing
         NSLayoutConstraint.activate([
-            toolbar.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: body.trailingAnchor),
-            toolbar.topAnchor.constraint(equalTo: body.topAnchor),
-            toolbar.heightAnchor.constraint(equalToConstant: EditorToolbarView.height),
             scrollView.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-            scrollView.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: body.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: body.bottomAnchor),
+            chrome.leadingAnchor.constraint(equalTo: body.leadingAnchor),
+            chrome.trailingAnchor.constraint(equalTo: body.trailingAnchor),
+            chrome.topAnchor.constraint(equalTo: body.topAnchor),
+            chrome.bottomAnchor.constraint(equalTo: body.bottomAnchor),
             scrollTrailingConstraint,
             stylePanelTop,
             stylePanelTrailing,
@@ -225,11 +235,26 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         window?.makeFirstResponder(canvas)
     }
 
-    /// Vertically centers the native traffic-light buttons in the toolbar
-    /// strip. With `.fullSizeContentView` the buttons stay in the system
-    /// titlebar layer, whose default centering follows the hidden 28pt title
-    /// bar rather than the 36pt toolbar; AppKit also re-lays them out on
-    /// key-state changes, so the fix is reapplied from the delegate callbacks.
+    /// macOS 26 adds a system scroll-edge backdrop ("pocket") when a scroll
+    /// view touches the window's top or bottom edge — a blur that washes the
+    /// screenshot out under the floating chrome and also drops the canvas from
+    /// the offscreen captures the probes rely on. The editor opts out; the
+    /// call is guarded because the API is private SPI.
+    private static func disableScrollEdgeEffect(_ scrollView: NSScrollView) {
+        let setter = NSSelectorFromString("setAllowedPocketEdges:")
+        guard scrollView.responds(to: setter),
+              let method = class_getInstanceMethod(NSScrollView.self, setter) else { return }
+        typealias PocketEdgeSetter = @convention(c) (AnyObject, Selector, Int) -> Void
+        let imp = unsafeBitCast(method_getImplementation(method), to: PocketEdgeSetter.self)
+        imp(scrollView, setter, 0)
+    }
+
+    /// Vertically centers the native traffic-light buttons in the floating
+    /// top pill row. With `.fullSizeContentView` the buttons stay in the
+    /// system titlebar layer, whose default centering follows the hidden 28pt
+    /// title bar rather than the 48pt chrome row; AppKit also re-lays them out
+    /// on key-state changes, so the fix is reapplied from the delegate
+    /// callbacks.
     private func centerTrafficLights() {
         guard let window else { return }
         let buttons = [
@@ -240,7 +265,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         for button in buttons {
             guard let container = button.superview else { continue }
             let height = button.bounds.height
-            let targetY = (EditorToolbarView.height - height) / 2
+            let targetY = (EditorChromeView.topBandHeight - height) / 2
             button.frame.origin.y = container.isFlipped
                 ? targetY
                 : container.bounds.height - targetY - height
@@ -248,10 +273,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Opens the window hugging the capture's displayed size: the image is
-    /// first fit into 90% of the screen, then the window takes exactly that
-    /// fitted size (floored at a usable editor width) and centers on screen.
-    /// The screenshot therefore fills the editor instead of floating in a
-    /// large empty mat; small captures still open 1:1.
+    /// first fit into 90% of the screen minus the floating chrome rows, then
+    /// the window takes exactly that fitted size (floored at a usable editor
+    /// width) and centers on screen. The screenshot therefore fills the editor
+    /// between the pill clusters instead of floating in a large empty mat;
+    /// small captures still open 1:1.
     private func sizeWindowToFitImage() {
         guard let window else { return }
         let crop = controller.document.cropRect
@@ -259,21 +285,22 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let visible = (window.screen ?? NSScreen.main)?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
         let maxContentWidth = visible.width * 0.9
-        let maxScrollHeight = visible.height * 0.9
+        let maxScrollHeight = visible.height * 0.9 - EditorChromeView.verticalChrome
         let fitZoom = min(
             maxContentWidth / crop.width,
             maxScrollHeight / crop.height,
             1
         )
-        // A small capture still needs room for every tool and action; the
-        // toolbar would otherwise clip on the right. The floor is measured
-        // from the live view, so adding a tool never silently hides another.
-        let toolbarFloor = toolbarView?.fittingSize.width ?? 640
+        // A small capture still needs room for every pill cluster; the floor
+        // is measured from the live view, so adding a tool never silently
+        // hides another.
+        let chromeFloor = chromeView?.floorWidth ?? 640
         let width = min(
-            max(640, crop.width * fitZoom, toolbarFloor),
+            max(640, crop.width * fitZoom, chromeFloor),
             maxContentWidth
         )
-        let height = min(max(320, crop.height * fitZoom), maxScrollHeight) + EditorToolbarView.height
+        let height = min(max(320, crop.height * fitZoom), maxScrollHeight)
+            + EditorChromeView.verticalChrome
         window.setContentSize(NSSize(width: width, height: height))
         window.center()
     }
@@ -282,13 +309,23 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let content = scrollView.contentSize
         let crop = controller.document.cropRect
         guard content.width > 1, content.height > 1, crop.width > 0, crop.height > 0 else { return }
+        // The floating chrome rows hover over the canvas; keep the fitted
+        // image clear of them instead of tucking its edges under the pills.
         let scale = min(
-            content.width / crop.width,
-            content.height / crop.height,
+            (content.width - 24) / crop.width,
+            (content.height - EditorChromeView.verticalChrome - 12) / crop.height,
             1
         )
-        canvas.setZoom(scale)
+        canvas.setZoom(max(scale, 0.01))
         refreshReadouts()
+    }
+
+    /// Steps the zoom from the chrome's −/+ buttons, anchored at the center
+    /// of the viewport so the content stays centered while it scales.
+    private func stepZoom(_ factor: CGFloat) {
+        let clip = scrollView.contentView
+        let anchor = CGPoint(x: clip.bounds.midX, y: clip.bounds.midY)
+        canvas.setZoom(canvas.zoom * factor, anchoredAt: anchor)
     }
 
     /// Live readouts: the crop draft's size while cropping, else the current
@@ -297,8 +334,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     /// the floating panel, which only shows when it can affect something.
     private func refreshReadouts() {
         let size = controller.cropDraft?.size ?? controller.document.cropRect.size
-        toolbarView?.updateReadouts(size: size, zoom: canvas.zoom)
-        toolbarView?.setSelectedTool(controller.tool)
+        chromeView?.updateReadouts(size: size, zoom: canvas.zoom)
+        chromeView?.setSelectedTool(controller.tool)
         let editedStyle = controller.selectedStyle ?? controller.style
         let isText = controller.tool == .text || controller.selectedKind == .text
         let shapeTools: [EditorTool] = [
@@ -345,7 +382,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let viewport = scrollView.frame.size
         let size = panel.frame.size
         let maxX = max(8, viewport.width - size.width - 8)
-        let maxY = max(8, viewport.height - size.height - 8)
+        let maxY = max(8, viewport.height - size.height - EditorChromeView.bottomBandHeight)
         leading.constant = min(max(8, leading.constant + delta.width), maxX)
         // Window coordinates grow upward, constraint constants downward.
         top.constant = min(max(8, top.constant - delta.height), maxY)
@@ -359,7 +396,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let viewport = scrollView.frame.size
         let size = panel.frame.size
         leading.constant = min(max(8, leading.constant), max(8, viewport.width - size.width - 8))
-        top.constant = min(max(8, top.constant), max(8, viewport.height - size.height - 8))
+        top.constant = min(
+            max(8, top.constant),
+            max(8, viewport.height - size.height - EditorChromeView.bottomBandHeight)
+        )
     }
 
     func windowDidResize(_ notification: Notification) {
@@ -402,7 +442,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             optionsPopover = popover
         }
         optionsPanel.refreshFromController()
-        if let anchor = toolbarView?.optionsAnchor {
+        if let anchor = chromeView?.optionsAnchor {
             popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
         }
     }
@@ -895,14 +935,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         let languages = settings.ocrLanguages
         redactionGeneration += 1
         let generation = redactionGeneration
-        toolbarView?.setRedacting(true)
+        chromeView?.setRedacting(true)
 
         redactionTask = Task { [weak self] in
             guard let self else { return }
             defer {
                 if generation == self.redactionGeneration {
                     self.redactionTask = nil
-                    self.toolbarView?.setRedacting(false)
+                    self.chromeView?.setRedacting(false)
                 }
             }
             guard let payload = await Self.render(detectionDocument) else {
@@ -959,7 +999,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         redactionGeneration += 1
         redactionTask?.cancel()
         redactionTask = nil
-        toolbarView?.setRedacting(false)
+        chromeView?.setRedacting(false)
     }
 
     // MARK: - Recognition
@@ -976,7 +1016,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
         setRecognitionPanelVisible(true)
         recognitionPanel.showProgress()
-        toolbarView?.setRecognizing(true)
+        chromeView?.setRecognizing(true)
         canvas.setRecognitionHighlights([])
 
         recognitionTask = Task { [weak self] in
@@ -1048,7 +1088,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private func finishRecognition(generation: Int) {
         guard generation == recognitionGeneration else { return }
         recognitionTask = nil
-        toolbarView?.setRecognizing(false)
+        chromeView?.setRecognizing(false)
     }
 
     private func copyRecognitionText(_ text: String) {
@@ -1065,8 +1105,16 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             recognitionPanelConstraints = [
                 recognitionPanel.leadingAnchor.constraint(equalTo: scrollView.trailingAnchor),
                 recognitionPanel.trailingAnchor.constraint(equalTo: bodyView.trailingAnchor),
-                recognitionPanel.topAnchor.constraint(equalTo: scrollView.topAnchor),
-                recognitionPanel.bottomAnchor.constraint(equalTo: bodyView.bottomAnchor),
+                // Starts below the floating top pills and ends above the bottom
+                // ones, so the chrome stays reachable while results are open.
+                recognitionPanel.topAnchor.constraint(
+                    equalTo: bodyView.topAnchor,
+                    constant: EditorChromeView.topBandHeight + 8
+                ),
+                recognitionPanel.bottomAnchor.constraint(
+                    equalTo: bodyView.bottomAnchor,
+                    constant: -(EditorChromeView.bottomBandHeight + 8)
+                ),
                 recognitionPanel.widthAnchor.constraint(equalToConstant: 300),
             ]
             scrollTrailingConstraint.isActive = false
@@ -1092,7 +1140,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         recognitionGeneration += 1
         recognitionTask?.cancel()
         recognitionTask = nil
-        toolbarView?.setRecognizing(false)
+        chromeView?.setRecognizing(false)
     }
 
     override func close() {
@@ -1123,7 +1171,33 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 /// the document view's frame rather than `documentRect`, which this macOS
 /// version clamps up to the viewport once layout settles. Gestures over the
 /// background mat are forwarded to the canvas so pinch zoom works everywhere.
+/// The mat paints the Freeform-style dot grid, so the empty area around the
+/// screenshot reads as a canvas rather than dead space.
 private final class CenteringClipView: NSClipView {
+    /// One dot per tile; the pattern tiles from the window origin, so the grid
+    /// stays put while the canvas scrolls under it.
+    private static let dotColor = NSColor(patternImage: CenteringClipView.dotTile())
+
+    private static func dotTile() -> NSImage {
+        NSImage(size: NSSize(width: 20, height: 20), flipped: false) { rect in
+            NSColor.white.withAlphaComponent(0.055).setFill()
+            NSBezierPath(ovalIn: CGRect(
+                x: (rect.width - 2) / 2,
+                y: (rect.height - 2) / 2,
+                width: 2,
+                height: 2
+            )).fill()
+            return true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        DesignTokens.Color.canvasBase.setFill()
+        dirtyRect.fill()
+        Self.dotColor.setFill()
+        dirtyRect.fill()
+    }
+
     override func constrainBoundsRect(_ proposedVisibleRect: NSRect) -> NSRect {
         var rect = super.constrainBoundsRect(proposedVisibleRect)
         guard let documentFrame = documentView?.frame else { return rect }
