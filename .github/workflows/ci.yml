@@ -45,6 +45,44 @@ jobs:
       - name: Run tests
         run: swift test
 
+  # PRs and branch pushes never run the packaging job above, so Info.plist,
+  # icons, codesign, and bundle-layout breakage only surfaced at release time.
+  # build_app.sh falls back to ad-hoc signing when no identity is configured.
+  package-smoke:
+    name: Package smoke (ad-hoc)
+    needs: test
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v6
+        with:
+          path: |
+            .build
+            .swiftpm
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-swift-
+
+      - name: Build app bundle (ad-hoc signed)
+        run: ./scripts/build_app.sh
+
+      - name: Verify bundle structure
+        run: |
+          set -euo pipefail
+          codesign --verify --strict dist/Snipbo.app
+          test -x dist/Snipbo.app/Contents/MacOS/Snipbo
+          test -f dist/Snipbo.app/Contents/Info.plist
+          test -f dist/Snipbo.app/Contents/Resources/AppIcon.icns
+          test -f dist/Snipbo.app/Contents/Resources/Icons/settings.svg
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+            dist/Snipbo.app/Contents/Info.plist
+
   package:
     name: Build and package (arm64)
     needs: test
