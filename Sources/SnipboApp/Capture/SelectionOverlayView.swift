@@ -15,6 +15,11 @@ final class SelectionOverlayView: NSView {
     private var moveAnchor: CGPoint?
     private var activeHandle: SelectionHandle?
     private var mousePoint: CGPoint = .zero
+    /// NSImage wrapper over `captured.image`, built lazily on the first draw.
+    /// `captured` never changes in this view's lifecycle (it is a let and the
+    /// overlay window is never resized), so the wrapper is valid forever;
+    /// draw() runs on every mouse move and must not re-wrap the bitmap.
+    private var imageWrapper: NSImage?
     /// Layer-0 windows on this display in screen-local top-left coordinates,
     /// with their ids and owners. Drives both the WeChat-style hover lock and
     /// (when enabled in Settings) the drag edge snapping.
@@ -41,7 +46,7 @@ final class SelectionOverlayView: NSView {
     ) {
         self.captured = captured
         self.selectionConstraints = constraints
-        self.windows = windowOverrides ?? Self.windowTargets(for: captured)
+        self.windows = windowOverrides ?? Self.windowTargets(from: Self.rawWindowList(), for: captured)
         super.init(frame: CGRect(origin: .zero, size: captured.geometry.frame.size))
         wantsLayer = true
     }
@@ -64,8 +69,7 @@ final class SelectionOverlayView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let nsImage = NSImage(cgImage: captured.image, size: bounds.size)
-        nsImage.draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        baseImage().draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
 
         if selection.isUsable {
             // Dim only the area outside the selection. The old path drew the
@@ -199,7 +203,20 @@ final class SelectionOverlayView: NSView {
         let frame = CGRect(origin: origin, size: CGSize(width: diameter, height: diameter))
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(ovalIn: frame).addClip()
-        NSImage(cgImage: cropped, size: frame.size).draw(in: frame)
+        if let context = NSGraphicsContext.current?.cgContext {
+            // View coordinates are flipped; CGImage draws from the bottom-left
+            // origin, so flip once around the target rect's center or the lens
+            // content ends up upside down. Drawing the cropped CGImage directly
+            // avoids wrapping it in a fresh NSImage on every mouse move.
+            context.translateBy(x: frame.midX, y: frame.midY)
+            context.scaleBy(x: 1, y: -1)
+            context.draw(cropped, in: CGRect(
+                x: -frame.width / 2,
+                y: -frame.height / 2,
+                width: frame.width,
+                height: frame.height
+            ))
+        }
         NSGraphicsContext.restoreGraphicsState()
         NSColor.white.setStroke()
         let outline = NSBezierPath(ovalIn: frame)
@@ -210,6 +227,14 @@ final class SelectionOverlayView: NSView {
         let outer = NSBezierPath(ovalIn: frame.insetBy(dx: -1, dy: -1))
         outer.lineWidth = 1
         outer.stroke()
+    }
+
+    /// The cached full-screenshot wrapper (see `imageWrapper`).
+    private func baseImage() -> NSImage {
+        if let imageWrapper { return imageWrapper }
+        let image = NSImage(cgImage: captured.image, size: bounds.size)
+        imageWrapper = image
+        return image
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -466,21 +491,22 @@ final class SelectionOverlayView: NSView {
     /// top-left coordinates. `kCGWindowName` needs Screen Recording access,
     /// which the app already holds; without it the title falls back to the
     /// owner name through `displayTitle`.
-    private static func windowTargets(
+    ///
+    /// `rawList` is a shared CGWindowList snapshot (see `rawWindowList()`) so
+    /// every display overlay filters the same copy instead of each copying the
+    /// global window list.
+    static func windowTargets(
+        from rawList: [[String: Any]],
         for captured: CapturedImage
     ) -> [WindowTarget] {
         let layout = ScreenLayout.current()
         guard let screen = layout.screens.first(where: {
             $0.displayID == captured.geometry.displayID
         }) else { return [] }
-        guard let info = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements],
-            kCGNullWindowID
-        ) as? [[String: Any]] else { return [] }
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let screenBounds = CGRect(origin: .zero, size: screen.frame.size)
         var targets: [WindowTarget] = []
-        for entry in info {
+        for entry in rawList {
             guard let owner = (entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
                   owner != ownPID,
                   let layer = (entry[kCGWindowLayer as String] as? NSNumber)?.intValue,
@@ -510,6 +536,15 @@ final class SelectionOverlayView: NSView {
             ))
         }
         return targets
+    }
+
+    /// One global CGWindowList snapshot for all display overlays of a capture;
+    /// `CGWindowListCopyWindowInfo` copies every on-screen window each call.
+    static func rawWindowList() -> [[String: Any]] {
+        (CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]]) ?? []
     }
 
     override func mouseUp(with event: NSEvent) {

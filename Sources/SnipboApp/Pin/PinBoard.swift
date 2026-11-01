@@ -32,15 +32,36 @@ final class PinBoard {
             guard let self else { return }
             let items = await store.load()
             guard !items.isEmpty else { return }
-            for item in items {
-                let url = store.directory.appendingPathComponent(item.imageFileName)
-                let payload = await Task.detached(priority: .userInitiated) { () -> ImageData? in
-                    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-                          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
-                        return nil
+            let directory = store.directory
+            // Decode concurrently (at most four at a time) but keep the
+            // persisted order: results are written back by index, so windows
+            // are still created in the original order.
+            let decoded: [ImageData?] = await withTaskGroup(
+                of: (index: Int, payload: ImageData?).self
+            ) { group in
+                var results = [ImageData?](repeating: nil, count: items.count)
+                var iterator = items.enumerated().makeIterator()
+                for _ in 0..<4 {
+                    guard let (index, item) = iterator.next() else { break }
+                    group.addTask {
+                        (index, Self.decodePin(
+                            at: directory.appendingPathComponent(item.imageFileName)
+                        ))
                     }
-                    return ImageData(image)
-                }.value
+                }
+                while let (index, payload) = await group.next() {
+                    results[index] = payload
+                    if let (nextIndex, item) = iterator.next() {
+                        group.addTask {
+                            (nextIndex, Self.decodePin(
+                                at: directory.appendingPathComponent(item.imageFileName)
+                            ))
+                        }
+                    }
+                }
+                return results
+            }
+            for (item, payload) in zip(items, decoded) {
                 guard let payload else {
                     try? await store.remove(id: item.id)
                     continue
@@ -259,6 +280,15 @@ final class PinWindowController: NSWindowController, NSWindowDelegate {
 private extension PinBoard {
     /// Exposed for the cascade offset; counts live pins.
     var pinCount: Int { pins.count }
+
+    /// Decodes a persisted pin PNG off the main actor.
+    private nonisolated static func decodePin(at url: URL) -> ImageData? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return nil
+        }
+        return ImageData(image)
+    }
 }
 
 /// Borderless, always-on-top, join-all-spaces pin window.

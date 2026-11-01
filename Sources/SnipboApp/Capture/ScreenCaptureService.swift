@@ -172,11 +172,20 @@ final class ScreenCaptureService {
     }
 
     /// All capturable windows in front-to-back order. Windows owned by
-    /// Snipbo are excluded so its own overlays can never be picked.
-    func windowInventory() async throws -> [WindowTarget] {
+    /// Snipbo are excluded so its own overlays can never be picked. The
+    /// resolved SCWindow list rides along so the follow-up capture can skip
+    /// a second full SCShareableContent fetch.
+    func windowInventory() async throws -> (
+        targets: [WindowTarget],
+        windowsByID: [CGWindowID: SCWindow]
+    ) {
         let content = try await SCShareableContent.current
         let ownPID = ProcessInfo.processInfo.processIdentifier
         let order = windowOrder()
+        var windowsByID: [CGWindowID: SCWindow] = [:]
+        for window in content.windows {
+            windowsByID[window.windowID] = window
+        }
         let targets = content.windows.compactMap { window -> WindowTarget? in
             guard window.isOnScreen,
                   window.windowLayer == 0,
@@ -196,15 +205,29 @@ final class ScreenCaptureService {
         guard !targets.isEmpty else {
             throw CaptureError.noWindows
         }
-        return targets.sorted {
+        let sorted = targets.sorted {
             (order[$0.windowID] ?? Int.max) < (order[$1.windowID] ?? Int.max)
         }
+        return (targets: sorted, windowsByID: windowsByID)
     }
 
-    func captureWindow(windowID: CGWindowID, includeCursor: Bool) async throws -> CapturedImage {
-        let content = try await SCShareableContent.current
-        guard let window = content.windows.first(where: { $0.windowID == windowID }) else {
-            throw CaptureError.windowNotFound(windowID)
+    /// `resolved` is the SCWindow resolved by a preceding `windowInventory`
+    /// call; when absent (capture without the inventory step) the shareable
+    /// content is fetched here as a fallback.
+    func captureWindow(
+        windowID: CGWindowID,
+        includeCursor: Bool,
+        resolved: SCWindow? = nil
+    ) async throws -> CapturedImage {
+        let window: SCWindow
+        if let resolved {
+            window = resolved
+        } else {
+            let content = try await SCShareableContent.current
+            guard let match = content.windows.first(where: { $0.windowID == windowID }) else {
+                throw CaptureError.windowNotFound(windowID)
+            }
+            window = match
         }
         let (image, geometry) = try await capture(
             window: window,
@@ -269,32 +292,19 @@ final class ScreenCaptureService {
         let scale = max(0.5, min(requestedScale, budgetScale))
         let outputWidth = max(1, Int((union.width * scale).rounded()))
         let outputHeight = max(1, Int((union.height * scale).rounded()))
-        guard let context = CGContext(
-            data: nil,
-            width: outputWidth,
-            height: outputHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpace(name: CGColorSpace.sRGB)
-                ?? CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            throw CaptureError.compositionFailed
-        }
-        context.interpolationQuality = .high
-        // `captured` is front-to-back; draw back-to-front so the topmost
-        // window ends up on top of the composite.
-        for item in captured.reversed() {
-            let x = (item.frame.minX - union.minX) * scale
-            let y = (union.maxY - item.frame.maxY) * scale
-            context.draw(item.image, in: CGRect(
-                x: x,
-                y: y,
-                width: item.frame.width * scale,
-                height: item.frame.height * scale
-            ))
-        }
-        guard let image = context.makeImage() else {
+        // Composition touches every output pixel; keep it off the main actor
+        // so a large multi-window composite does not freeze the UI (same
+        // split as the all-screens composition in CaptureCoordinator).
+        let composed = await Task.detached(priority: .userInitiated) { () -> CGImage? in
+            Self.composite(
+                captured,
+                union: union,
+                scale: scale,
+                outputWidth: outputWidth,
+                outputHeight: outputHeight
+            )
+        }.value
+        guard let image = composed else {
             throw CaptureError.compositionFailed
         }
         let layout = ScreenLayout.current()
@@ -310,6 +320,42 @@ final class ScreenCaptureService {
                 backingScale: scale
             )
         )
+    }
+
+    /// Composites the captured windows into one bitmap. Runs off the main
+    /// actor: `captured` is front-to-back, drawn back-to-front so the topmost
+    /// window ends up on top of the composite.
+    private nonisolated static func composite(
+        _ captured: [(image: CGImage, frame: CGRect, scale: CGFloat)],
+        union: CGRect,
+        scale: CGFloat,
+        outputWidth: Int,
+        outputHeight: Int
+    ) -> CGImage? {
+        guard let context = CGContext(
+            data: nil,
+            width: outputWidth,
+            height: outputHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)
+                ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+        context.interpolationQuality = .high
+        for item in captured.reversed() {
+            let x = (item.frame.minX - union.minX) * scale
+            let y = (union.maxY - item.frame.maxY) * scale
+            context.draw(item.image, in: CGRect(
+                x: x,
+                y: y,
+                width: item.frame.width * scale,
+                height: item.frame.height * scale
+            ))
+        }
+        return context.makeImage()
     }
 
     private func capture(

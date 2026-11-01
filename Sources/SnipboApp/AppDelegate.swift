@@ -7,6 +7,10 @@ import SnipboCore
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItemController: StatusItemController?
     private var updateStateCancellable: AnyCancellable?
+    /// The update title the status menu was last built with (nil while the
+    /// menu shows the plain「检查更新…」); matches the freshly built menu at
+    /// launch, when the coordinator is still .idle.
+    private var lastUpdateMenuTitle: String?
     private var hotkeyService: HotkeyService?
     private let settingsModel = SettingsModel()
     private var settings: AppSettings { settingsModel.settings }
@@ -77,13 +81,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             updateItemTitle: { [weak self] in self?.updateMenuTitle() }
         )
         // The coordinator's state changes drive the menu's「检查更新…」⇄
-        // 「安装更新 x.y.z」swap: rebuild on every objectWillChange (emitted
-        // on the main actor; the Task hop makes sure the new state is
-        // visible when the title closure runs).
+        // 「安装更新 x.y.z」swap: objectWillChange is emitted on the main actor
+        // for every published change, including ~1MB download progress ticks.
+        // The Task hop makes sure the new state is visible; the title the menu
+        // was last built with is tracked so only the swap itself rebuilds.
         updateStateCancellable = UpdateCoordinator.shared.objectWillChange
             .sink { [weak self] _ in
-                Task { @MainActor in
-                    self?.statusItemController?.refreshLocalization()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let title = self.updateMenuTitle()
+                    guard title != self.lastUpdateMenuTitle else { return }
+                    self.lastUpdateMenuTitle = title
+                    self.statusItemController?.refreshLocalization()
                 }
             }
         statusItemController?.setIconHidden(settings.hideMenuBarIcon)

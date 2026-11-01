@@ -101,7 +101,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     /// Loads a bundled Lucide SVG as a monochrome template image. The icon
     /// files live in the app bundle's Resources/Icons (see build_app.sh).
+    /// Parsing an SVG is expensive, so each name+size is loaded once per
+    /// process and the shared instance is reused across menu rebuilds.
+    private static let iconCache = NSCache<NSString, NSImage>()
+
     private static func icon(_ name: String, size: CGFloat) -> NSImage? {
+        let key = "\(name)#\(Int(size))" as NSString
+        if let cached = iconCache.object(forKey: key) { return cached }
         guard let url = Bundle.main.url(
             forResource: name,
             withExtension: "svg",
@@ -109,124 +115,146 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         ), let image = NSImage(contentsOf: url) else { return nil }
         image.isTemplate = true
         image.size = NSSize(width: size, height: size)
+        iconCache.setObject(image, forKey: key)
         return image
     }
 
     private func populateMenu(_ menu: NSMenu) {
-        let regionItem = makeItem(StatusMenuItem.region.title, icon: "scan", action: #selector(captureRegion))
-        applyKeyEquivalent(regionItem, mode: "region")
-        add(regionItem, as: .region, to: menu)
+        addIfVisible(.region, to: menu) {
+            let item = makeItem(StatusMenuItem.region.title, icon: "scan", action: #selector(captureRegion))
+            applyKeyEquivalent(item, mode: "region")
+            return item
+        }
 
-        let windowItem = makeItem(StatusMenuItem.window.title, icon: "app-window", action: #selector(captureWindow))
-        applyKeyEquivalent(windowItem, mode: "window")
-        add(windowItem, as: .window, to: menu)
-        add(
+        addIfVisible(.window, to: menu) {
+            let item = makeItem(StatusMenuItem.window.title, icon: "app-window", action: #selector(captureWindow))
+            applyKeyEquivalent(item, mode: "window")
+            return item
+        }
+        addIfVisible(.appWindows, to: menu) {
             makeItem(
                 StatusMenuItem.appWindows.title,
                 icon: "layers",
                 action: #selector(captureAppWindows)
-            ),
-            as: .appWindows,
-            to: menu
-        )
+            )
+        }
 
-        let screenItem = makeItem(StatusMenuItem.screen.title, icon: "monitor", action: #selector(captureScreen))
-        applyKeyEquivalent(screenItem, mode: "screen")
-        add(screenItem, as: .screen, to: menu)
+        addIfVisible(.screen, to: menu) {
+            let item = makeItem(StatusMenuItem.screen.title, icon: "monitor", action: #selector(captureScreen))
+            applyKeyEquivalent(item, mode: "screen")
+            return item
+        }
 
-        let allScreensItem = makeItem(StatusMenuItem.allScreens.title, icon: "layers", action: #selector(captureAllScreens))
-        applyKeyEquivalent(allScreensItem, mode: "allScreens")
-        add(allScreensItem, as: .allScreens, to: menu)
+        addIfVisible(.allScreens, to: menu) {
+            let item = makeItem(StatusMenuItem.allScreens.title, icon: "layers", action: #selector(captureAllScreens))
+            applyKeyEquivalent(item, mode: "allScreens")
+            return item
+        }
 
-        let timedItem = NSMenuItem(title: StatusMenuItem.timed.title, action: nil, keyEquivalent: "")
-        timedItem.image = Self.icon("timer", size: 16)
-        let timedMenu = NSMenu()
-        let timedRegionSub = makeItem(L10n.tr("Region", "区域"), action: #selector(captureTimedRegion))
-        applyKeyEquivalent(timedRegionSub, mode: "timedRegion")
-        timedMenu.addItem(timedRegionSub)
-        let timedScreenSub = makeItem(L10n.tr("Screen", "屏幕"), action: #selector(captureTimedScreen))
-        applyKeyEquivalent(timedScreenSub, mode: "timedScreen")
-        timedMenu.addItem(timedScreenSub)
-        let timedWindowSub = makeItem(L10n.tr("Window", "窗口"), action: #selector(captureTimedWindow))
-        applyKeyEquivalent(timedWindowSub, mode: "timedWindow")
-        timedMenu.addItem(timedWindowSub)
-        timedItem.submenu = timedMenu
-        add(timedItem, as: .timed, to: menu)
+        addIfVisible(.timed, to: menu) {
+            let item = NSMenuItem(title: StatusMenuItem.timed.title, action: nil, keyEquivalent: "")
+            item.image = Self.icon("timer", size: 16)
+            let timedMenu = NSMenu()
+            let timedRegionSub = makeItem(L10n.tr("Region", "区域"), action: #selector(captureTimedRegion))
+            applyKeyEquivalent(timedRegionSub, mode: "timedRegion")
+            timedMenu.addItem(timedRegionSub)
+            let timedScreenSub = makeItem(L10n.tr("Screen", "屏幕"), action: #selector(captureTimedScreen))
+            applyKeyEquivalent(timedScreenSub, mode: "timedScreen")
+            timedMenu.addItem(timedScreenSub)
+            let timedWindowSub = makeItem(L10n.tr("Window", "窗口"), action: #selector(captureTimedWindow))
+            applyKeyEquivalent(timedWindowSub, mode: "timedWindow")
+            timedMenu.addItem(timedWindowSub)
+            item.submenu = timedMenu
+            return item
+        }
 
-        let lastRegionItem = makeItem(StatusMenuItem.lastRegion.title, icon: "square-dashed", action: #selector(captureLastRegion))
-        applyKeyEquivalent(lastRegionItem, mode: "lastRegion")
-        self.lastRegionItem = lastRegionItem
-        add(lastRegionItem, as: .lastRegion, to: menu)
-        let presetsItem = NSMenuItem(
-            title: StatusMenuItem.presets.title,
-            action: nil,
-            keyEquivalent: ""
-        )
-        presetsItem.image = Self.icon("bookmark", size: 16)
-            ?? NSImage(systemSymbolName: "bookmark", accessibilityDescription: nil)
-        presetsItem.submenu = presetsMenu
-        add(presetsItem, as: .presets, to: menu)
+        addIfVisible(.lastRegion, to: menu) {
+            let item = makeItem(StatusMenuItem.lastRegion.title, icon: "square-dashed", action: #selector(captureLastRegion))
+            applyKeyEquivalent(item, mode: "lastRegion")
+            self.lastRegionItem = item
+            return item
+        }
+        addIfVisible(.presets, to: menu) {
+            let item = NSMenuItem(
+                title: StatusMenuItem.presets.title,
+                action: nil,
+                keyEquivalent: ""
+            )
+            item.image = Self.icon("bookmark", size: 16)
+                ?? NSImage(systemSymbolName: "bookmark", accessibilityDescription: nil)
+            item.submenu = presetsMenu
+            return item
+        }
 
-        let scrollingItem = NSMenuItem(
-            title: StatusMenuItem.scrolling.title,
-            action: nil,
-            keyEquivalent: ""
-        )
-        scrollingItem.image = Self.icon("unfold-vertical", size: 16)
-        let scrollingMenu = NSMenu()
-        let verticalItem = makeItem(
-            L10n.tr("Vertical", "纵向"),
-            action: #selector(captureScrolling)
-        )
-        applyKeyEquivalent(verticalItem, mode: "scrolling")
-        scrollingMenu.addItem(verticalItem)
-        scrollingMenu.addItem(makeItem(
-            L10n.tr("Horizontal", "横向"),
-            action: #selector(captureScrollingHorizontal)
-        ))
-        scrollingMenu.addItem(makeItem(
-            L10n.tr("Auto-scroll", "自动滚动"),
-            action: #selector(captureScrollingAuto)
-        ))
-        scrollingItem.submenu = scrollingMenu
-        add(scrollingItem, as: .scrolling, to: menu)
+        addIfVisible(.scrolling, to: menu) {
+            let item = NSMenuItem(
+                title: StatusMenuItem.scrolling.title,
+                action: nil,
+                keyEquivalent: ""
+            )
+            item.image = Self.icon("unfold-vertical", size: 16)
+            let scrollingMenu = NSMenu()
+            let verticalItem = makeItem(
+                L10n.tr("Vertical", "纵向"),
+                action: #selector(captureScrolling)
+            )
+            applyKeyEquivalent(verticalItem, mode: "scrolling")
+            scrollingMenu.addItem(verticalItem)
+            scrollingMenu.addItem(makeItem(
+                L10n.tr("Horizontal", "横向"),
+                action: #selector(captureScrollingHorizontal)
+            ))
+            scrollingMenu.addItem(makeItem(
+                L10n.tr("Auto-scroll", "自动滚动"),
+                action: #selector(captureScrollingAuto)
+            ))
+            item.submenu = scrollingMenu
+            return item
+        }
 
-        let recordItem = NSMenuItem(
-            title: StatusMenuItem.record.title,
-            action: nil,
-            keyEquivalent: ""
-        )
-        recordItem.image = NSImage(
-            systemSymbolName: "record.circle",
-            accessibilityDescription: nil
-        )
-        let recordMenu = NSMenu()
-        recordMenu.addItem(makeItem(
-            L10n.tr("Record Region…", "录制区域…"),
-            action: #selector(recordRegion)
-        ))
-        recordMenu.addItem(makeItem(
-            L10n.tr("Record Screen", "录制屏幕"),
-            action: #selector(recordScreen)
-        ))
-        recordItem.submenu = recordMenu
-        add(recordItem, as: .record, to: menu)
+        addIfVisible(.record, to: menu) {
+            let item = NSMenuItem(
+                title: StatusMenuItem.record.title,
+                action: nil,
+                keyEquivalent: ""
+            )
+            item.image = NSImage(
+                systemSymbolName: "record.circle",
+                accessibilityDescription: nil
+            )
+            let recordMenu = NSMenu()
+            recordMenu.addItem(makeItem(
+                L10n.tr("Record Region…", "录制区域…"),
+                action: #selector(recordRegion)
+            ))
+            recordMenu.addItem(makeItem(
+                L10n.tr("Record Screen", "录制屏幕"),
+                action: #selector(recordScreen)
+            ))
+            item.submenu = recordMenu
+            return item
+        }
 
         addSeparator(to: menu)
-        let recentItem = NSMenuItem(title: StatusMenuItem.recent.title, action: nil, keyEquivalent: "")
-        recentItem.image = Self.icon("clock", size: 16)
-        recentItem.submenu = recentMenu
-        add(recentItem, as: .recent, to: menu)
-        let historyItem = makeItem(StatusMenuItem.history.title, icon: "images", action: #selector(openHistoryBrowser))
-        add(historyItem, as: .history, to: menu)
-        let pinsItem = NSMenuItem(
-            title: StatusMenuItem.pins.title,
-            action: nil,
-            keyEquivalent: ""
-        )
-        pinsItem.image = Self.icon("pin", size: 16)
-        pinsItem.submenu = pinsMenu
-        add(pinsItem, as: .pins, to: menu)
+        addIfVisible(.recent, to: menu) {
+            let item = NSMenuItem(title: StatusMenuItem.recent.title, action: nil, keyEquivalent: "")
+            item.image = Self.icon("clock", size: 16)
+            item.submenu = recentMenu
+            return item
+        }
+        addIfVisible(.history, to: menu) {
+            makeItem(StatusMenuItem.history.title, icon: "images", action: #selector(openHistoryBrowser))
+        }
+        addIfVisible(.pins, to: menu) {
+            let item = NSMenuItem(
+                title: StatusMenuItem.pins.title,
+                action: nil,
+                keyEquivalent: ""
+            )
+            item.image = Self.icon("pin", size: 16)
+            item.submenu = pinsMenu
+            return item
+        }
 
         addSeparator(to: menu)
         let settingsItem = makeItem(L10n.tr("Settings…", "设置…"), icon: "settings", action: #selector(openSettings))
@@ -247,9 +275,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(quitItem)
     }
 
-    private func add(_ item: NSMenuItem, as id: StatusMenuItem, to menu: NSMenu) {
+    /// Builds and adds the item only when it is not hidden, so a hidden item
+    /// never loads its icon from disk.
+    private func addIfVisible(
+        _ id: StatusMenuItem,
+        to menu: NSMenu,
+        make: () -> NSMenuItem
+    ) {
         guard !hiddenStatusItems().contains(id) else { return }
-        menu.addItem(item)
+        menu.addItem(make())
     }
 
     private func addSeparator(to menu: NSMenu) {

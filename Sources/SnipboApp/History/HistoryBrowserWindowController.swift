@@ -5,9 +5,12 @@ import SwiftUI
 
 /// Owns the single history browser window.
 @MainActor
-final class HistoryBrowserWindowController: NSWindowController {
+final class HistoryBrowserWindowController: NSWindowController, NSWindowDelegate {
+    private let model: HistoryBrowserModel
+
     init(store: HistoryStore, openInEditor: @escaping (HistoryEntry) -> Void) {
         let model = HistoryBrowserModel(store: store)
+        self.model = model
         let window = NSWindow(
             contentRect: CGRect(x: 0, y: 0, width: 820, height: 560),
             styleMask: [.titled, .closable, .resizable],
@@ -22,6 +25,10 @@ final class HistoryBrowserWindowController: NSWindowController {
         )
         window.center()
         super.init(window: window)
+        // The model only observes history changes and holds thumbnails while
+        // the window is on screen; closing hands that state back in.
+        window.delegate = self
+        model.window = window
     }
 
     @available(*, unavailable)
@@ -32,6 +39,11 @@ final class HistoryBrowserWindowController: NSWindowController {
     func show() {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+        Task { await model.activate() }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        model.deactivate()
     }
 }
 
@@ -110,27 +122,52 @@ final class HistoryBrowserModel: ObservableObject {
 
     private let store: HistoryStore
     private var reloadGeneration = 0
-    /// Only written during init and read in deinit, where exclusive access is
-    /// guaranteed; the notification block itself captures `self` weakly.
+    /// Only written on the main actor and read in deinit, where exclusive
+    /// access is guaranteed; the notification block itself captures `self`
+    /// weakly.
     nonisolated(unsafe) private var historyObserver: NSObjectProtocol?
+    /// The browser window; the observer only works while it is visible.
+    weak var window: NSWindow?
 
     init(store: HistoryStore) {
         self.store = store
-        historyObserver = NotificationCenter.default.addObserver(
-            forName: .snipboHistoryDidChange,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                await self?.reload()
-            }
-        }
     }
 
     deinit {
         if let historyObserver {
             NotificationCenter.default.removeObserver(historyObserver)
         }
+    }
+
+    /// Called when the browser window becomes visible: (re)subscribes to
+    /// history changes and reloads. The observer does not exist while the
+    /// window is closed, so background screenshots cost nothing.
+    func activate() async {
+        if historyObserver == nil {
+            historyObserver = NotificationCenter.default.addObserver(
+                forName: .snipboHistoryDidChange,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.window?.isVisible == true else { return }
+                    await self.reload()
+                }
+            }
+        }
+        await reload()
+    }
+
+    /// Called when the window closes: drops the observer, cancels an in-flight
+    /// reload and clears the decoded thumbnails so the hidden browser holds no
+    /// image memory. `activate()` restores everything on the next show.
+    func deactivate() {
+        if let historyObserver {
+            NotificationCenter.default.removeObserver(historyObserver)
+        }
+        historyObserver = nil
+        reloadGeneration += 1
+        thumbnails.removeAll()
     }
 
     func reload() async {

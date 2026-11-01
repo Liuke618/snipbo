@@ -91,7 +91,7 @@ actor PinStore {
 
     func removeAll() throws {
         ensureLoaded()
-        try saveIndex(forceEmpty: true)
+        try saveIndex()
         items.removeAll()
         let files = (try? FileManager.default.contentsOfDirectory(
             at: directory,
@@ -116,10 +116,8 @@ actor PinStore {
         }
     }
 
-    private func saveIndex(forceEmpty: Bool = false) throws {
-        if items.isEmpty, !forceEmpty {
-            // An empty list is still a valid state; write it so removals stick.
-        }
+    private func saveIndex() throws {
+        // An empty list is still a valid state; write it so removals stick.
         let index = PinIndex(version: PinIndex.currentVersion, items: items)
         let data = try encoder.encode(index)
         try data.write(to: indexURL, options: .atomic)

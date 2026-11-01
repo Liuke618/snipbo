@@ -42,9 +42,9 @@ enum CaptureFileSaver {
         metadata: CaptureMetadata?
     ) -> String {
         let now = Date()
-        let date = formatted(now, "yyyy-MM-dd")
-        let time = formatted(now, "HHmmss")
-        let datetime = formatted(now, "yyyy-MM-dd-HHmmss")
+        let date = dateFormatter.string(from: now)
+        let time = timeFormatter.string(from: now)
+        let datetime = datetimeFormatter.string(from: now)
 
         writeLock.lock()
         sequence += 1
@@ -156,11 +156,18 @@ enum CaptureFileSaver {
         return data
     }
 
-    private static func formatted(_ date: Date, _ format: String) -> String {
+    /// One cached POSIX formatter per name-template token. DateFormatter
+    /// construction is expensive, and the instances are immutable after setup,
+    /// so the concurrent save paths share them directly.
+    private static let dateFormatter = makeFormatter("yyyy-MM-dd")
+    private static let timeFormatter = makeFormatter("HHmmss")
+    private static let datetimeFormatter = makeFormatter("yyyy-MM-dd-HHmmss")
+
+    private static func makeFormatter(_ format: String) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = format
-        return formatter.string(from: date)
+        return formatter
     }
 
     private static func sourceToken(_ source: CaptureSource?) -> String {

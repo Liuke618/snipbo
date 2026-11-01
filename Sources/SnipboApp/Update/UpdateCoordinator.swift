@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import SnipboCore
 
@@ -150,15 +151,17 @@ final class UpdateCoordinator: ObservableObject {
                 let fm = FileManager.default
                 try? fm.removeItem(at: workspace)
                 try fm.createDirectory(at: workspace, withIntermediateDirectories: true)
-                let zipData = try await Self.download(zipAsset, progress: { fraction in
+                let zipURL = workspace.appendingPathComponent(zipAsset.name)
+                try await Self.download(zipAsset, to: zipURL, progress: { fraction in
                     Task { @MainActor in self.state = .downloading(fraction) }
                 })
                 let (shaData, _) = try await Self.downloadRaw(shaAsset.url)
-                guard UpdatePackage.verifySHA256(of: zipData, digestText: String(decoding: shaData, as: UTF8.self)) else {
+                guard try await Self.verifySHA256(
+                    of: zipURL,
+                    digestText: String(decoding: shaData, as: UTF8.self)
+                ) else {
                     throw UpdateError.checksumMismatch
                 }
-                let zipURL = workspace.appendingPathComponent(zipAsset.name)
-                try zipData.write(to: zipURL)
                 let extractDir = workspace.appendingPathComponent("staged", isDirectory: true)
                 try installer.unzip(zip: zipURL, into: extractDir)
                 let stagedApp = try installer.findStagedApp(
@@ -195,29 +198,169 @@ final class UpdateCoordinator: ObservableObject {
 
     // MARK: 下载
 
-    /// nonisolated:字节循环跑在并发执行器上,不占主线程;进度经
-    /// @Sendable 闭包跳回主线程发布。
+    /// nonisolated:下载跑在 URLSession 自己的 delegate queue 上,不占主
+    /// 线程;进度经 @Sendable 闭包跳回主线程发布。zip 直接落盘(先落在系
+    /// 统临时目录,完成后搬到 destination),不再整包驻留内存。
     private nonisolated static func download(
         _ asset: UpdateAsset,
+        to destination: URL,
         progress: @escaping @Sendable (Double) -> Void
-    ) async throws -> Data {
-        let (bytes, response) = try await URLSession.shared.bytes(from: asset.url)
-        let total = Int(response.expectedContentLength)
-        var data = Data(capacity: max(asset.size, 0))
-        var received = 0
-        for try await byte in bytes {
-            data.append(byte)
-            received += 1
-            if total > 0, received % (1 << 20) == 0 {
-                progress(Double(received) / Double(total))
+    ) async throws {
+        let delegate = UpdateDownloadDelegate(destination: destination, progress: progress)
+        let session = URLSession(
+            configuration: .ephemeral,
+            delegate: delegate,
+            delegateQueue: nil
+        )
+        do {
+            _ = try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    delegate.begin(continuation, session: session, remote: asset.url)
+                }
+            } onCancel: {
+                delegate.cancelDownload()
             }
+            // 下载已结束:主动失效,断开 session 对 delegate 的强引用。
+            session.finishTasksAndInvalidate()
+        } catch {
+            session.invalidateAndCancel()
+            throw error
         }
-        _ = response
-        return data
     }
 
     private nonisolated static func downloadRaw(_ url: URL) async throws -> (Data, URLResponse) {
         let (data, response) = try await URLSession.shared.data(from: url)
         return (data, response)
+    }
+
+    /// 流式校验下载文件的 SHA-256:zip 可达上百 MB,整包读进 Data 会顶出
+    /// 驻留峰值,按 1MB 分块喂给 CryptoKit。token 解析与
+    /// UpdatePackage.verifySHA256 保持一致(shasum 输出格式,大小写不敏感)。
+    private nonisolated static func verifySHA256(
+        of fileURL: URL,
+        digestText: String
+    ) async throws -> Bool {
+        guard let token = digestText.split(whereSeparator: \.isWhitespace).first,
+              token.count == 64,
+              token.allSatisfy(\.isHexDigit) else {
+            return false
+        }
+        return try await Task.detached(priority: .userInitiated) { () -> Bool in
+            let fileHandle = try FileHandle(forReadingFrom: fileURL)
+            defer { try? fileHandle.close() }
+            var hasher = SHA256()
+            while let chunk = try fileHandle.read(upToCount: 1 << 20), !chunk.isEmpty {
+                hasher.update(data: chunk)
+            }
+            let hex = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            return hex == token.lowercased()
+        }.value
+    }
+}
+
+/// URLSessionDownloadDelegate 专属代理:didWriteData 节流发布进度,
+/// didFinishDownloadingTo 把临时文件搬到目标位置后带回路径,
+/// didCompleteWithError 负责失败。可变状态全部由 NSLock 保护——委托回调
+/// 跑在 session 的串行 delegate queue 上,而任务取消可能从任意线程触发。
+/// 顶层声明而不是嵌套在 UpdateCoordinator 里,避免继承其 @MainActor 隔离
+/// (委托回调不在主线程上)。
+private final class UpdateDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let destination: URL
+    private let progress: @Sendable (Double) -> Void
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var session: URLSession?
+    private var finished = false
+    /// 上次发布进度时的累计字节数;只在 delegate queue 上访问。
+    private var lastReportedBytes: Int64 = 0
+
+    init(destination: URL, progress: @escaping @Sendable (Double) -> Void) {
+        self.destination = destination
+        self.progress = progress
+        super.init()
+    }
+
+    /// 注册 continuation 并启动下载;先于任何委托回调发生,不会丢事件。
+    func begin(_ continuation: CheckedContinuation<Void, Error>, session: URLSession, remote: URL) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished else {
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        self.continuation = continuation
+        self.session = session
+        session.downloadTask(with: remote).resume()
+    }
+
+    /// 任务级取消:可能从任意线程调用;只在尚未结束时起作用。
+    func cancelDownload() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished else { return }
+        finished = true
+        continuation?.resume(throwing: CancellationError())
+        continuation = nil
+        session?.invalidateAndCancel()
+        session = nil
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        // 与旧的字节循环一致:每 ~1MB 发布一次,总长未知时不发布。
+        guard totalBytesExpectedToWrite > 0,
+              totalBytesWritten - lastReportedBytes >= (1 << 20) else { return }
+        lastReportedBytes = totalBytesWritten
+        progress(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        // 临时文件在本方法返回后即被系统删除,必须在这里搬到目标位置。
+        if FileManager.default.fileExists(atPath: destination.path) {
+            do {
+                try FileManager.default.removeItem(at: destination)
+            } catch {
+                fail(error)
+                return
+            }
+        }
+        do {
+            try FileManager.default.moveItem(at: location, to: destination)
+        } catch {
+            fail(error)
+            return
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished else { return }
+        finished = true
+        continuation?.resume()
+        continuation = nil
+        self.session = nil
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        // 成功路径由 didFinishDownloadingTo 收尾;这里只处理失败。
+        guard let error else { return }
+        fail(error)
+    }
+
+    private func fail(_ error: Error) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished else { return }
+        finished = true
+        continuation?.resume(throwing: error)
+        continuation = nil
+        session = nil
     }
 }

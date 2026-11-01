@@ -69,11 +69,15 @@ final class CountdownController {
             self.cancel()
             return nil
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.tick()
             }
         }
+        // The countdown only needs second-level precision; a tolerance lets
+        // the system coalesce this wake-up with other run-loop work.
+        timer.tolerance = 0.05
+        self.timer = timer
     }
 
     private func tick() {

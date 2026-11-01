@@ -136,31 +136,32 @@ actor RedactionService {
     }
 
     /// Email addresses, long digit runs (IDs/cards), phone numbers, and links.
+    /// Compiled once: NSDataDetector/NSRegularExpression construction is
+    /// expensive enough that rebuilding them per OCR observation dominated
+    /// the sensitive-text pass.
+    private static let sensitivePatterns: [NSRegularExpression] = [
+        #"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#,
+        #"\b\d{17}[\dXx]\b"#,
+        #"\b\d{13,19}\b"#,
+        #"\b(?:\+?\d{1,3}[\s-]?)?(?:\(\d{2,4}\)[\s-]?)?\d{3,4}[\s-]?\d{4}\b"#,
+    ].compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
+
+    private static let sensitiveDetector = try? NSDataDetector(
+        types: NSTextCheckingResult.CheckingType.phoneNumber.rawValue
+            | NSTextCheckingResult.CheckingType.link.rawValue
+    )
+
     private static func isSensitive(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 5 else { return false }
-        let patterns = [
-            #"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#,
-            #"\b\d{17}[\dXx]\b"#,
-            #"\b\d{13,19}\b"#,
-            #"\b(?:\+?\d{1,3}[\s-]?)?(?:\(\d{2,4}\)[\s-]?)?\d{3,4}[\s-]?\d{4}\b"#,
-        ]
-        for pattern in patterns {
-            if trimmed.range(
-                of: pattern,
-                options: [.regularExpression, .caseInsensitive]
-            ) != nil {
-                return true
-            }
+        let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+        for regex in sensitivePatterns
+        where regex.firstMatch(in: trimmed, options: [], range: range) != nil {
+            return true
         }
-        if let detector = try? NSDataDetector(
-            types: NSTextCheckingResult.CheckingType.phoneNumber.rawValue
-                | NSTextCheckingResult.CheckingType.link.rawValue
-        ) {
-            let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
-            if detector.firstMatch(in: trimmed, options: [], range: range) != nil {
-                return true
-            }
+        if let detector = sensitiveDetector,
+           detector.firstMatch(in: trimmed, options: [], range: range) != nil {
+            return true
         }
         return false
     }

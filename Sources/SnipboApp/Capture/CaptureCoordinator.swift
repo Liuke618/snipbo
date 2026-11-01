@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+@preconcurrency import ScreenCaptureKit
 import SnipboCore
 import os
 
@@ -14,6 +15,10 @@ final class CaptureCoordinator {
     private var keyMonitor: Any?
     private var activeView: SelectionOverlayView?
     private var activePicker: WindowPickerView?
+    /// SCWindows resolved by the window-picker inventory fetch, keyed by
+    /// window ID; consumed by the pick so the capture does not re-fetch all
+    /// of SCShareableContent. Cleared when the overlays are dismissed.
+    private var pickerWindows: [CGWindowID: SCWindow]?
     private var countdownController: CountdownController?
     private var isCapturing = false
     private var captureGeneration = 0
@@ -358,9 +363,10 @@ final class CaptureCoordinator {
         let generation = captureGeneration
         Task {
             do {
-                let targets = try await captureService.windowInventory()
+                let inventory = try await captureService.windowInventory()
                 guard endCaptureAttempt(generation) else { return }
-                presentWindowPicker(targets)
+                pickerWindows = inventory.windowsByID
+                presentWindowPicker(inventory.targets)
             } catch {
                 guard generation == captureGeneration else { return }
                 fail(error)
@@ -808,11 +814,19 @@ final class CaptureCoordinator {
     private func present(captures: [CapturedImage], purpose: SelectionPurpose) {
         NSApp.activate(ignoringOtherApps: true)
         let constraints = selectionConstraints
+        // One CGWindowList snapshot serves every display overlay; fetching it
+        // per overlay repeated the same global window-list copy once per
+        // screen. Each overlay still filters the snapshot to its own display.
+        let windowList = SelectionOverlayView.rawWindowList()
         overlays = captures.map { capture in
             let window = SelectionOverlayWindow(screenFrame: capture.geometry.frame)
             let view = SelectionOverlayView(
                 captured: capture,
-                constraints: constraints
+                constraints: constraints,
+                windowOverrides: SelectionOverlayView.windowTargets(
+                    from: windowList,
+                    for: capture
+                )
             )
             view.onConfirm = { [weak self] rect, window in
                 switch purpose {
@@ -917,6 +931,8 @@ final class CaptureCoordinator {
     }
 
     private func capture(window target: WindowTarget) {
+        // Grab the inventory-resolved SCWindow before dismiss() drops it.
+        let resolved = pickerWindows?[target.windowID]
         dismiss()
         guard beginCapture() else { return }
         let generation = captureGeneration
@@ -924,7 +940,8 @@ final class CaptureCoordinator {
             do {
                 let capture = try await captureService.captureWindow(
                     windowID: target.windowID,
-                    includeCursor: settings.captureCursor
+                    includeCursor: settings.captureCursor,
+                    resolved: resolved
                 )
                 guard endCaptureAttempt(generation) else { return }
                 isCapturing = false
@@ -1146,6 +1163,7 @@ final class CaptureCoordinator {
         captureWatchdog?.cancel()
         captureWatchdog = nil
         captureGeneration += 1
+        pickerWindows = nil
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
             self.keyMonitor = nil
