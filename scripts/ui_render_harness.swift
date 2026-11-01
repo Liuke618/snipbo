@@ -9,10 +9,15 @@ import SnipboCore
 struct UIRenderHarness {
     static func main() {
         _ = NSApplication.shared
-        // The app pins itself to darkAqua (AppDelegate.applyAppearance); the
-        // harness mirrors that so system-styled controls render as they will
-        // in the real app.
-        NSApp.appearance = NSAppearance(named: .darkAqua)
+        // The app pins itself per the appearance setting
+        // (AppDelegate.applyAppearance); the harness mirrors that so
+        // system-styled controls render as they will in the real app.
+        // "light" on the command line previews the light theme.
+        if CommandLine.arguments.contains("light") {
+            NSApp.appearance = NSAppearance(named: .aqua)
+        } else {
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
         let done = DispatchSemaphore(value: 0)
         Task { @MainActor in
             await runAll()

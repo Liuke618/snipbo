@@ -117,7 +117,7 @@ final class SelectionOverlayView: NSView {
         let ring = NSBezierPath(rect: frame.insetBy(dx: -3.5, dy: -3.5))
         ring.lineWidth = 1
         ring.stroke()
-        DesignTokens.Color.accent.setStroke()
+        DesignTokens.overlayAccent.setStroke()
         let border = NSBezierPath(rect: frame.insetBy(dx: -1.5, dy: -1.5))
         border.lineWidth = 3
         border.stroke()

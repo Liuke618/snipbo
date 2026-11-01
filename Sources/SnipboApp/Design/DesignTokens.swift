@@ -1,40 +1,80 @@
 import AppKit
 
-/// Shared visual constants for the fixed dark look. Views must not
-/// invent their own corner radii, spacings, or alpha levels — every value here
-/// comes from the design token table.
+/// Shared visual constants. Views must not invent their own corner radii,
+/// spacings, or alpha levels — every value here comes from the design token
+/// table.
 ///
-/// The palette is appearance-independent by design: the app pins itself to
-/// `darkAqua` (see `AppDelegate.applyAppearance`), so every `Color` role below
-/// is a literal rather than a semantic system color.
+/// Every `Color` role is a dynamic `NSColor` carrying a light and a dark
+/// variant. `AppDelegate.applyAppearance` pins the app appearance to the
+/// user's theme setting (system / light / dark), so a draw-time token read
+/// always resolves to the active theme, and AppKit redraws such views for
+/// free when the theme flips. Views that cache a resolved color instead —
+/// layer `CGColor`s, pattern images — must override
+/// `viewDidChangeEffectiveAppearance()` and rebuild.
+///
+/// Tokens painted over screenshot content — the capture overlay, the HUD
+/// plates, `PillButton` — stay fixed on purpose: they are designed against
+/// dark fills, and their backdrop is the screenshot, not the UI theme.
 @MainActor
 enum DesignTokens {
-    /// Fixed dark palette (Raycast/Linear-style): near-black bases, glass-like
-    /// raised surfaces, hairline strokes, one violet accent. Hex values are
-    /// sRGB; the helper keeps each role on one line.
-    enum Color {
-        static let canvasBase = hex(0x101013)
-        /// Toolbar, tab strip, recognition panel.
-        static let surface = hex(0x17171C)
-        /// Floating panels, cards, input wells.
-        static let raised = hex(0x1F1F26)
-        static let hover = hex(0x26262E)
-        /// Hairlines around panels and cards.
-        static let stroke = NSColor.white.withAlphaComponent(0.08)
-        static let textPrimary = hex(0xECECF1)
-        static let textSecondary = hex(0x9B9BA5)
-        static let textTertiary = NSColor.white.withAlphaComponent(0.4)
-        static let accent = hex(0x7C5CFF)
-        /// Accent fill behind selected tools and active tabs.
-        static let accentSoft = accent.withAlphaComponent(0.24)
+    /// Fixed violet for the locked-window ring drawn over screenshot content;
+    /// the overlay must not follow the UI theme the way `Color.accent` does.
+    static let overlayAccent = Color.fixed(0x7C5CFF)
 
-        private static func hex(_ value: UInt32) -> NSColor {
+    enum Color {
+        /// Window and mat base. Light: soft gray so white cards read against
+        /// it. Dark: the original near-black (Raycast/Linear-style).
+        static let canvasBase = themed(0xF2F2F6, 0x101013)
+        /// Toolbar, tab strip, recognition panel.
+        static let surface = themed(0xFFFFFF, 0x17171C)
+        /// Floating panels, cards, input wells.
+        static let raised = themed(0xFFFFFF, 0x1F1F26)
+        static let hover = themed(0xECECF1, 0x26262E)
+        /// Hairlines around panels and cards; a touch stronger on white than
+        /// on near-black so the same hairline stays legible.
+        static let stroke = dynamic(light: blackAlpha(0.12), dark: whiteAlpha(0.08))
+        static let textPrimary = themed(0x1B1B21, 0xECECF1)
+        static let textSecondary = themed(0x6A6A74, 0x9B9BA5)
+        static let textTertiary = dynamic(light: blackAlpha(0.38), dark: whiteAlpha(0.4))
+        static let accent = themed(0x6B4EFF, 0x7C5CFF)
+        /// Accent fill behind selected tools and active tabs.
+        static let accentSoft = dynamic(
+            light: fixed(0x6B4EFF, 0.24),
+            dark: fixed(0x7C5CFF, 0.24)
+        )
+        /// Faint resting wash that reads on both themes — white on dark,
+        /// black on light: icon-button resting fills, input wells, settings
+        /// tab hovers.
+        static let subtleWash = dynamic(light: blackAlpha(0.06), dark: whiteAlpha(0.06))
+        /// Base of the hover/press washes on themed buttons; `Alpha` supplies
+        /// the level at draw time.
+        static let washBase = dynamic(light: .black, dark: .white)
+
+        private static func themed(_ light: UInt32, _ dark: UInt32) -> NSColor {
+            dynamic(light: fixed(light), dark: fixed(dark))
+        }
+
+        private static func dynamic(light: NSColor, dark: NSColor) -> NSColor {
+            NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            }
+        }
+
+        fileprivate static func fixed(_ value: UInt32, _ alpha: CGFloat = 1) -> NSColor {
             NSColor(
                 srgbRed: CGFloat((value >> 16) & 0xFF) / 255,
                 green: CGFloat((value >> 8) & 0xFF) / 255,
                 blue: CGFloat(value & 0xFF) / 255,
-                alpha: 1
+                alpha: alpha
             )
+        }
+
+        fileprivate static func blackAlpha(_ alpha: CGFloat) -> NSColor {
+            NSColor.black.withAlphaComponent(alpha)
+        }
+
+        fileprivate static func whiteAlpha(_ alpha: CGFloat) -> NSColor {
+            NSColor.white.withAlphaComponent(alpha)
         }
     }
 
@@ -75,18 +115,26 @@ enum DesignTokens {
         static let readoutFill: CGFloat = 0.06
     }
 
+    /// Shadow strengths for floating surfaces. Read at surface creation, so a
+    /// surface keeps the shadow of the theme it was built in; the next window
+    /// picks up the new theme. Shadows stay black in both themes — only the
+    /// opacity changes, since near-black needs a heavier shadow to separate.
     enum Shadow {
-        /// Floating panels: shadows need more opacity to read on near-black.
-        static let panelOpacity: Float = 0.5
+        @MainActor static var panelOpacity: Float { themeIsDark ? 0.5 : 0.22 }
         static let panelRadius: CGFloat = 18
-        static let cardOpacity: Float = 0.06
+        @MainActor static var cardOpacity: Float { themeIsDark ? 0.06 : 0.08 }
         static let cardRadius: CGFloat = 2
-        static let cardHoverOpacity: Float = 0.13
+        @MainActor static var cardHoverOpacity: Float { themeIsDark ? 0.13 : 0.18 }
         static let cardHoverRadius: CGFloat = 14
+
+        @MainActor private static var themeIsDark: Bool {
+            guard let appearance = NSApp?.effectiveAppearance else { return true }
+            return appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        }
     }
 
     /// Fixed white/black for overlays drawn on top of screenshot content; these
-    /// intentionally do not follow the system appearance.
+    /// intentionally do not follow the theme.
     static let overlayDim: CGFloat = 0.45
     static let overlayFill = NSColor.black.withAlphaComponent(0.72)
     /// Hairline around a white selection handle, so it stays visible on light

@@ -37,8 +37,9 @@ class HoverButton: NSButton {
 
     // MARK: Paint hooks
 
-    /// Colour of the hover and press washes.
-    var washColor: NSColor { .white }
+    /// Colour of the hover and press washes: white on the dark theme, black
+    /// on the light one. HUD subclasses (`PillButton`) pin a fixed white.
+    var washColor: NSColor { DesignTokens.Color.washBase }
     /// Colour of the selected wash; the violet accent marks the active tool.
     var selectedWashColor: NSColor { DesignTokens.Color.accentSoft }
     /// Corner radius of the wash; capsules override with half their height,

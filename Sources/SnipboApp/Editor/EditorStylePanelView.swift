@@ -132,7 +132,19 @@ final class EditorStylePanelView: NSView {
     private static func wellFill(forFocus focused: Bool) -> NSColor {
         focused
             ? DesignTokens.Color.accent.withAlphaComponent(0.28)
-            : NSColor.white.withAlphaComponent(0.06)
+            : DesignTokens.Color.subtleWash
+    }
+
+    /// The well's fill is cached as a layer `CGColor`, so a theme flip has to
+    /// re-resolve it; the focus callbacks cover the rest of its lifetime.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshWellFill()
+    }
+
+    private func refreshWellFill() {
+        let focused = sizeField.currentEditor() != nil
+        sizeWell.layer?.backgroundColor = Self.wellFill(forFocus: focused).cgColor
     }
 
     @objc private func sizeFieldCommitted() {

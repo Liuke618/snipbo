@@ -277,13 +277,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var appliedHistoryMaxItems: Int?
     private var appliedHistoryMaxBytes: Int64?
 
-    /// The fixed dark palette is appearance-independent: every surface is
-    /// painted from literal token colors, so the app always pins itself to
-    /// darkAqua regardless of the (decoded-but-unused) appearance setting.
+    /// Pins the app appearance to the user's theme choice. The dynamic palette
+    /// in `DesignTokens` resolves to the matching light/dark variant, so this
+    /// one assignment retints every surface; views that cache a resolved color
+    /// refresh via `viewDidChangeEffectiveAppearance()`.
     private func applyAppearance(_ appearance: AppAppearance) {
-        guard appliedAppearance == nil else { return }
+        guard appliedAppearance != appearance else { return }
         appliedAppearance = appearance
-        NSApp.appearance = NSAppearance(named: .darkAqua)
+        switch appearance {
+        case .system: NSApp.appearance = nil
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
     }
 
     /// Applies launch-at-login only when the desired state changes, so a

@@ -102,7 +102,7 @@ struct SettingsView: View {
                     .fill(
                         selected
                             ? Color(nsColor: DesignTokens.Color.accentSoft)
-                            : (hovered ? Color.white.opacity(0.06) : .clear)
+                            : (hovered ? Color(nsColor: DesignTokens.Color.subtleWash) : .clear)
                     )
             )
             .foregroundColor(selected ? Color(nsColor: DesignTokens.Color.accent) : .secondary)
@@ -122,6 +122,19 @@ struct SettingsView: View {
                     Text(L10n.tr("Follow System", "跟随系统")).tag(AppLanguage.system)
                     Text("English").tag(AppLanguage.english)
                     Text("简体中文").tag(AppLanguage.chinese)
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 160)
+            }
+
+            groupDivider
+
+            SettingsRow(L10n.tr("Appearance", "外观"), labelWidth: labelWidth) {
+                Picker("", selection: $model.settings.appearance) {
+                    Text(L10n.tr("Follow System", "跟随系统")).tag(AppAppearance.system)
+                    Text(L10n.tr("Light", "浅色")).tag(AppAppearance.light)
+                    Text(L10n.tr("Dark", "深色")).tag(AppAppearance.dark)
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)

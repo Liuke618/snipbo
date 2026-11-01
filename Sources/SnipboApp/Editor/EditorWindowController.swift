@@ -1191,12 +1191,35 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 /// screenshot reads as a canvas rather than dead space.
 private final class CenteringClipView: NSClipView {
     /// One dot per tile; the pattern tiles from the window origin, so the grid
-    /// stays put while the canvas scrolls under it.
-    private static let dotColor = NSColor(patternImage: CenteringClipView.dotTile())
+    /// stays put while the canvas scrolls under it. A pattern image is a
+    /// resolved bitmap, so the theme switch rebuilds it.
+    private var dotColor: NSColor
 
-    private static func dotTile() -> NSImage {
+    override init(frame frameRect: NSRect) {
+        dotColor = CenteringClipView.dotColor(for: NSApp?.effectiveAppearance)
+        super.init(frame: frameRect)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        dotColor = Self.dotColor(for: effectiveAppearance)
+        needsDisplay = true
+    }
+
+    private static func dotColor(for appearance: NSAppearance?) -> NSColor {
+        let dark = appearance?.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return NSColor(patternImage: dotTile(dark))
+    }
+
+    private static func dotTile(_ dark: Bool) -> NSImage {
         NSImage(size: NSSize(width: 20, height: 20), flipped: false) { rect in
-            NSColor.white.withAlphaComponent(0.055).setFill()
+            let dot = dark
+                ? NSColor.white.withAlphaComponent(0.055)
+                : NSColor.black.withAlphaComponent(0.09)
+            dot.setFill()
             NSBezierPath(ovalIn: CGRect(
                 x: (rect.width - 2) / 2,
                 y: (rect.height - 2) / 2,
@@ -1210,7 +1233,7 @@ private final class CenteringClipView: NSClipView {
     override func draw(_ dirtyRect: NSRect) {
         DesignTokens.Color.canvasBase.setFill()
         dirtyRect.fill()
-        Self.dotColor.setFill()
+        dotColor.setFill()
         dirtyRect.fill()
     }
 

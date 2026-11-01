@@ -77,8 +77,13 @@ func driveIntoAvailableState() async {
 struct SettingsRenderHarness {
     static func main() {
         _ = NSApplication.shared
-        // The app pins itself to darkAqua (AppDelegate.applyAppearance); mirror it.
-        NSApp.appearance = NSAppearance(named: .darkAqua)
+        // The app pins itself per the appearance setting (AppDelegate.applyAppearance);
+        // "light" on the command line previews the light theme, dark stays default.
+        if CommandLine.arguments.contains("light") {
+            NSApp.appearance = NSAppearance(named: .aqua)
+        } else {
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
         let done = DispatchSemaphore(value: 0)
         Task { @MainActor in
             await run()
