@@ -122,6 +122,9 @@ final class RecordingControlController {
             [weak self] _ in
             Task { @MainActor in self?.updateLabel() }
         }
+        // The label only needs second-level precision; a tolerance lets the
+        // system coalesce this wake-up with other run-loop work.
+        timer.tolerance = 0.05
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }

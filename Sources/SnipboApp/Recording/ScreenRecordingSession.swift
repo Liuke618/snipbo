@@ -38,9 +38,9 @@ enum RecordingError: Error, LocalizedError, Sendable {
 }
 
 /// Records a display region to MP4 or GIF. ScreenCaptureKit supplies BGRA
-/// frames; MP4 goes through AVAssetWriter, GIF is collected as downscaled
-/// frames and encoded at stop. Snipbo's own windows are excluded by the content
-/// filter, so the floating recording controls never appear in the output.
+/// frames; MP4 goes through AVAssetWriter, GIF frames are streamed into an
+/// ImageIO destination as they arrive. Snipbo's own windows are excluded by the
+/// content filter, so the floating recording controls never appear in the output.
 final class ScreenRecordingSession: NSObject, @unchecked Sendable {
     private let displayID: CGDirectDisplayID
     private let rect: CGRect
@@ -74,7 +74,11 @@ final class ScreenRecordingSession: NSObject, @unchecked Sendable {
     private var writerInput: AVAssetWriterInput?
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var writerStarted = false
-    private var gifFrames: [CGImage] = []
+    // GIF frames are streamed into an ImageIO destination file as they arrive
+    // instead of being accumulated in memory (300 full-size images would mean
+    // hundreds of MB).
+    private var gifDestination: CGImageDestination?
+    private var gifFrameCount = 0
     private let gifMaxFrames = 300
 
     private var streamFPS: Int {
@@ -152,7 +156,9 @@ final class ScreenRecordingSession: NSObject, @unchecked Sendable {
         }
 
         let shouldStart: Bool = stateQueue.sync {
-            guard !started, !cancelled else { return false }
+            guard !started, !cancelled, !finishStarted, finalResult == nil else {
+                return false
+            }
             started = true
             self.stream = stream
             self.output = output
@@ -162,6 +168,16 @@ final class ScreenRecordingSession: NSObject, @unchecked Sendable {
         guard shouldStart else { return }
 
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: workQueue)
+        // A stop/cancel/fail may have won while SCShareableContent resolved and
+        // the output was being added; never start a stream for an
+        // already-finished session (it would never be stopped again).
+        let stillWanted: Bool = stateQueue.sync {
+            self.stream === stream && !self.finishStarted && self.finalResult == nil
+        }
+        guard stillWanted else {
+            try? await stream.stopCapture()
+            return
+        }
         do {
             try await stream.startCapture()
         } catch {
@@ -185,7 +201,15 @@ final class ScreenRecordingSession: NSObject, @unchecked Sendable {
         }
         if shouldFinalize {
             await stopStream()
-            let result = finalizeOutput()
+            // Finalizing can block for seconds (writer finish, GIF encode), so
+            // hop to workQueue via a continuation instead of parking a
+            // cooperative-pool thread in workQueue.sync.
+            let result = await withCheckedContinuation {
+                (cont: CheckedContinuation<Result<URL, Error>, Never>) in
+                workQueue.async { [self] in
+                    cont.resume(returning: self.finalizeOutput())
+                }
+            }
             stateQueue.sync {
                 finalResult = result
             }
@@ -259,7 +283,7 @@ final class ScreenRecordingSession: NSObject, @unchecked Sendable {
     }
 
     private func appendGIFFrame(_ pixelBuffer: CVPixelBuffer) {
-        guard gifFrames.count < gifMaxFrames else { return }
+        guard gifFrameCount < gifMaxFrames else { return }
         var image: CGImage?
         guard VTCreateCGImageFromCVPixelBuffer(
             pixelBuffer,
@@ -268,11 +292,71 @@ final class ScreenRecordingSession: NSObject, @unchecked Sendable {
         ) == noErr, let image else {
             return
         }
+        if gifDestination == nil {
+            gifDestination = makeGIFDestination()
+        }
+        guard let destination = gifDestination else { return }
         let target = gifTargetSize(for: image)
-        gifFrames.append(ImageExporter.resampled(image, to: target))
-        if gifFrames.count >= gifMaxFrames {
+        let delay = 1.0 / Double(max(1, streamFPS))
+        CGImageDestinationAddImage(destination, resampled(image, to: target), [
+            kCGImagePropertyGIFDictionary: [
+                kCGImagePropertyGIFDelayTime: delay,
+                kCGImagePropertyGIFUnclampedDelayTime: delay,
+            ],
+        ] as CFDictionary)
+        gifFrameCount += 1
+        if gifFrameCount >= gifMaxFrames {
             finishAutomatically()
         }
+    }
+
+    /// Creates the streaming GIF destination on the first frame. Returns nil
+    /// when the output location cannot be prepared; the recording then ends
+    /// with no frames. The destination stays non-nil once created even after
+    /// CGImageDestinationFinalize, so a late frame can never recreate it and
+    /// overwrite the finished file.
+    private func makeGIFDestination() -> CGImageDestination? {
+        try? FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        if FileManager.default.fileExists(atPath: outputURL.path) {
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+        guard let destination = CGImageDestinationCreateWithURL(
+            outputURL as CFURL,
+            UTType.gif.identifier as CFString,
+            0,
+            nil
+        ) else {
+            return nil
+        }
+        CGImageDestinationSetProperties(destination, [
+            kCGImagePropertyGIFDictionary: [
+                kCGImagePropertyGIFLoopCount: 0,
+            ],
+        ] as CFDictionary)
+        return destination
+    }
+
+    /// Same as ImageExporter.resampled but with medium interpolation: GIF
+    /// reduces to 256 colors, so high-quality filtering buys nothing.
+    private func resampled(_ image: CGImage, to target: CGSize) -> CGImage {
+        let width = max(1, Int(target.width.rounded()))
+        let height = max(1, Int(target.height.rounded()))
+        guard width != image.width || height != image.height else { return image }
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return image }
+        context.interpolationQuality = .medium
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage() ?? image
     }
 
     private func gifTargetSize(for image: CGImage) -> CGSize {
@@ -358,7 +442,9 @@ final class ScreenRecordingSession: NSObject, @unchecked Sendable {
             try? await stream.stopCapture()
         }
         // Drain any in-flight sample callback before finalizing the writer.
-        workQueue.sync {}
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            workQueue.async { cont.resume() }
+        }
         _ = output
         _ = delegate
     }
@@ -400,75 +486,39 @@ final class ScreenRecordingSession: NSObject, @unchecked Sendable {
         self.adaptor = adaptor
     }
 
+    /// Finishes the output file. Must run on workQueue; stop() bridges here
+    /// with a continuation and enforces the exactly-once semantics via
+    /// finishStarted / finalResult.
     private func finalizeOutput() -> Result<URL, Error> {
-        workQueue.sync {
-            switch format {
-            case .mp4:
-                guard let writer, let writerInput, writerStarted else {
-                    try? FileManager.default.removeItem(at: outputURL)
-                    return .failure(RecordingError.noFrames)
-                }
-                writerInput.markAsFinished()
-                let semaphore = DispatchSemaphore(value: 0)
-                writer.finishWriting {
-                    semaphore.signal()
-                }
-                semaphore.wait()
-                guard writer.status == .completed else {
-                    try? FileManager.default.removeItem(at: outputURL)
-                    return .failure(RecordingError.writerFailed(
-                        writer.error?.localizedDescription ?? "finishWriting failed"
-                    ))
-                }
-                return .success(outputURL)
-            case .gif:
-                guard !gifFrames.isEmpty else {
-                    try? FileManager.default.removeItem(at: outputURL)
-                    return .failure(RecordingError.noFrames)
-                }
-                do {
-                    try writeGIF()
-                    return .success(outputURL)
-                } catch {
-                    try? FileManager.default.removeItem(at: outputURL)
-                    return .failure(error)
-                }
+        switch format {
+        case .mp4:
+            guard let writer, let writerInput, writerStarted else {
+                try? FileManager.default.removeItem(at: outputURL)
+                return .failure(RecordingError.noFrames)
             }
-        }
-    }
-
-    private func writeGIF() throws {
-        try FileManager.default.createDirectory(
-            at: outputURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if FileManager.default.fileExists(atPath: outputURL.path) {
-            try FileManager.default.removeItem(at: outputURL)
-        }
-        guard let destination = CGImageDestinationCreateWithURL(
-            outputURL as CFURL,
-            UTType.gif.identifier as CFString,
-            gifFrames.count,
-            nil
-        ) else {
-            throw RecordingError.encodeFailed
-        }
-        CGImageDestinationSetProperties(destination, [
-            kCGImagePropertyGIFDictionary: [
-                kCGImagePropertyGIFLoopCount: 0,
-            ],
-        ] as CFDictionary)
-        let delay = 1.0 / Double(max(1, streamFPS))
-        for frame in gifFrames {
-            CGImageDestinationAddImage(destination, frame, [
-                kCGImagePropertyGIFDictionary: [
-                    kCGImagePropertyGIFDelayTime: delay,
-                    kCGImagePropertyGIFUnclampedDelayTime: delay,
-                ],
-            ] as CFDictionary)
-        }
-        guard CGImageDestinationFinalize(destination) else {
-            throw RecordingError.encodeFailed
+            writerInput.markAsFinished()
+            let semaphore = DispatchSemaphore(value: 0)
+            writer.finishWriting {
+                semaphore.signal()
+            }
+            semaphore.wait()
+            guard writer.status == .completed else {
+                try? FileManager.default.removeItem(at: outputURL)
+                return .failure(RecordingError.writerFailed(
+                    writer.error?.localizedDescription ?? "finishWriting failed"
+                ))
+            }
+            return .success(outputURL)
+        case .gif:
+            guard let destination = gifDestination, gifFrameCount > 0 else {
+                try? FileManager.default.removeItem(at: outputURL)
+                return .failure(RecordingError.noFrames)
+            }
+            guard CGImageDestinationFinalize(destination) else {
+                try? FileManager.default.removeItem(at: outputURL)
+                return .failure(RecordingError.encodeFailed)
+            }
+            return .success(outputURL)
         }
     }
 }
