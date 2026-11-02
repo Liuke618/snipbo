@@ -17,7 +17,7 @@ extension StatusMenuItem {
         case .scrolling: return L10n.tr("Scrolling Capture", "滚动截图")
         case .record: return L10n.tr("Record", "录制")
         case .recent: return L10n.tr("Recent", "最近截图")
-        case .history: return L10n.tr("History Browser…", "历史浏览…")
+        case .history: return L10n.tr("History Browser", "历史浏览")
         case .pins: return L10n.tr("Pins", "贴图")
         }
     }

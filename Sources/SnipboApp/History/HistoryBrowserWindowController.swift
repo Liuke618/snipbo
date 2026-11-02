@@ -590,7 +590,7 @@ private struct HistoryCard: View {
             Button(entry.isFavorite
                 ? L10n.tr("Unfavorite", "取消收藏")
                 : L10n.tr("Favorite", "收藏"), action: onFavorite)
-            Button(L10n.tr("Add Tag…", "添加标签…"), action: onAddTag)
+            Button(L10n.tr("Add Tag", "添加标签"), action: onAddTag)
             if !entry.tags.isEmpty {
                 Menu(L10n.tr("Remove Tag", "移除标签")) {
                     ForEach(entry.tags, id: \.self) { tag in

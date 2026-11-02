@@ -157,7 +157,7 @@ struct SettingsView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        Button(L10n.tr("Choose…", "选择…")) { chooseFolder() }
+                        Button(L10n.tr("Choose", "选择")) { chooseFolder() }
                             .controlSize(.small)
                     }
                 }
@@ -236,7 +236,7 @@ struct SettingsView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                         }
-                        Button(L10n.tr("Menu items…", "菜单项…")) {
+                        Button(L10n.tr("Menu items", "菜单项")) {
                             tabModel.showsStatusMenuItems = true
                         }
                         .buttonStyle(.link)
@@ -827,7 +827,7 @@ struct SettingsView: View {
         .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// The version row's right-hand action, mirroring the "Choose…" slot on the
+    /// The version row's right-hand action, mirroring the "Choose" slot on the
     /// General tab. It carries the progress states in place, so a check never
     /// reflows the pane.
     private var checkForUpdatesButton: some View {

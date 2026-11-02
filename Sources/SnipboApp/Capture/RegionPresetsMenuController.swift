@@ -62,7 +62,7 @@ final class RegionPresetsMenuController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
         let saveItem = NSMenuItem(
-            title: L10n.tr("Save Last Region as Preset…", "把上次区域存为预设…"),
+            title: L10n.tr("Save Last Region as Preset", "把上次区域存为预设"),
             action: #selector(saveAction),
             keyEquivalent: ""
         )

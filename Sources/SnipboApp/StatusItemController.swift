@@ -224,7 +224,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             )
             let recordMenu = NSMenu()
             recordMenu.addItem(makeItem(
-                L10n.tr("Record Region…", "录制区域…"),
+                L10n.tr("Record Region", "录制区域"),
                 action: #selector(recordRegion)
             ))
             recordMenu.addItem(makeItem(
@@ -257,12 +257,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         }
 
         addSeparator(to: menu)
-        let settingsItem = makeItem(L10n.tr("Settings…", "设置…"), icon: "settings", action: #selector(openSettings))
+        let settingsItem = makeItem(L10n.tr("Settings", "设置"), icon: "settings", action: #selector(openSettings))
         settingsItem.keyEquivalent = ","
         menu.addItem(settingsItem)
         // 发现新版本时该项变为「安装更新 x.y.z」;点击仍然只是打开设置的
         // Updates 页(checkForUpdates 路径),绝不从菜单直接开始下载。
-        let updatesTitle = updateItemTitle() ?? L10n.tr("Check for Updates…", "检查更新…")
+        let updatesTitle = updateItemTitle() ?? L10n.tr("Check for Updates", "检查更新")
         menu.addItem(makeItem(
             updatesTitle,
             icon: "chevrons-down",
